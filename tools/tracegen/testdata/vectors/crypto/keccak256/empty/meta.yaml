@@ -1,0 +1,12 @@
+runner: "crypto"
+handler: "keccak256"
+case: "empty"
+kind: "pure"
+description: "fixture case"
+requirements:
+  - "WBFT-TYPE-001"
+  - "WBFT-TYPE-002"
+reference:
+  implementation: "fixture"
+generator:
+  name: "fixture"

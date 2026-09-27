@@ -1,0 +1,8 @@
+# comment line
+runner: crypto
+handler: keccak256
+case: 'ascii'
+kind: pure
+requirements:
+  - WBFT-TYPE-001 # trailing comment
+  - "WBFT-TYPE-099"

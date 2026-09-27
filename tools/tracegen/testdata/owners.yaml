@@ -1,0 +1,10 @@
+# Fixture owner table.
+WBFT-TYPE-001:
+  owner: types
+  symbols: types.Address, types.Hash
+
+WBFT-VEC-033:
+  owner: cmd/wbft-vector-adapter
+  symbols: "serve"
+  class: external
+  reason: "fixture reason"
