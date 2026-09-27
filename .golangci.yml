@@ -1,0 +1,256 @@
+# golangci-lint v2 configuration of the wbft module.
+#
+# Besides the standard linters it enforces two families of rules:
+#
+#   1. Boundaries (depguard): the modules wbft may depend on, the go-ethereum
+#      packages it may import, and the import direction between wbft packages.
+#   2. Determinism (depguard + forbidigo): the consensus core and the pure
+#      modules do not read clocks, randomness, the environment or the network,
+#      and do not sort unstably. tools/lint/coredet covers what these linters
+#      cannot see (go/select/channels and unannotated map iteration).
+#
+# Package groups used below:
+#   core: consensus, consensus/inputlog
+#   pure: crypto/keccak, internal/refsort, types, codec/rlp, codec,
+#         crypto/ecdsa, crypto/bls, validator, epoch, header
+#
+# File globs match absolute paths, so each pattern is anchored by the
+# package directory ("**/consensus/*.go" matches consensus/ but not
+# consensus/runner/). Test files are exempt from the determinism rules.
+version: "2"
+
+run:
+  tests: true
+
+linters:
+  default: standard
+  enable:
+    - depguard
+    - forbidigo
+    - misspell
+    - unconvert
+
+  settings:
+    depguard:
+      rules:
+        # Modules wbft may depend on. A branch that adds any other module,
+        # or imports a go-ethereum package other than rlp, crypto and common,
+        # fails here (check-deps.sh checks the same list on the build graph).
+        modules:
+          list-mode: strict
+          files:
+            - $all
+          allow:
+            - $gostd
+            - github.com/0xmhha/wbft/
+            - github.com/ethereum/go-ethereum/rlp
+            - github.com/ethereum/go-ethereum/crypto
+            - github.com/ethereum/go-ethereum/common
+            - github.com/supranational/blst
+            - github.com/prometheus/client_golang
+            - github.com/BurntSushi/toml
+            - github.com/holiman/uint256
+            - github.com/cockroachdb/pebble
+          deny:
+            - pkg: github.com/ethereum/go-ethereum/core
+              desc: "wbft does not use go-ethereum core/*; the application owns chain state"
+            - pkg: github.com/ethereum/go-ethereum/consensus
+              desc: "wbft does not use go-ethereum consensus/*; it is the consensus engine"
+            - pkg: github.com/ethereum/go-ethereum/eth
+              desc: "wbft does not use go-ethereum eth/*; the application owns the eth protocol"
+            - pkg: github.com/ethereum/go-ethereum/p2p
+              desc: "wbft does not use go-ethereum p2p; transports are application adapters"
+            - pkg: github.com/0xmhha/wbft-sdk
+              desc: "the consensus layer must not depend on the execution-layer SDK"
+
+        # Where the allowed third-party modules may be used.
+        go-ethereum-placement:
+          files:
+            - $all
+            - "!**/types/*.go"
+            - "!**/codec/rlp/*.go"
+            - "!**/codec/*.go"
+            - "!**/crypto/keccak/*.go"
+            - "!**/crypto/ecdsa/*.go"
+          deny:
+            - pkg: github.com/ethereum/go-ethereum
+              desc: "go-ethereum is used only by types, codec/rlp, codec, crypto/keccak and crypto/ecdsa"
+        blst-placement:
+          files:
+            - $all
+            - "!**/crypto/bls/*.go"
+          deny:
+            - pkg: github.com/supranational/blst
+              desc: "blst is used only by crypto/bls"
+        prometheus-placement:
+          files:
+            - $all
+            - "!**/observe/metrics/prom/*.go"
+          deny:
+            - pkg: github.com/prometheus/client_golang
+              desc: "prometheus is used only by observe/metrics/prom"
+        toml-placement:
+          files:
+            - $all
+            - "!**/node/*.go"
+          deny:
+            - pkg: github.com/BurntSushi/toml
+              desc: "the node configuration file is parsed only by node"
+        uint256-placement:
+          files:
+            - $all
+            - "!**/validator/source/*.go"
+            - "!**/mempool/*.go"
+          deny:
+            - pkg: github.com/holiman/uint256
+              desc: "uint256 is used only by validator/source and mempool"
+        pebble-placement:
+          files:
+            - $all
+            - "!**/kv/*.go"
+          deny:
+            - pkg: github.com/cockroachdb/pebble
+              desc: "pebble is used only by kv"
+
+        # header is a stand-alone light verifier: it never imports the core
+        # or the node.
+        header-light-verifier:
+          files:
+            - "**/header/*.go"
+          deny:
+            - pkg: github.com/0xmhha/wbft/consensus
+              desc: "header must not import consensus (it is usable without the consensus core)"
+            - pkg: github.com/0xmhha/wbft/node
+              desc: "header must not import node"
+
+        # Pure rules sit below the core, the node, the application boundary
+        # and the observers (except the event vocabulary).
+        pure-layer:
+          files:
+            - "**/crypto/keccak/*.go"
+            - "**/crypto/ecdsa/*.go"
+            - "**/crypto/bls/*.go"
+            - "**/internal/refsort/*.go"
+            - "**/types/*.go"
+            - "**/codec/*.go"
+            - "**/codec/rlp/*.go"
+            - "**/validator/*.go"
+            - "**/epoch/*.go"
+            - "**/header/*.go"
+          deny:
+            - pkg: github.com/0xmhha/wbft/consensus
+              desc: "pure modules must not import the consensus core"
+            - pkg: github.com/0xmhha/wbft/node
+              desc: "pure modules must not import node"
+            - pkg: github.com/0xmhha/wbft/app
+              desc: "pure modules must not import app"
+            - pkg: github.com/0xmhha/wbft/observe$
+              desc: "pure modules must not import observe (observe/event is allowed)"
+            - pkg: github.com/0xmhha/wbft/observe/journal
+              desc: "pure modules must not import observe/journal"
+            - pkg: github.com/0xmhha/wbft/observe/logcat
+              desc: "pure modules must not import observe/logcat"
+            - pkg: github.com/0xmhha/wbft/observe/metrics
+              desc: "pure modules must not import observe/metrics"
+
+        # The core talks to the outside only through consensus.Env and its
+        # output types.
+        core-boundary:
+          files:
+            - "**/consensus/*.go"
+            - "**/consensus/inputlog/*.go"
+          deny:
+            - pkg: github.com/0xmhha/wbft/app
+              desc: "the core reaches the application only through consensus.Env"
+            - pkg: github.com/0xmhha/wbft/transport
+              desc: "the core returns messages as outputs; it does not send them"
+            - pkg: github.com/0xmhha/wbft/privval
+              desc: "the core does not sign; the runner calls privval"
+            - pkg: github.com/0xmhha/wbft/wal
+              desc: "the core does not write the WAL; the runner does"
+            - pkg: github.com/0xmhha/wbft/consensus/runner
+              desc: "the core must not import its runner"
+            - pkg: github.com/0xmhha/wbft/node
+              desc: "the core must not import node"
+
+        # Determinism: no randomness, environment, network, syscalls or
+        # runtime introspection in the core and the pure modules.
+        deterministic-imports:
+          files:
+            - "**/consensus/*.go"
+            - "**/consensus/inputlog/*.go"
+            - "**/crypto/keccak/*.go"
+            - "**/crypto/ecdsa/*.go"
+            - "**/crypto/bls/*.go"
+            - "**/internal/refsort/*.go"
+            - "**/types/*.go"
+            - "**/codec/*.go"
+            - "**/codec/rlp/*.go"
+            - "**/validator/*.go"
+            - "**/epoch/*.go"
+            - "**/header/*.go"
+            - "!$test"
+          deny:
+            - pkg: math/rand
+              desc: "randomness breaks replay; take values from inputs"
+            - pkg: crypto/rand
+              desc: "randomness breaks replay; take values from inputs"
+            - pkg: os
+              desc: "the environment and files are outside the deterministic core"
+            - pkg: net
+              desc: "the network is outside the deterministic core"
+            - pkg: syscall
+              desc: "system calls are outside the deterministic core"
+            - pkg: runtime
+              desc: "runtime introspection is outside the deterministic core"
+
+        # The core is single-threaded: no locks or atomics.
+        core-no-sync:
+          files:
+            - "**/consensus/*.go"
+            - "**/consensus/inputlog/*.go"
+            - "!$test"
+          deny:
+            - pkg: sync
+              desc: "the core runs on one goroutine owned by the runner"
+
+        # The copy of the Go 1.23 sort is for reference-compatible orderings
+        # in types and epoch only.
+        refsort-users:
+          files:
+            - $all
+            - "!**/types/*.go"
+            - "!**/epoch/*.go"
+            - "!**/internal/refsort/*.go"
+          deny:
+            - pkg: github.com/0xmhha/wbft/internal/refsort
+              desc: "only types and epoch may use the reference sort"
+
+    forbidigo:
+      analyze-types: true
+      forbid:
+        - pattern: ^time\.(Now|Since|Until|After|AfterFunc|Tick|NewTimer|NewTicker|Sleep)$
+          msg: "the core takes time from its inputs; clocks belong to the runner"
+        - pattern: ^(sort\.(Slice|Sort)|slices\.SortFunc)$
+          msg: "use slices.SortStableFunc with a tie-breaker, or internal/refsort for reference orderings"
+        - pattern: ^math\.FMA$
+          msg: "binary64 arithmetic must round after every operation"
+
+  exclusions:
+    presets:
+      - std-error-handling
+    rules:
+      # forbidigo applies to the non-test files of the core and pure packages.
+      - linters: [forbidigo]
+        path-except: '^(consensus|consensus/inputlog|crypto/keccak|crypto/ecdsa|crypto/bls|internal/refsort|types|codec|codec/rlp|validator|epoch|header)/[^/]+\.go$'
+      - linters: [forbidigo]
+        path: '_test\.go$'
+
+issues:
+  # Report every finding; the boundary rules must never be hidden by caps.
+  max-issues-per-linter: 0
+  max-same-issues: 0
+
+formatters:
+  enable:
+    - gofmt
