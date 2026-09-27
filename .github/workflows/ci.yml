@@ -1,0 +1,138 @@
+# Build, test and lint of the wbft module and its developer tools.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  # wbft is built with cgo only (blst, secp256k1).
+  CGO_ENABLED: "1"
+  GOTOOLCHAIN: local
+
+jobs:
+  test:
+    name: build and test (go ${{ matrix.go }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 1.24 is the minimum of go.mod (required by go-ethereum v1.17.0).
+        go: ["1.24.x", "1.25.x"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ matrix.go }}
+          cache-dependency-path: "**/go.sum"
+      - run: go build ./...
+      - run: go vet ./...
+      - run: go test -race ./...
+
+  tools:
+    name: developer tools
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25.x"
+          cache-dependency-path: tools/go.sum
+      - working-directory: tools
+        run: |
+          go build ./...
+          go vet ./...
+          go test ./...
+
+  lint:
+    name: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25.x"
+          cache-dependency-path: "**/go.sum"
+      - name: golangci-lint (wbft module)
+        uses: golangci/golangci-lint-action@v8
+        with:
+          version: v2.13.2
+      - name: golangci-lint (tools module)
+        uses: golangci/golangci-lint-action@v8
+        with:
+          version: v2.13.2
+          working-directory: tools
+      - name: coredet (determinism of the core and pure modules)
+        run: |
+          go -C tools build -o ../bin/coredet ./lint/coredet/cmd/coredet
+          bin/coredet ./...
+      - name: dependency allow-list
+        run: scripts/check-deps.sh
+
+  lint-negative:
+    # Proves that the boundary rules reject violating branches: header
+    # importing consensus, forbidden go-ethereum packages, modules outside
+    # the allow-list, and the determinism rules.
+    name: lint rejects violations
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25.x"
+          cache-dependency-path: "**/go.sum"
+      - uses: golangci/golangci-lint-action@v8
+        with:
+          version: v2.13.2
+          install-only: true
+      - run: scripts/lint-negative.sh
+
+  adapter:
+    name: vector adapter
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25.x"
+      - run: go build -o bin/wbft-vector-adapter ./cmd/wbft-vector-adapter
+      - name: protocol smoke test
+        run: |
+          out=$(printf '%s\n' \
+            '{"type":"hello","protocol":"wbft-vector/1","runner":{"name":"ci","version":"0"},"spec_commit":"none"}' \
+            '{"type":"case","id":1,"runner":"crypto","handler":"keccak256","case":"smoke","kind":"pure","input":{"data":"0x"}}' \
+            '{"type":"bye"}' | bin/wbft-vector-adapter)
+          echo "$out"
+          echo "$out" | sed -n 1p | grep -q '"protocol":"wbft-vector/1"'
+          echo "$out" | sed -n 2p | grep -q '"status":"unsupported"'
+      # Placeholder: run the conformance vectors once the public
+      # specification repository publishes them. Set the repository variable
+      # WBFT_SPEC_REPOSITORY (owner/name) to enable. The runner is expected at
+      # tools/vectorgen/check_adapter.py and the vectors at vectors/.
+      - if: ${{ vars.WBFT_SPEC_REPOSITORY != '' }}
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ vars.WBFT_SPEC_REPOSITORY }}
+          path: wbft-spec
+      - if: ${{ vars.WBFT_SPEC_REPOSITORY != '' }}
+        name: conformance vectors (all cases unsupported in W0)
+        run: |
+          pip install pyyaml
+          # check_adapter.py exits 1 while cases are unsupported; W0 checks
+          # the protocol only, so the exit status is reported, not enforced.
+          python3 wbft-spec/tools/vectorgen/check_adapter.py wbft-spec/vectors -- bin/wbft-vector-adapter || true
+      - if: ${{ vars.WBFT_SPEC_REPOSITORY != '' }}
+        name: traceability matrix
+        run: |
+          go -C tools build -o ../bin/tracegen ./tracegen
+          bin/tracegen -spec wbft-spec -vectors wbft-spec/vectors \
+            -owners internal/trace/owners.yaml -code . -prefix WBFT- -format md -o traceability.md
+      - if: ${{ vars.WBFT_SPEC_REPOSITORY != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: traceability
+          path: traceability.md
