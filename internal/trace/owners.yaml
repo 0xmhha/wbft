@@ -9,8 +9,9 @@
 #   withdrawn  - withdrawn requirement (informative)
 # Entries without class are owned by wbft. tools/tracegen joins this table with
 # the specification, the vectors and the "// Spec:" comments in the code.
-# This is the design baseline before implementation; symbols follow the
-# planned API and change as the code lands.
+# For the chapters that CI checks (tracegen -check, see README.md), every
+# symbol of a wbft-owned entry must be declared in the code: "pkg.Name",
+# "pkg.Type.Method" or an unqualified name in an owner package.
 
 WBFT-TYPE-001:
   owner: types
@@ -21,12 +22,12 @@ WBFT-TYPE-002:
   symbols: types.Address, types.Hash, types.Nonce, types.Bloom
 
 WBFT-TYPE-003:
-  owner: types
-  symbols: types.Address, types.Hash, types.Nonce, types.Bloom
+  owner: crypto/ecdsa, types
+  symbols: ecdsa.SignatureLength, ecdsa.RecoverAddress
 
 WBFT-TYPE-004:
-  owner: types
-  symbols: types.Address, types.Hash, types.Nonce, types.Bloom
+  owner: crypto/bls, types
+  symbols: bls.PublicKeyLength, bls.SignatureLength, bls.SecretKeyLength, bls.DecodePublicKey, bls.DecodeSignature
 
 WBFT-TYPE-005:
   owner: types
@@ -47,15 +48,16 @@ WBFT-TYPE-012:
 
 WBFT-TYPE-020:
   owner: types
-  symbols: types.View.Cmp, types.EpochInfo, validator.NewSetFromEpochInfo
+  symbols: types.View.Cmp
 
 WBFT-TYPE-021:
-  owner: types
-  symbols: types.View.Cmp, types.EpochInfo, validator.NewSetFromEpochInfo
+  owner: types, validator
+  symbols: types.EpochInfo, validator.NewSetFromEpochInfo
 
 WBFT-TYPE-022:
   owner: types
-  symbols: types.View.Cmp, types.EpochInfo, validator.NewSetFromEpochInfo
+  symbols: types.Candidate
+  class: withdrawn
 
 WBFT-PARAM-001:
   owner: types, codec
@@ -66,24 +68,24 @@ WBFT-PARAM-002:
   symbols: codec.Code, codec.DecodeMessage
 
 WBFT-PARAM-010:
-  owner: types, crypto/bls
-  symbols: types.SealLength, types.ExtraVanity, bls.Aggregate
+  owner: types, header
+  symbols: types.WBFTDifficulty, header.VerifyHeader
 
 WBFT-PARAM-011:
-  owner: types, crypto/bls
-  symbols: types.SealLength, types.ExtraVanity, bls.Aggregate
+  owner: types, header, crypto/bls
+  symbols: types.SealLength, header.CommitHeader, bls.AggregateSignatures
 
 WBFT-PARAM-012:
-  owner: types, crypto/bls
-  symbols: types.SealLength, types.ExtraVanity, bls.Aggregate
+  owner: types, header
+  symbols: types.ExtraVanity, header.PrepareProposal, header.VerifyHeader
 
 WBFT-PARAM-020:
   owner: types
   symbols: types.Config
 
 WBFT-PARAM-030:
-  owner: node, types
-  symbols: types.ParseChainConfig, node.checkChainConfig
+  owner: types, node
+  symbols: types.NewConfig, types.ParseChainConfig
 
 WBFT-PARAM-031:
   owner: wbft-sdk x/genesis, node
@@ -91,16 +93,16 @@ WBFT-PARAM-031:
   class: external
 
 WBFT-PARAM-032:
-  owner: node, types
-  symbols: node.checkChainConfig
+  owner: types, node
+  symbols: types.Config.CheckProposerPolicy
 
 WBFT-PARAM-034:
-  owner: node, types
-  symbols: node.checkChainConfig
+  owner: types, node
+  symbols: types.Config.CheckProposerPolicy
 
 WBFT-PARAM-033:
-  owner: node, types
-  symbols: types.ParseChainConfig, node.checkChainConfig
+  owner: types, node
+  symbols: types.NewConfig, types.Config.ConfigAt
 
 WBFT-PARAM-050:
   owner: types
@@ -115,12 +117,12 @@ WBFT-PARAM-052:
   symbols: types.Config.ConfigAt
 
 WBFT-PARAM-053:
-  owner: types
-  symbols: types.Config.ConfigAt
+  owner: types, header
+  symbols: types.Config.ConfigAt, header.PrepareProposal, header.VerifyHeader
 
 WBFT-PARAM-054:
-  owner: types
-  symbols: types.Config.ConfigAt
+  owner: validator, types
+  symbols: validator.EpochSchedule, types.Config.ConfigAt
 
 WBFT-PARAM-060:
   owner: deployment
@@ -152,12 +154,12 @@ WBFT-CRYPTO-014:
   symbols: ecdsa.RecoverAddress
 
 WBFT-CRYPTO-015:
-  owner: crypto/ecdsa, validator
-  symbols: ecdsa.CheckValidatorSignature, ecdsa.CheckSigner
+  owner: crypto/ecdsa
+  symbols: ecdsa.CheckValidatorSignature
 
 WBFT-CRYPTO-016:
-  owner: crypto/ecdsa, validator
-  symbols: ecdsa.CheckValidatorSignature, ecdsa.CheckSigner
+  owner: crypto/ecdsa
+  symbols: ecdsa.CheckSigner
 
 WBFT-CRYPTO-020:
   owner: crypto/bls
@@ -185,7 +187,7 @@ WBFT-CRYPTO-056:
 
 WBFT-CRYPTO-025:
   owner: crypto/bls, privval
-  symbols: bls.Sign
+  symbols: bls.SecretKey.Sign
 
 WBFT-CRYPTO-026:
   owner: crypto/bls
@@ -197,11 +199,11 @@ WBFT-CRYPTO-055:
 
 WBFT-CRYPTO-027:
   owner: crypto/bls
-  symbols: bls.Aggregate, bls.AggregatePublicKeys
+  symbols: bls.AggregateSignatures
 
 WBFT-CRYPTO-028:
   owner: crypto/bls
-  symbols: bls.Aggregate, bls.AggregatePublicKeys
+  symbols: bls.AggregatePublicKeys
 
 WBFT-CRYPTO-030:
   owner: header
@@ -224,7 +226,7 @@ WBFT-CRYPTO-042:
   symbols: codec.SealData, verifySeal
 
 WBFT-CRYPTO-043:
-  owner: codec, consensus
+  owner: consensus
   symbols: verifySeal
 
 WBFT-CRYPTO-044:
@@ -241,33 +243,43 @@ WBFT-CRYPTO-053:
 
 WBFT-ENC-001:
   owner: codec/rlp
+  symbols: rlp.DecodeStrict
 
 WBFT-ENC-002:
   owner: codec/rlp
+  symbols: rlp.DecodeStrict
 
 WBFT-ENC-003:
   owner: codec/rlp
+  symbols: rlp.DecodeStrict, rlp.ListItems
 
 WBFT-ENC-004:
   owner: codec/rlp
+  symbols: rlp.DecodeStrict
 
 WBFT-ENC-005:
   owner: codec/rlp
+  symbols: rlp.DecodeStrict
 
 WBFT-ENC-006:
-  owner: codec/rlp
+  owner: codec/rlp, codec
+  symbols: rlp.Encode, codec.EncodeExtra
 
 WBFT-ENC-007:
-  owner: codec/rlp
+  owner: codec/rlp, codec
+  symbols: codec.DecodeExtraBytes
 
 WBFT-ENC-008:
-  owner: codec/rlp
+  owner: codec/rlp, codec
+  symbols: codec.DecodeExtraBytes
 
 WBFT-ENC-010:
   owner: codec/rlp
+  symbols: rlp.DecodeStrict
 
 WBFT-ENC-011:
   owner: codec/rlp
+  symbols: rlp.DecodeStrict
 
 WBFT-ENC-020:
   owner: codec
@@ -286,8 +298,8 @@ WBFT-ENC-030:
   symbols: codec.EncodeExtra, codec.DecodeExtra
 
 WBFT-ENC-031:
-  owner: codec
-  symbols: codec.EncodeExtra, codec.DecodeExtra
+  owner: header
+  symbols: header.PrepareProposal, startExtra
 
 WBFT-ENC-032:
   owner: codec
@@ -302,8 +314,8 @@ WBFT-ENC-040:
   symbols: codec.EncodeExtra, codec.DecodeExtra
 
 WBFT-ENC-041:
-  owner: codec
-  symbols: codec.EncodeExtra, codec.DecodeExtra
+  owner: types, codec
+  symbols: types.SealerSet
 
 WBFT-ENC-043:
   owner: codec
@@ -318,8 +330,8 @@ WBFT-ENC-051:
   symbols: codec.EncodeExtra, codec.DecodeExtra
 
 WBFT-ENC-060:
-  owner: codec
-  symbols: codec.EncodeExtra, codec.DecodeExtra
+  owner: epoch, codec
+  symbols: epoch.GenesisExtra, codec.EncodeExtra
 
 WBFT-ENC-070:
   owner: codec
@@ -406,12 +418,12 @@ WBFT-MSG-041:
   symbols: codec.EncodeMessage, codec.DecodeMessage, codec.SigningPayload, codec.DedupKey
 
 WBFT-MSG-050:
-  owner: codec
-  symbols: codec.EncodeMessage, codec.DecodeMessage, codec.SigningPayload, codec.DedupKey
+  owner: transport
+  symbols: transport.DecodeFrame
 
 WBFT-MSG-051:
-  owner: codec
-  symbols: codec.EncodeMessage, codec.DecodeMessage, codec.SigningPayload, codec.DedupKey
+  owner: transport
+  symbols: transport.CheckOutbound
 
 WBFT-MSG-060:
   owner: codec
@@ -431,27 +443,27 @@ WBFT-VAL-003:
 
 WBFT-VAL-004:
   owner: validator
-  symbols: validator.ValidatorsAt, validator.PrevValidatorsAt, validator.GoverningEpochInfo
+  symbols: validator.ValidatorsAt, validator.GoverningEpochInfo
 
 WBFT-VAL-006:
   owner: validator
-  symbols: validator.ValidatorsAt, validator.PrevValidatorsAt, validator.GoverningEpochInfo
+  symbols: validator.ValidatorsAt, validator.Set
 
 WBFT-VAL-007:
   owner: validator
-  symbols: validator.ValidatorsAt, validator.PrevValidatorsAt, validator.GoverningEpochInfo
+  symbols: types.EpochInfo.Candidate, validator.NewSetFromEpochInfo
 
 WBFT-VAL-009:
   owner: validator
-  symbols: validator.ValidatorsAt, validator.PrevValidatorsAt, validator.GoverningEpochInfo
+  symbols: validator.ValidatorsAt, validator.GoverningEpochInfo
 
 WBFT-VAL-010:
-  owner: validator
-  symbols: validator.ValidatorsAt, validator.PrevValidatorsAt, validator.GoverningEpochInfo
+  owner: header, validator
+  symbols: header.ValidatorsForVerifying, validator.ValidatorsAt
 
 WBFT-VAL-011:
   owner: validator
-  symbols: validator.ValidatorsAt, validator.PrevValidatorsAt, validator.GoverningEpochInfo
+  symbols: validator.ValidatorsAt, validator.GoverningEpochInfo
 
 WBFT-EPOCH-001:
   owner: validator
@@ -466,40 +478,42 @@ WBFT-EPOCH-003:
   symbols: validator.IsEpochBlock, validator.LastEpochBlock
 
 WBFT-EPOCH-006:
-  owner: validator
-  symbols: validator.IsEpochBlock, validator.LastEpochBlock
+  owner: header, validator
+  symbols: header.VerifyLight, validator.IsEpochBlock
 
 WBFT-PROP-001:
   owner: validator
-  symbols: validator.CalcProposer, validator.Set.IsProposer, validator.LastProposer
+  symbols: validator.Set.CalcProposer
 
 WBFT-PROP-002:
-  owner: validator
-  symbols: validator.CalcProposer, validator.Set.IsProposer, validator.LastProposer
+  owner: types, validator
+  symbols: types.ProposerOf
 
 WBFT-PROP-003:
   owner: validator
-  symbols: validator.CalcProposer, validator.Set.IsProposer, validator.LastProposer
+  symbols: validator.Set.CalcProposer
 
 WBFT-PROP-004:
   owner: validator
-  symbols: validator.CalcProposer, validator.Set.IsProposer, validator.LastProposer
+  symbols: validator.Set.CalcProposer
 
 WBFT-PROP-005:
-  owner: validator
-  symbols: validator.CalcProposer, validator.Set.IsProposer, validator.LastProposer
+  owner: types, validator
+  symbols: types.ProposerPolicy.IsSticky, validator.Set.CalcProposer
 
 WBFT-PROP-006:
   owner: validator
-  symbols: validator.CalcProposer, validator.Set.IsProposer, validator.LastProposer
+  symbols: validator.Set.CalcProposer
 
 WBFT-PROP-007:
   owner: validator
-  symbols: validator.CalcProposer, validator.Set.IsProposer, validator.LastProposer
+  symbols: validator.Set.IsProposer
 
 WBFT-EPOCH-007:
-  owner: validator/source
-  symbols: CandidatesAfterExecution
+  owner: application (implementation of validator/source.AuthoritySource)
+  symbols: source.AuthoritySource.CandidatesAfterExecution
+  class: external
+  reason: the state is read by the application; wbft receives the candidates through CandidatesAfterExecution
 
 WBFT-EPOCH-008:
   owner: epoch
@@ -539,15 +553,15 @@ WBFT-EPOCH-020:
 
 WBFT-EPOCH-021:
   owner: epoch
-  symbols: epoch.VerifyEpochInfo, Consensus.VerifyEpochInfo
+  symbols: epoch.VerifyEpochInfo
 
 WBFT-EPOCH-023:
-  owner: epoch, node
-  symbols: epoch.InitialEpochInfo, node.checkChainConfig
+  owner: epoch
+  symbols: epoch.InitialEpochInfo, epoch.GenesisExtra
 
 WBFT-EPOCH-024:
-  owner: epoch, node
-  symbols: epoch.InitialEpochInfo, node.checkChainConfig
+  owner: types, epoch
+  symbols: types.GenesisInit.Check, epoch.InitialEpochInfo
 
 WBFT-SM-001:
   owner: consensus/runner
@@ -1157,7 +1171,7 @@ WBFT-HDR-016:
 
 WBFT-HDR-017:
   owner: header
-  symbols: header.PrepareProposal
+  symbols: header.VerifyHeader
 
 WBFT-HDR-018:
   owner: header
@@ -1192,8 +1206,8 @@ WBFT-HDR-034:
   symbols: header.PrepareProposal
 
 WBFT-HDR-035:
-  owner: header
-  symbols: header.PrepareProposal
+  owner: consensus, header
+  symbols: consensus.Snapshot.ExtraSeals, header.MergeSeals
 
 WBFT-HDR-036:
   owner: header
@@ -1204,8 +1218,8 @@ WBFT-HDR-040:
   symbols: header.PrepareProposal
 
 WBFT-HDR-041:
-  owner: header
-  symbols: header.PrepareProposal
+  owner: consensus, codec
+  symbols: blockHash, codec.BlockHash
 
 WBFT-HDR-042:
   owner: header
@@ -1244,8 +1258,8 @@ WBFT-HDR-070:
   symbols: header.VerifyHeader, header.VerifyHeaders, header.ValidatorsForVerifying
 
 WBFT-HDR-071:
-  owner: header
-  symbols: header.VerifyHeader, header.VerifyHeaders, header.ValidatorsForVerifying
+  owner: validator, header
+  symbols: validator.EpochInfoFor, header.ValidatorsForVerifying
 
 WBFT-HDR-080:
   owner: header
@@ -1316,20 +1330,20 @@ WBFT-HDR-120:
   symbols: header.VerifyHeader, header.VerifyHeaders, header.ValidatorsForVerifying
 
 WBFT-HDR-121:
-  owner: header
-  symbols: header.VerifyHeader, header.VerifyHeaders, header.ValidatorsForVerifying
+  owner: validator, header
+  symbols: validator.EpochInfoFor, header.ValidatorsForVerifying
 
 WBFT-HDR-130:
   owner: header, epoch
-  symbols: app.Consensus.VerifyEpochInfo
+  symbols: header.VerifyLight, epoch.VerifyEpochInfo
 
 WBFT-HDR-131:
-  owner: app, header
-  symbols: Consensus.VerifyEpochInfo
+  owner: epoch, header
+  symbols: epoch.VerifyEpochInfo, header.VerifyLight
 
 WBFT-HDR-132:
-  owner: app, epoch
-  symbols: Consensus.VerifyEpochInfo, epoch.VerifyEpochInfo
+  owner: epoch
+  symbols: epoch.VerifyEpochInfo
 
 WBFT-HDR-140:
   owner: header
