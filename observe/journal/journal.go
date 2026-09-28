@@ -103,6 +103,7 @@ type FileWriter struct {
 	stats     segStats
 	attached  map[uint32]*PeerRec
 	head      *types.Height
+	lastSync  time.Time
 	err       error
 }
 
@@ -295,6 +296,13 @@ func (w *FileWriter) loop() {
 		}
 		if gap != nil {
 			w.write(Record{Body: gap})
+		}
+		// Records are synced once a second and when a segment rotates.
+		if now := time.Now(); now.Sub(w.lastSync) >= time.Second {
+			w.lastSync = now
+			if err := w.log.Sync(); err != nil && w.err == nil {
+				w.err = err
+			}
 		}
 		w.wmu.Unlock()
 		if closing {
