@@ -3,6 +3,7 @@ package stepdriver
 import (
 	"bytes"
 	"encoding/hex"
+	"encoding/json"
 	"slices"
 	"strconv"
 
@@ -289,4 +290,14 @@ func sealsOut(ss []types.SealEntry) []any {
 		out[i] = obj{"sealer": decU(uint64(s.Sealer)), "seal": hexOut(s.Seal)}
 	}
 	return out
+}
+
+// VarsJSON renders state variables as the "state" record of the steps
+// format, as JSON with sorted keys.
+func VarsJSON(v *consensus.Vars) string {
+	b, err := json.Marshal(varsOut(v))
+	if err != nil {
+		return err.Error()
+	}
+	return string(b)
 }
