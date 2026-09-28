@@ -101,9 +101,10 @@ linters:
             - $all
             - "!**/validator/source/*.go"
             - "!**/mempool/*.go"
+            - "!**/header/*.go"
           deny:
             - pkg: github.com/holiman/uint256
-              desc: "uint256 is used only by validator/source and mempool"
+              desc: "uint256 is used only by validator/source, header (gas tips of authority snapshots) and mempool"
         pebble-placement:
           files:
             - $all
