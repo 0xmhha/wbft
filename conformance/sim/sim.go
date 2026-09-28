@@ -339,6 +339,7 @@ type simulation struct {
 	decBlock map[uint64]*types.Block
 	rounds   map[uint64]uint64
 	signed   map[signKey]types.Hash
+	verified map[types.Hash]bool
 	viol     []Violation
 	crashes  int
 	replays  []runner.ReplayInfo
@@ -409,7 +410,7 @@ func newSimulation(sc Scenario) (*simulation, error) {
 	}
 	s := &simulation{sc: sc, rng: rand.New(rand.NewPCG(uint64(sc.Seed), 0x5eed)), cfg: cfg, cfgJSON: cj, genesis: g,
 		byAddr: map[types.Address]*node{}, decided: map[uint64]types.Hash{}, decBlock: map[uint64]*types.Block{},
-		rounds: map[uint64]uint64{}, signed: map[signKey]types.Hash{}}
+		rounds: map[uint64]uint64{}, signed: map[signKey]types.Hash{}, verified: map[types.Hash]bool{}}
 	s.decided[0] = codec.BlockHash(g.Header)
 	s.decBlock[0] = g
 	for i, v := range sc.Validators {

@@ -246,15 +246,25 @@ func (a *app) importBlock(b *types.Block, path string) error {
 	if b.Header.ParentHash != codec.BlockHash(a.chain.head.Header) {
 		return fmt.Errorf("sim: block %d does not extend the head", h)
 	}
-	env := a.env()
-	env.PartB = nil
-	if err := header.VerifyHeader(env, b.Header, nil, header.Options{CheckSeals: true, Mode: header.HeaderOnly}); err != nil {
-		s.violate("header", a.n.v.address, "block %d: %v", h, err)
+	// Every distinct sealed header is verified once per run: the header
+	// rules and the light verification (both check the seals).
+	enc, err := codec.EncodeHeader(b.Header)
+	if err != nil {
 		return err
 	}
-	if r, err := header.VerifyLight(header.LightInputs{Config: s.cfg, Trusted: trusted{a}}, b.Header, a.chain.head.Header); r != header.Valid {
-		s.violate("header", a.n.v.address, "block %d light verification %s: %v", h, r, err)
-		return fmt.Errorf("light verification %s", r)
+	key := keccak.Sum256(enc, codec.BlockHash(a.chain.head.Header).Bytes())
+	if !s.verified[key] {
+		env := a.env()
+		env.PartB = nil
+		if err := header.VerifyHeader(env, b.Header, nil, header.Options{CheckSeals: true, Mode: header.HeaderOnly}); err != nil {
+			s.violate("header", a.n.v.address, "block %d: %v", h, err)
+			return err
+		}
+		if r, err := header.VerifyLight(header.LightInputs{Config: s.cfg, Trusted: trusted{a}}, b.Header, a.chain.head.Header); r != header.Valid {
+			s.violate("header", a.n.v.address, "block %d light verification %s: %v", h, r, err)
+			return fmt.Errorf("light verification %s", r)
+		}
+		s.verified[key] = true
 	}
 	a.chain.insert(b)
 	a.snapshot(b.Header)

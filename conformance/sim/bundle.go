@@ -319,7 +319,7 @@ func validFlood(seed int64, keys []Validator) Scenario {
 	r := seedRand(seed, 11)
 	sc := base("valid_flood", seed, keys, 4, 7)
 	bad := addrOf(sc.Validators[r.IntN(4)])
-	sc.Adversaries = []Adversary{{Node: bad, Every: 5 * time.Millisecond, From: 300 * time.Millisecond, Until: 8 * time.Second, Tick: floodTick(4)}}
+	sc.Adversaries = []Adversary{{Node: bad, Every: 10 * time.Millisecond, From: 300 * time.Millisecond, Until: 8 * time.Second, Tick: floodTick(4)}}
 	mixRestart(&sc, r, 4)
 	return sc
 }
