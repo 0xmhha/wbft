@@ -122,11 +122,8 @@ rejects anything else (`.golangci.yml`, `scripts/check-deps.sh`):
 
 `golang.org/x/sys` is linked as a dependency of the go-ethereum `crypto`
 package only; no `wbft` package may import it. The go-ethereum packages
-`core/*`, `consensus/*`, `eth/*` and `p2p` are forbidden. Because the go-stablenet fork has the module path
-`github.com/ethereum/go-ethereum`, a build that embeds `wbft` in the fork
-resolves these imports to the fork's packages; `wbft` therefore uses only
-APIs present in both upstream v1.17.x and the fork, and CI builds both ways
-(`.github/workflows/dual-build.yml`).
+`core/*`, `consensus/*`, `eth/*` and `p2p` are forbidden. `wbft` is built
+and tested against upstream go-ethereum v1.17.x only (`.github/workflows/ci.yml`).
 
 ## Build, test and lint
 

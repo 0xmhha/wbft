@@ -51,8 +51,8 @@ for t in "${transitive[@]}"; do
   fi
 done
 
-# The embedded build resolves go-ethereum to the go-stablenet fork, which
-# carries upstream v1.17 changes; older or newer lines break that build.
+# wbft is built and tested against the go-ethereum v1.17 line only; other
+# lines are not tested.
 if grep -q 'github.com/ethereum/go-ethereum ' go.mod; then
   v=$(go list -m -f '{{.Version}}' github.com/ethereum/go-ethereum)
   if [[ ! "$v" =~ ^v1\.17\.[0-9]+ ]]; then
