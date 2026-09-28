@@ -102,9 +102,12 @@ linters:
             - "!**/validator/source/*.go"
             - "!**/mempool/*.go"
             - "!**/header/*.go"
+            # The simulator's fake application supplies the gas tips of the
+            # authority snapshots, as an application does.
+            - "!**/conformance/sim/*.go"
           deny:
             - pkg: github.com/holiman/uint256
-              desc: "uint256 is used only by validator/source, header (gas tips of authority snapshots) and mempool"
+              desc: "uint256 is used only by validator/source, header (gas tips of authority snapshots), mempool and the simulator's fake application"
         pebble-placement:
           files:
             - $all
