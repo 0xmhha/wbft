@@ -27,11 +27,18 @@ interfaces of package `app`, `validator/source`, `mempool` and `transport`.
 
 ## Status
 
-Milestone **W0 (skeleton)**. The repository contains the package layout, the
-boundary and determinism lint rules, the vector adapter speaking
-`wbft-vector/1` (it answers every case `unsupported`), the traceability tool
-and the CI skeleton. There is no consensus logic yet; the pure modules
-(encoding, cryptography, validator sets, header rules) come next.
+Milestone **W1 (pure modules)**. The pure modules are implemented and pass
+the conformance vectors of their handlers: `crypto/keccak`, `crypto/ecdsa`,
+`crypto/bls`, `types` (heights and rounds as arbitrary-precision integers,
+chain configuration and `config_at`), `codec/rlp` and `codec` (extra data,
+headers, blocks, the four consensus messages, signing payloads and hashes),
+`internal/refsort` (the reference implementation's sort), `validator` (quorum,
+proposer selection, epoch schedule, validator-set lookup), `epoch`
+(next-epoch computation, candidate order, shuffle), `validator/source`
+(authority snapshots and their cache), `header` (proposal construction, seal
+writing and merging, proposal, header, batch and light verification) and the
+round-timeout formula of `consensus`. The consensus core, the runner and the
+node come with the next milestones.
 
 ## Layout
 
@@ -55,6 +62,7 @@ dependencies never enter the `wbft` module graph:
 | Path | Purpose |
 |---|---|
 | `tools/lint/coredet` | `go/analysis` analyzer for the determinism rules that linters cannot express |
+| `tools/lint/heightlow` | Analyzer for the truncation of heights and rounds: every use of `RefLow64`, `RefLowInt64` or `RefLow32` carries `//wbft:low64 HH-nn` |
 | `tools/tracegen` | Builds the requirement traceability matrix |
 | `internal/trace/owners.yaml` | Owner table read by `tracegen`: requirement ID to package and symbols |
 
@@ -67,13 +75,14 @@ rejects anything else (`.golangci.yml`, `scripts/check-deps.sh`):
 |---|---|
 | `github.com/ethereum/go-ethereum` v1.17.x (`rlp`, `crypto`, `common` only) | `types`, `codec/rlp`, `codec`, `crypto/keccak`, `crypto/ecdsa` |
 | `github.com/supranational/blst` | `crypto/bls` |
-| `github.com/holiman/uint256` | `validator/source`, `mempool` |
+| `github.com/holiman/uint256` | `validator/source`, `header`, `mempool` |
 | `github.com/cockroachdb/pebble` | `kv` |
 | `github.com/prometheus/client_golang` | `observe/metrics/prom` |
 | `github.com/BurntSushi/toml` | `node` |
 
-The go-ethereum packages `core/*`, `consensus/*`, `eth/*` and `p2p` are
-forbidden. Because the go-stablenet fork has the module path
+`golang.org/x/sys` is linked as a dependency of the go-ethereum `crypto`
+package only; no `wbft` package may import it. The go-ethereum packages
+`core/*`, `consensus/*`, `eth/*` and `p2p` are forbidden. Because the go-stablenet fork has the module path
 `github.com/ethereum/go-ethereum`, a build that embeds `wbft` in the fork
 resolves these imports to the fork's packages; `wbft` therefore uses only
 APIs present in both upstream v1.17.x and the fork, and CI builds both ways
@@ -82,13 +91,14 @@ APIs present in both upstream v1.17.x and the fork, and CI builds both ways
 ## Build, test and lint
 
 Requirements: Go 1.24 or newer (the tools module needs Go 1.25), a C
-toolchain (cgo is required from the cryptography milestone on), and
+toolchain (cgo is required: BLS12-381 through blst and the secp256k1 of
+go-ethereum; a build without cgo stops with a compile error), and
 golangci-lint v2.
 
 ```sh
 make build           # go build in both modules
 make test            # go vet and go test in both modules
-make lint            # golangci-lint, coredet and the dependency allow-list
+make lint            # golangci-lint, coredet, heightlow and the dependency allow-list
 make lint-negative   # proves the lint rules reject violating code
 ```
 
@@ -99,6 +109,8 @@ go build ./... && go vet ./... && go test ./...
 go -C tools test ./...
 golangci-lint run ./...
 go -C tools build -o ../bin/coredet ./lint/coredet/cmd/coredet && bin/coredet ./...
+go -C tools build -o ../bin/heightlow ./lint/heightlow/cmd/heightlow && \
+  bin/heightlow -require "$(tr -d ' ' < scripts/heightlow-rows.txt | paste -sd, -)" ./...
 scripts/check-deps.sh
 ```
 
@@ -120,6 +132,16 @@ scripts/check-deps.sh
   - `coredet` forbids `go`, `select` and channel operations (in pure modules
     except `header.VerifyHeaders`) and requires `//wbft:unordered <reason>` on
     every direct range over a map.
+- **Heights and rounds**: `heightlow` requires `//wbft:low64 HH-nn` on every
+  use of a truncating accessor outside `types`, naming the row of the
+  reference place it reproduces, and requires at least one use for every row
+  listed in `scripts/heightlow-rows.txt`.
+
+### Reference sort
+
+`internal/refsort` holds a copy of the reference implementation's sort so
+that candidate and transition orderings match it; see
+`internal/refsort/testdata/gen` to regenerate the fixture.
 
 ## Vector adapter
 
@@ -136,10 +158,15 @@ python3 <spec-dir>/tools/vectorgen/check_adapter.py <spec-dir>/vectors -- bin/wb
 ```
 
 In a conformance run all improvement items and rule flags are off and
-`hello.improvements` is empty. In this milestone the adapter lists the
-consensus-layer handlers in its `hello` and answers each case `unsupported`;
-handlers of the execution layer are answered by the adapters of the
-application repositories. The adapter exits with status 0 after `bye`, 1 when
+`hello.improvements` is empty. The adapter announces in its `hello` the
+handlers it implements: `crypto/*`, `encoding/*`, `validators/*`,
+`timers/round_timeout`, `header/*` and `chain/config_at`. Cases of the
+consensus-core handlers (`state_machine/*`, `network/receive_outcome`,
+`timers/build_wait`) are answered `unsupported` until milestone W2; handlers
+of the execution layer are answered by the adapters of the application
+repositories. The header handlers decide the execution-side steps of header
+verification (uncle hash, gas limit, fork times, base fee) with a stand-in of
+the application hook for the StableNet presets (`partb.go`). The adapter exits with status 0 after `bye`, 1 when
 its input ends without `bye`, and 2 on a protocol error.
 
 ## Traceability matrix

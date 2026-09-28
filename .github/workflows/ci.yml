@@ -70,6 +70,10 @@ jobs:
         run: |
           go -C tools build -o ../bin/coredet ./lint/coredet/cmd/coredet
           bin/coredet ./...
+      - name: heightlow (truncation of heights and rounds)
+        run: |
+          go -C tools build -o ../bin/heightlow ./lint/heightlow/cmd/heightlow
+          bin/heightlow -require "$(cat scripts/heightlow-rows.txt | tr -d ' ' | paste -sd, -)" ./...
       - name: dependency allow-list
         run: scripts/check-deps.sh
 
@@ -105,10 +109,12 @@ jobs:
           out=$(printf '%s\n' \
             '{"type":"hello","protocol":"wbft-vector/1","runner":{"name":"ci","version":"0"},"spec_commit":"none"}' \
             '{"type":"case","id":1,"runner":"crypto","handler":"keccak256","case":"smoke","kind":"pure","input":{"data":"0x"}}' \
+            '{"type":"case","id":2,"runner":"state_machine","handler":"rounds","case":"smoke","kind":"steps","input":{}}' \
             '{"type":"bye"}' | bin/wbft-vector-adapter)
           echo "$out"
           echo "$out" | sed -n 1p | grep -q '"protocol":"wbft-vector/1"'
-          echo "$out" | sed -n 2p | grep -q '"status":"unsupported"'
+          echo "$out" | sed -n 2p | grep -q '"hash":"0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470"'
+          echo "$out" | sed -n 3p | grep -q '"status":"unsupported"'
       # Placeholder: run the conformance vectors once the public
       # specification repository publishes them. Set the repository variable
       # WBFT_SPEC_REPOSITORY (owner/name) to enable. The runner is expected at
@@ -119,12 +125,14 @@ jobs:
           repository: ${{ vars.WBFT_SPEC_REPOSITORY }}
           path: wbft-spec
       - if: ${{ vars.WBFT_SPEC_REPOSITORY != '' }}
-        name: conformance vectors (all cases unsupported in W0)
+        name: conformance vectors
         run: |
           pip install pyyaml
-          # check_adapter.py exits 1 while cases are unsupported; W0 checks
-          # the protocol only, so the exit status is reported, not enforced.
-          python3 wbft-spec/tools/vectorgen/check_adapter.py wbft-spec/vectors -- bin/wbft-vector-adapter || true
+          # check_adapter.py exits 1 while any case is unsupported (the
+          # consensus-core handlers come with W2, execution handlers belong
+          # to other adapters), so the gate is on failed cases only.
+          python3 wbft-spec/tools/vectorgen/check_adapter.py wbft-spec/vectors -- bin/wbft-vector-adapter | tee vectors.txt || true
+          grep -q '^pass=[0-9]* fail=0 ' vectors.txt
       - if: ${{ vars.WBFT_SPEC_REPOSITORY != '' }}
         name: traceability matrix
         run: |
@@ -136,3 +144,20 @@ jobs:
         with:
           name: traceability
           path: traceability.md
+
+  determinism-cross-arch:
+    # The binary64 quorum and round-timeout tables and the reference sort
+    # fixtures must give the same results on amd64 and arm64.
+    name: determinism (${{ matrix.runner }})
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-latest, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25.x"
+          cache-dependency-path: "**/go.sum"
+      - run: go test -count=1 ./validator/ ./consensus/ ./internal/refsort/ ./types/ ./epoch/

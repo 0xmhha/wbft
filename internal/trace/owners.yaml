@@ -1517,17 +1517,6 @@ WBFT-VEC-001:
   owner: cmd/wbft-vector-adapter
   class: spec
 
-WBFT-VEC-002:
-  owner: cmd/wbft-vector-adapter
-  symbols: node.Config
-
-WBFT-VEC-004:
-  owner: cmd/wbft-vector-adapter
-  symbols: NODE_START.improvements, wbft_nodeInfo
-
-WBFT-VEC-005:
-  owner: cmd/wbft-vector-adapter
-
 WBFT-VEC-003:
   owner: spec
   class: spec
@@ -1661,17 +1650,6 @@ WBFT-VEC-053:
   owner: cmd/wbft-vector-adapter, wbft-sdk adapter, wbft-stablenet adapter
 
 WBFT-VEC-054:
-  owner: spec runner
-  class: spec
-
-WBFT-VEC-055:
-  owner: cmd/wbft-vector-adapter, wbft-sdk adapter, wbft-stablenet adapter
-
-WBFT-VEC-056:
-  owner: spec runner
-  class: spec
-
-WBFT-VEC-057:
   owner: spec runner
   class: spec
 
