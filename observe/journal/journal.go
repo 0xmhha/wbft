@@ -48,6 +48,10 @@ type Options struct {
 	Synchronous bool
 }
 
+// DefaultEnabled is the default of the node setting that turns the journal
+// on: a node keeps a journal unless its operator turns it off.
+const DefaultEnabled = true
+
 // DefaultOptions returns the defaults: keep 100000 heights and at most 8 GiB
 // in segments of 64 MiB, a queue of 65536 records or 64 MiB.
 func DefaultOptions(dir string) Options {
