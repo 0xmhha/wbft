@@ -107,6 +107,7 @@ func ValidatorsAt(chain types.ChainReader, cfg *types.Config, n types.Height, pa
 	if err != nil {
 		return nil, err
 	}
+	// Spec: WBFT-PARAM-053 (policy of height n; the base policy for height 0)
 	pol := cfg.ConfigAt(n).ProposerPolicy
 	if pol == nil {
 		return nil, ErrNoProposerPolicy

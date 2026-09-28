@@ -245,6 +245,7 @@ func epochOf(idx ...int) *types.EpochInfo {
 	return ei
 }
 
+// Covers: WBFT-PARAM-053
 func TestValidatorsAt(t *testing.T) {
 	cfg := types.NewConfig(types.WBFTParams{EpochLength: 4, ProposerPolicy: u64(0)},
 		[]types.Transition{{Block: big.NewInt(6), WBFT: &types.WBFTParams{ProposerPolicy: u64(1)}}},
@@ -277,10 +278,20 @@ func TestValidatorsAt(t *testing.T) {
 			}
 		}
 	}
-	// Height 0 is the configuration's genesis set.
+	// Height 0 is the configuration's genesis set with the base policy.
 	vs, err := ValidatorsAt(c, cfg, types.HeightFromUint64(0), types.Hash{}, nil)
-	if err != nil || vs.Len() != 2 {
+	if err != nil || vs.Len() != 2 || vs.Policy().ID != 0 {
 		t.Fatalf("genesis set: %v", err)
+	}
+	// The policy of height h is config_at(h), except at height 0: a
+	// transition at block 0 does not reach the height-0 set.
+	at0 := types.NewConfig(types.WBFTParams{EpochLength: 4, ProposerPolicy: u64(0)},
+		[]types.Transition{{Block: big.NewInt(0), WBFT: &types.WBFTParams{ProposerPolicy: u64(1)}}}, cfg.Init, nil)
+	if vs, err := ValidatorsAt(c, at0, types.HeightFromUint64(0), types.Hash{}, nil); err != nil || vs.Policy().ID != 0 {
+		t.Errorf("height 0 with a transition at 0: %v", err)
+	}
+	if vs, err := ValidatorsAt(c, at0, types.HeightFromUint64(1), codec.BlockHash(hs[0]), nil); err != nil || vs.Policy().ID != 1 {
+		t.Errorf("height 1 with a transition at 0: %v", err)
 	}
 	check(1, hs[0], []int{0, 1, 2}, 0)
 	check(4, hs[3], []int{0, 1, 2}, 0) // an epoch block is sealed by the previous set

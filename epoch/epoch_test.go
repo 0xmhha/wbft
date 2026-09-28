@@ -150,7 +150,7 @@ func bitmap(idx ...uint32) *types.AggregatedSeal {
 // A-04 §6.8, epoch 1: the computation at e = 4 with the executed output of
 // the specification, and the verification of an epoch block against it.
 //
-// Covers: WBFT-EPOCH-021, WBFT-HDR-132
+// Covers: WBFT-EPOCH-021, WBFT-HDR-132, WBFT-PARAM-053
 func TestComputeNextEpochInfoWorkedExample(t *testing.T) {
 	var v [5]types.Address
 	for i := range v {
@@ -268,6 +268,21 @@ func TestComputeNextEpochInfoWorkedExample(t *testing.T) {
 	// A block that is not an epoch block has no EpochInfo.
 	if ei, err := ComputeNextEpochInfo(c, cfg, b3, cands); err != nil || ei != nil {
 		t.Errorf("non-epoch block: %v %v", ei, err)
+	}
+
+	// The diligence computation takes the proposer policy from config_at of
+	// the epoch block: without a base policy, a transition at block 4
+	// supplies it and one at block 5 does not.
+	for _, tt := range []struct {
+		at int64
+		ok bool
+	}{{4, true}, {5, false}} {
+		c2 := types.NewConfig(types.WBFTParams{EpochLength: 4},
+			[]types.Transition{{Block: big.NewInt(tt.at), WBFT: &types.WBFTParams{ProposerPolicy: &pol}}}, cfg.Init, nil)
+		_, err := ComputeNextEpochInfo(c, c2, e, cands)
+		if tt.ok && err != nil || !tt.ok && !errors.Is(err, validator.ErrNoProposerPolicy) {
+			t.Errorf("policy from a transition at %d: %v", tt.at, err)
+		}
 	}
 }
 

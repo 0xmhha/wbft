@@ -117,8 +117,8 @@ WBFT-PARAM-052:
   symbols: types.Config.ConfigAt
 
 WBFT-PARAM-053:
-  owner: types, header
-  symbols: types.Config.ConfigAt, header.PrepareProposal, header.VerifyHeader
+  owner: types, header, consensus, validator, epoch
+  symbols: types.Config.ConfigAt, header.PrepareProposal, header.VerifyHeader, step.startNewRound, step.startRoundTimer, validator.ValidatorsAt, epoch.ComputeNextEpochInfo
 
 WBFT-PARAM-054:
   owner: validator, types

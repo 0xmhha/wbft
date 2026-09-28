@@ -308,6 +308,7 @@ func ComputeNextEpochInfo(chain types.ChainReader, cfg *types.Config, e *types.H
 	}
 
 	// Replay proposer opportunities, oldest block first.
+	// Spec: WBFT-PARAM-053 (policy of the epoch block)
 	pol := cfg.ConfigAt(e.Number).ProposerPolicy
 	if pol == nil {
 		return nil, validator.ErrNoProposerPolicy
