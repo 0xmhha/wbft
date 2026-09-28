@@ -14,6 +14,7 @@ import (
 	"github.com/0xmhha/wbft/crypto/ecdsa"
 	"github.com/0xmhha/wbft/crypto/keccak"
 	"github.com/0xmhha/wbft/types"
+	"github.com/0xmhha/wbft/validator"
 )
 
 // A-04 §6.8 "Shuffle vectors".
@@ -102,6 +103,7 @@ func TestSortCandidates(t *testing.T) {
 	}
 }
 
+// Covers: WBFT-EPOCH-023
 func TestInitialEpochInfo(t *testing.T) {
 	init := types.GenesisInit{Validators: []types.Address{{1}, {2}}, BLSPublicKeys: [][]byte{{0xa}, {0xb}}}
 	ei, err := InitialEpochInfo(init)
@@ -146,7 +148,9 @@ func bitmap(idx ...uint32) *types.AggregatedSeal {
 }
 
 // A-04 §6.8, epoch 1: the computation at e = 4 with the executed output of
-// the specification.
+// the specification, and the verification of an epoch block against it.
+//
+// Covers: WBFT-EPOCH-021, WBFT-HDR-132
 func TestComputeNextEpochInfoWorkedExample(t *testing.T) {
 	var v [5]types.Address
 	for i := range v {
@@ -229,8 +233,26 @@ func TestComputeNextEpochInfoWorkedExample(t *testing.T) {
 	if err := VerifyEpochInfo(c, cfg, withInfo(bad), cands); !errors.Is(err, ErrEpochInfoMismatch) {
 		t.Errorf("verify changed diligence: %v", err)
 	}
-	if err := VerifyEpochInfo(c, cfg, e, cands); err == nil {
-		t.Error("epoch block without EpochInfo verified")
+	if err := VerifyEpochInfo(c, cfg, e, cands); !errors.Is(err, validator.ErrEpochInfoNil) {
+		t.Errorf("epoch block without EpochInfo: %v", err)
+	}
+	// Every difference of the three lists makes the block invalid.
+	for name, mut := range map[string]func(x *types.EpochInfo){
+		"candidate address":    func(x *types.EpochInfo) { x.Candidates[4].Addr[0] ^= 1 },
+		"candidate dropped":    func(x *types.EpochInfo) { x.Candidates = x.Candidates[:4] },
+		"candidate added":      func(x *types.EpochInfo) { x.Candidates = append(x.Candidates, x.Candidates[0]) },
+		"validator index":      func(x *types.EpochInfo) { x.Validators[0], x.Validators[1] = x.Validators[1], x.Validators[0] },
+		"validator dropped":    func(x *types.EpochInfo) { x.Validators = x.Validators[:4] },
+		"key byte":             func(x *types.EpochInfo) { x.BLSPublicKeys[2] = []byte{0x7f} },
+		"key dropped":          func(x *types.EpochInfo) { x.BLSPublicKeys = x.BLSPublicKeys[:4] },
+		"key added":            func(x *types.EpochInfo) { x.BLSPublicKeys = append(x.BLSPublicKeys, []byte{1}) },
+		"key longer than sent": func(x *types.EpochInfo) { x.BLSPublicKeys[0] = append(x.BLSPublicKeys[0], 0) },
+	} {
+		x := ei.Copy()
+		mut(x)
+		if err := VerifyEpochInfo(c, cfg, withInfo(x), cands); !errors.Is(err, ErrEpochInfoMismatch) {
+			t.Errorf("%s: %v", name, err)
+		}
 	}
 
 	// A candidate without a key stays a candidate but is not a validator.
@@ -246,5 +268,45 @@ func TestComputeNextEpochInfoWorkedExample(t *testing.T) {
 	// A block that is not an epoch block has no EpochInfo.
 	if ei, err := ComputeNextEpochInfo(c, cfg, b3, cands); err != nil || ei != nil {
 		t.Errorf("non-epoch block: %v %v", ei, err)
+	}
+}
+
+// The genesis extra built from the configuration: empty vanity and reveal,
+// zero rounds, no seals, the gas tip (INITIAL_GAS_TIP when absent) and the
+// initial EpochInfo.
+//
+// Covers: WBFT-ENC-060
+func TestGenesisExtra(t *testing.T) {
+	init := types.GenesisInit{Validators: []types.Address{{1}, {2}}, BLSPublicKeys: [][]byte{{0xa}, {0xb}}}
+	want, _ := InitialEpochInfo(init)
+	for _, tt := range []struct {
+		tip  *big.Int
+		want uint64
+	}{{nil, types.InitialGasTip}, {big.NewInt(0), 0}, {big.NewInt(5), 5}} {
+		b, err := GenesisExtra(init, tt.tip)
+		if err != nil {
+			t.Fatal(err)
+		}
+		x, err := codec.DecodeExtraBytes(b)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(x.VanityData) != 0 || len(x.RandaoReveal) != 0 || x.PrevRound != 0 || x.Round != 0 ||
+			x.PrevPreparedSeal != nil || x.PrevCommittedSeal != nil || x.PreparedSeal != nil || x.CommittedSeal != nil {
+			t.Errorf("tip %v: fields %+v", tt.tip, x)
+		}
+		if x.GasTip == nil || x.GasTip.Uint64() != tt.want {
+			t.Errorf("tip %v: gas tip %v, want %d", tt.tip, x.GasTip, tt.want)
+		}
+		if x.EpochInfo == nil || !slices.Equal(x.EpochInfo.Validators, want.Validators) ||
+			!slices.Equal(x.EpochInfo.Candidates, want.Candidates) || len(x.EpochInfo.BLSPublicKeys) != 2 {
+			t.Errorf("tip %v: epoch info %+v", tt.tip, x.EpochInfo)
+		}
+	}
+	if _, err := GenesisExtra(init, big.NewInt(-1)); err == nil {
+		t.Error("negative gas tip encoded")
+	}
+	if _, err := GenesisExtra(types.GenesisInit{Validators: []types.Address{{1}}}, nil); err == nil {
+		t.Error("validator without key accepted")
 	}
 }

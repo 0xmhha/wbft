@@ -29,6 +29,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"math/big"
 
 	"github.com/0xmhha/wbft/codec"
 	"github.com/0xmhha/wbft/crypto/keccak"
@@ -143,6 +144,24 @@ func InitialEpochInfo(init types.GenesisInit) (*types.EpochInfo, error) {
 		ei.BLSPublicKeys = append(ei.BLSPublicKeys, append([]byte(nil), init.BLSPublicKeys[i]...))
 	}
 	return ei, nil
+}
+
+// GenesisExtra is the Extra of the genesis header built from the chain
+// configuration: vanity and randao reveal empty, rounds 0, seals absent,
+// gas tip gasTip (INITIAL_GAS_TIP when nil) and the initial EpochInfo of
+// init. A negative gas tip fails the encoding as in the reference.
+//
+// Spec: WBFT-ENC-060, WBFT-EPOCH-023
+func GenesisExtra(init types.GenesisInit, gasTip *big.Int) ([]byte, error) {
+	ei, err := InitialEpochInfo(init)
+	if err != nil {
+		return nil, err
+	}
+	tip := new(big.Int).SetUint64(types.InitialGasTip)
+	if gasTip != nil {
+		tip.Set(gasTip)
+	}
+	return codec.EncodeExtra(&types.WBFTExtra{GasTip: tip, EpochInfo: ei})
 }
 
 // signerAddresses resolves the sealer indices of an aggregated seal with an
@@ -390,7 +409,7 @@ func ComputeNextEpochInfo(chain types.ChainReader, cfg *types.Config, e *types.H
 // each candidate, the validator count and indices, the key count and bytes.
 // Any error of the recomputation is returned.
 //
-// Spec: WBFT-EPOCH-021, WBFT-HDR-132
+// Spec: WBFT-EPOCH-021, WBFT-HDR-131, WBFT-HDR-132
 func VerifyEpochInfo(chain types.ChainReader, cfg *types.Config, e *types.Header, candidates []types.CandidateEntry) error {
 	want, err := ComputeNextEpochInfo(chain, cfg, e.Copy(), candidates)
 	if err != nil {
