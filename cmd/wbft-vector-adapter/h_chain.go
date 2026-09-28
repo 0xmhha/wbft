@@ -6,6 +6,7 @@ import (
 	"math/big"
 
 	"github.com/0xmhha/wbft/codec"
+	"github.com/0xmhha/wbft/internal/snetpartb"
 	"github.com/0xmhha/wbft/types"
 )
 
@@ -114,11 +115,7 @@ type chainConfig struct {
 
 // forks are the fork activations the Part B steps of header verification
 // read.
-type forks struct {
-	london   *big.Int
-	shanghai *uint64
-	cancun   *uint64
-}
+type forks = snetpartb.Forks
 
 func optU64(d *Dec) (*uint64, error) {
 	if d == nil {
@@ -149,11 +146,11 @@ func (c *chainConfig) build() (*types.Config, forks, error) {
 	if err != nil {
 		return nil, forks{}, err
 	}
-	f := forks{london: p.london}
-	if f.shanghai, err = optU64(c.ShanghaiTime); err != nil {
+	f := forks{London: p.london}
+	if f.Shanghai, err = optU64(c.ShanghaiTime); err != nil {
 		return nil, forks{}, err
 	}
-	if f.cancun, err = optU64(c.CancunTime); err != nil {
+	if f.Cancun, err = optU64(c.CancunTime); err != nil {
 		return nil, forks{}, err
 	}
 	return cfg, f, nil

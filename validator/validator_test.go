@@ -134,6 +134,8 @@ func TestProposerWorkedExample(t *testing.T) {
 }
 
 // A-04 §5.4: duplicate addresses and the empty set.
+//
+// Covers: WBFT-PROP-007
 func TestIsProposer(t *testing.T) {
 	a, b := addr(1), addr(2)
 	s, _ := NewSet([]types.Address{a, b, a}, [][]byte{{1}, {2}, {3}}, types.ProposerPolicy{})
@@ -243,6 +245,7 @@ func epochOf(idx ...int) *types.EpochInfo {
 	return ei
 }
 
+// Covers: WBFT-PARAM-053
 func TestValidatorsAt(t *testing.T) {
 	cfg := types.NewConfig(types.WBFTParams{EpochLength: 4, ProposerPolicy: u64(0)},
 		[]types.Transition{{Block: big.NewInt(6), WBFT: &types.WBFTParams{ProposerPolicy: u64(1)}}},
@@ -275,10 +278,20 @@ func TestValidatorsAt(t *testing.T) {
 			}
 		}
 	}
-	// Height 0 is the configuration's genesis set.
+	// Height 0 is the configuration's genesis set with the base policy.
 	vs, err := ValidatorsAt(c, cfg, types.HeightFromUint64(0), types.Hash{}, nil)
-	if err != nil || vs.Len() != 2 {
+	if err != nil || vs.Len() != 2 || vs.Policy().ID != 0 {
 		t.Fatalf("genesis set: %v", err)
+	}
+	// The policy of height h is config_at(h), except at height 0: a
+	// transition at block 0 does not reach the height-0 set.
+	at0 := types.NewConfig(types.WBFTParams{EpochLength: 4, ProposerPolicy: u64(0)},
+		[]types.Transition{{Block: big.NewInt(0), WBFT: &types.WBFTParams{ProposerPolicy: u64(1)}}}, cfg.Init, nil)
+	if vs, err := ValidatorsAt(c, at0, types.HeightFromUint64(0), types.Hash{}, nil); err != nil || vs.Policy().ID != 0 {
+		t.Errorf("height 0 with a transition at 0: %v", err)
+	}
+	if vs, err := ValidatorsAt(c, at0, types.HeightFromUint64(1), codec.BlockHash(hs[0]), nil); err != nil || vs.Policy().ID != 1 {
+		t.Errorf("height 1 with a transition at 0: %v", err)
 	}
 	check(1, hs[0], []int{0, 1, 2}, 0)
 	check(4, hs[3], []int{0, 1, 2}, 0) // an epoch block is sealed by the previous set
@@ -314,5 +327,47 @@ func TestValidatorsAt(t *testing.T) {
 	}
 	if _, err := ValidatorsAt(noInfo, cfg, types.HeightFromUint64(5), types.Hash{}, nil); !errors.Is(err, ErrEpochInfoNil) {
 		t.Errorf("epoch info nil: %v", err)
+	}
+}
+
+// The set built from an EpochInfo lists (candidates[validators[i]].addr,
+// bls_public_keys[i]) in the order of validators without sorting; an index
+// outside the candidates gives the zero address, extra keys are ignored and
+// too few keys are an error (the reference aborts).
+//
+// Covers: WBFT-TYPE-021
+func TestNewSetFromEpochInfo(t *testing.T) {
+	ei := &types.EpochInfo{
+		Candidates: []types.Candidate{
+			{Addr: addr(9), Diligence: types.DefaultDiligence},
+			{Addr: addr(3), Diligence: types.DefaultDiligence},
+			{Addr: addr(5), Diligence: types.DefaultDiligence},
+		},
+		Validators:    []uint32{2, 0, 7},
+		BLSPublicKeys: [][]byte{{0xa}, {0xb}, {0xc}, {0xd}},
+	}
+	s, err := NewSetFromEpochInfo(ei, types.ProposerPolicy{ID: types.Sticky})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []Member{
+		{Addr: addr(5), BLSPublicKey: []byte{0xa}},
+		{Addr: addr(9), BLSPublicKey: []byte{0xb}},
+		{Addr: types.Address{}, BLSPublicKey: []byte{0xc}},
+	}
+	if s.Len() != len(want) {
+		t.Fatalf("len = %d, want %d", s.Len(), len(want))
+	}
+	for i, w := range want {
+		if m := s.At(i); m.Addr != w.Addr || string(m.BLSPublicKey) != string(w.BLSPublicKey) {
+			t.Errorf("member %d = %x/%x, want %x/%x", i, m.Addr, m.BLSPublicKey, w.Addr, w.BLSPublicKey)
+		}
+	}
+	if !s.Policy().IsSticky() {
+		t.Error("policy not kept")
+	}
+	ei.BLSPublicKeys = ei.BLSPublicKeys[:2]
+	if _, err := NewSetFromEpochInfo(ei, types.ProposerPolicy{}); !errors.Is(err, ErrKeysShort) {
+		t.Errorf("short key list: %v", err)
 	}
 }

@@ -263,5 +263,9 @@ func sortedAddrs[V any](m map[types.Address]V) []types.Address {
 	return keys
 }
 
-// blockHash is block_hash of a proposal.
+// blockHash is block_hash of a proposal, the digest the core votes on. The
+// proposal is the header after process_finalize as the application built
+// it; the digest does not cover Round, PreparedSeal or CommittedSeal.
+//
+// Spec: WBFT-HDR-041
 func blockHash(b *types.Block) types.Hash { return codec.BlockHash(b.Header) }

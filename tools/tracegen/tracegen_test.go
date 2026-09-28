@@ -292,3 +292,120 @@ func TestRunBaseline(t *testing.T) {
 		t.Errorf("both flags: exit = %d, want 2", code)
 	}
 }
+
+func TestCheck(t *testing.T) {
+	m := Matrix{Rows: []Row{
+		// Complete by vector.
+		{ID: "WBFT-TYPE-001", Source: "A-01-x.md", Owner: "types", Symbols: "types.Hash", Code: []string{"types/hash.go:3"}, Handlers: []string{"crypto/keccak256"}},
+		// Complete by test; unqualified symbol in an owner package.
+		{ID: "WBFT-TYPE-002", Source: "A-01-x.md", Owner: "types, codec", Symbols: "X.M", Code: []string{"codec/x.go:9"}, Tests: []string{"codec/x_test.go:4"}},
+		// Unimplemented handler, no test; comment outside the owner;
+		// undeclared symbol.
+		{ID: "WBFT-TYPE-003", Source: "A-01-x.md", Owner: "types", Symbols: "types.Y", Code: []string{"header/y.go:1"}, Handlers: []string{"execution/run"}},
+		// Unknown owner package, no symbols, no code, no evidence.
+		{ID: "WBFT-TYPE-004", Source: "A-01-x.md", Owner: "nosuch"},
+		// Out of scope: classed, or another chapter.
+		{ID: "WBFT-TYPE-005", Source: "A-01-x.md", Class: "external"},
+		{ID: "WBFT-SM-001", Source: "A-05-x.md", Owner: "consensus"},
+	}}
+	decls := Decls{
+		Name: map[string]string{"types": "types", "codec": "codec", "header": "header"},
+		Names: map[string]map[string]bool{
+			"types": {"Hash": true}, "codec": {"X": true, "X.M": true}, "header": {"Y": true},
+		},
+	}
+	res := Check(m, []string{"A-01", "A-02"}, map[string]bool{"crypto/keccak256": true}, decls)
+	if res.Checked != 4 || res.ByVector != 1 || res.ByTest != 1 {
+		t.Errorf("checked=%d by_vector=%d by_test=%d, want 4 1 1", res.Checked, res.ByVector, res.ByTest)
+	}
+	var got []string
+	for _, g := range res.Gaps {
+		got = append(got, g.ID+" "+g.Kind)
+	}
+	want := []string{
+		"WBFT-TYPE-003 symbols", "WBFT-TYPE-003 code", "WBFT-TYPE-003 evidence",
+		"WBFT-TYPE-004 owner", "WBFT-TYPE-004 symbols", "WBFT-TYPE-004 code", "WBFT-TYPE-004 evidence",
+	}
+	if !slices.Equal(got, want) {
+		t.Errorf("gaps = %v, want %v", got, want)
+	}
+	if res.Complete() {
+		t.Error("Complete() = true with gaps")
+	}
+	if s := res.Summary(); !strings.Contains(s, "checked=4 complete=2 by_vector=1 by_test=1 incomplete=2 gaps=7") {
+		t.Errorf("summary = %q", s)
+	}
+}
+
+func TestScanDecls(t *testing.T) {
+	root := t.TempDir()
+	files := map[string]string{
+		"a/a.go":      "package a\n\ntype T struct{ F int }\n\ntype I interface{ M() }\n\nfunc (t *T) Get() int { return t.F }\n\nfunc New() T { return T{} }\n\nconst C = 1\n\nvar V, W int\n",
+		"b/src/s.go":  "package source\n\nfunc Load() {}\n",
+		"b/b_test.go": "package b\n\nfunc TestOnly() {}\n",
+		"c/c.txt":     "not go",
+	}
+	for f, text := range files {
+		p := filepath.Join(root, f)
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(text), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	d, err := ScanDecls(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for pkg, want := range map[string]bool{"a": true, "b/src": true, "b": false, "c": false} {
+		if got := d.IsPackage(pkg); got != want {
+			t.Errorf("IsPackage(%q) = %v, want %v", pkg, got, want)
+		}
+	}
+	for sym, want := range map[string]bool{
+		"a.T": true, "a.T.F": true, "a.T.Get": true, "a.I.M": true, "a.New": true, "a.C": true, "a.W": true,
+		"source.Load": true, "a.Missing": false, "b.TestOnly": false, "T.Get": true, "Load": false,
+	} {
+		if got := d.Resolve(sym, []string{"a"}); got != want {
+			t.Errorf("Resolve(%q) = %v, want %v", sym, got, want)
+		}
+	}
+}
+
+func TestAdapterHandlers(t *testing.T) {
+	dir := t.TempDir()
+	script := filepath.Join(dir, "adapter")
+	hello := `{"type":"hello","protocol":"wbft-vector/1","handlers":["crypto/keccak256","header/verify_light"]}`
+	if err := os.WriteFile(script, []byte("#!/bin/sh\ncat >/dev/null\necho '"+hello+"'\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	got, err := AdapterHandlers(script)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || !got["crypto/keccak256"] || !got["header/verify_light"] {
+		t.Errorf("handlers = %v", got)
+	}
+	bad := filepath.Join(dir, "bad")
+	if err := os.WriteFile(bad, []byte("#!/bin/sh\necho '{\"type\":\"result\"}'\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := AdapterHandlers(bad); err == nil {
+		t.Error("no error for a bad hello")
+	}
+}
+
+func TestReadHandlers(t *testing.T) {
+	f := filepath.Join(t.TempDir(), "h.txt")
+	if err := os.WriteFile(f, []byte("a/b, c/d\ne/f\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, err := readHandlers(f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 3 || !got["a/b"] || !got["c/d"] || !got["e/f"] {
+		t.Errorf("handlers = %v", got)
+	}
+}

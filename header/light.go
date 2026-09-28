@@ -136,7 +136,7 @@ func VerifyLight(in LightInputs, h, parent *types.Header) (LightResult, error) {
 			return Invalid, stepErr("H20", className(err), err)
 		}
 	}
-	// Spec: WBFT-EPOCH-006
+	// Spec: WBFT-EPOCH-006, WBFT-HDR-131
 	isEpoch, err := validator.IsEpochBlock(in.Config, h.Number)
 	if err != nil {
 		return CannotDecide, err

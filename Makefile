@@ -1,7 +1,7 @@
 # Developer shortcuts; CI runs the same commands (.github/workflows).
 export CGO_ENABLED := 1
 
-.PHONY: all build test lint coredet heightlow deps lint-negative tools adapter tracegen sim sim-full faults replay
+.PHONY: all build test lint coredet heightlow deps lint-negative tools adapter tracegen headerscan sim sim-full faults replay
 
 all: build test lint
 
@@ -44,6 +44,10 @@ adapter:
 
 tracegen:
 	go -C tools build -o ../bin/tracegen ./tracegen
+
+# Verifies testnet headers over JSON-RPC (bin/headerscan -h).
+headerscan:
+	go -C tools build -o ../bin/headerscan ./headerscan
 
 # Simulation: the scenario bundle with WBFT_SIM_SEEDS seeds per scenario
 # (sim-full: 10000), and crashes at every fault point.

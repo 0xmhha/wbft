@@ -125,6 +125,7 @@ func (st *step) startNewRound(round types.Round, cause string) {
 		s.rcs.clearLowerThan(round)
 	}
 	s.rcs.newRound(round)
+	// Spec: WBFT-PARAM-053 (block period for the next block: latest + 1)
 	st.emit(RequestBuild{
 		Height:      newView.Sequence,
 		Round:       round,
@@ -233,6 +234,7 @@ func (st *step) startRoundTimer() {
 	s.future = nil
 	s.gen[RoundTimer]++
 	s.roundLive = true
+	// Spec: WBFT-PARAM-053 (timeouts at the current sequence)
 	d, _ := RoundTimeout(s.config(s.cur.view.Sequence), s.cur.view.Round)
 	st.emit(ArmTimer{Kind: RoundTimer, View: s.cur.view, Round: s.cur.view.Round, Duration: d, Gen: s.gen[RoundTimer]})
 }

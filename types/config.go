@@ -269,6 +269,34 @@ func (c *Config) CheckTransitions() error {
 	return nil
 }
 
+// CheckProposerPolicy reports a configuration whose base parameters have no
+// proposer policy. The reference aborts whenever it builds a validator set
+// with the base policy and when a validator starts its engine, so a node
+// refuses such a configuration at start-up.
+//
+// Spec: WBFT-PARAM-032, WBFT-PARAM-034
+func (c *Config) CheckProposerPolicy() error {
+	if c.base.ProposerPolicy == nil {
+		return &ErrConfig{Field: "anzeon.wbft.proposerPolicy", Reason: "missing"}
+	}
+	return nil
+}
+
+// Check reports genesis validators that a chain configuration must not
+// have: none at all, or a number of BLS public keys other than the number of
+// validators.
+//
+// Spec: WBFT-EPOCH-024
+func (g GenesisInit) Check() error {
+	switch {
+	case len(g.Validators) == 0:
+		return &ErrConfig{Field: "anzeon.init.validators", Reason: "empty"}
+	case len(g.BLSPublicKeys) != len(g.Validators):
+		return &ErrConfig{Field: "anzeon.init.blsPublicKeys", Reason: fmt.Sprintf("%d keys for %d validators", len(g.BLSPublicKeys), len(g.Validators))}
+	}
+	return nil
+}
+
 // chainConfigJSON is the part of the genesis chain configuration that wbft
 // reads.
 type chainConfigJSON struct {

@@ -2,6 +2,7 @@ package types
 
 import (
 	"encoding/json"
+	"errors"
 	"math"
 	"math/big"
 	"os"
@@ -200,6 +201,7 @@ func TestParseChainConfig(t *testing.T) {
 	}
 }
 
+// Covers: WBFT-PROP-002
 func TestProposerOf(t *testing.T) {
 	h := &Header{Number: HeightFromUint64(0), Coinbase: Address{1}}
 	if ProposerOf(h) != (Address{}) {
@@ -208,5 +210,83 @@ func TestProposerOf(t *testing.T) {
 	h.Number = HeightFromUint64(1)
 	if ProposerOf(h) != (Address{1}) {
 		t.Error("proposer is not the coinbase")
+	}
+}
+
+// View comparison orders by sequence first and by round only for equal
+// sequences, including heights and rounds above 2^64.
+//
+// Covers: WBFT-TYPE-020
+func TestViewCmp(t *testing.T) {
+	big64 := func(add int64) Height {
+		h, err := HeightFromBig(new(big.Int).Add(two64(), big.NewInt(add)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return h
+	}
+	view := func(s Height, r uint64) View { return View{Sequence: s, Round: RoundFromUint64(r)} }
+	for _, tt := range []struct {
+		a, b View
+		want int
+	}{
+		{view(HeightFromUint64(5), 0), view(HeightFromUint64(5), 0), 0},
+		{view(HeightFromUint64(5), 1), view(HeightFromUint64(5), 0), 1},
+		{view(HeightFromUint64(5), 0), view(HeightFromUint64(5), 1), -1},
+		// A higher sequence wins over any round.
+		{view(HeightFromUint64(6), 0), view(HeightFromUint64(5), math.MaxUint64), 1},
+		{view(HeightFromUint64(4), math.MaxUint64), view(HeightFromUint64(5), 0), -1},
+		// No truncation: 2^64 + 1 is above 1.
+		{view(big64(1), 0), view(HeightFromUint64(1), 7), 1},
+		{view(big64(0), 3), view(big64(0), 2), 1},
+	} {
+		if got := tt.a.Cmp(tt.b); got != tt.want {
+			t.Errorf("%v/%v Cmp %v/%v = %d, want %d", tt.a.Sequence, tt.a.Round, tt.b.Sequence, tt.b.Round, got, tt.want)
+		}
+		if got := tt.b.Cmp(tt.a); got != -tt.want {
+			t.Errorf("reverse of %v/%v: %d", tt.a.Sequence, tt.a.Round, got)
+		}
+	}
+}
+
+// A configuration without anzeon.wbft.proposerPolicy is refused for start-up
+// even when a transition sets a policy, since heights before the transition
+// and height 0 use the base policy.
+//
+// Covers: WBFT-PARAM-032, WBFT-PARAM-034
+func TestCheckProposerPolicy(t *testing.T) {
+	pol := uint64(1)
+	withTransition := NewConfig(WBFTParams{EpochLength: 10}, []Transition{{Block: big.NewInt(5), WBFT: &WBFTParams{ProposerPolicy: &pol}}}, GenesisInit{}, nil)
+	var e *ErrConfig
+	if err := withTransition.CheckProposerPolicy(); !errors.As(err, &e) || e.Field != "anzeon.wbft.proposerPolicy" {
+		t.Errorf("missing base policy: %v", err)
+	}
+	for _, id := range []uint64{0, 1, 7} {
+		if err := NewConfig(WBFTParams{ProposerPolicy: &id}, nil, GenesisInit{}, nil).CheckProposerPolicy(); err != nil {
+			t.Errorf("policy %d: %v", id, err)
+		}
+	}
+}
+
+// The genesis validators are refused unless there is at least one and the
+// numbers of validators and BLS keys are equal.
+//
+// Covers: WBFT-EPOCH-024
+func TestGenesisInitCheck(t *testing.T) {
+	a, k := Address{1}, []byte{0xa}
+	for name, tt := range map[string]struct {
+		init GenesisInit
+		ok   bool
+	}{
+		"one":        {GenesisInit{Validators: []Address{a}, BLSPublicKeys: [][]byte{k}}, true},
+		"two":        {GenesisInit{Validators: []Address{a, {2}}, BLSPublicKeys: [][]byte{k, k}}, true},
+		"empty":      {GenesisInit{}, false},
+		"keys only":  {GenesisInit{BLSPublicKeys: [][]byte{k}}, false},
+		"fewer keys": {GenesisInit{Validators: []Address{a, {2}}, BLSPublicKeys: [][]byte{k}}, false},
+		"more keys":  {GenesisInit{Validators: []Address{a}, BLSPublicKeys: [][]byte{k, k}}, false},
+	} {
+		if err := tt.init.Check(); (err == nil) != tt.ok {
+			t.Errorf("%s: err = %v, want ok = %v", name, err, tt.ok)
+		}
 	}
 }

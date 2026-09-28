@@ -25,6 +25,14 @@
 // column of the matrix; -baseline FILE compares the matrix with such a file,
 // prints every difference to standard error and makes the exit status 1 when
 // there is one (the repository baseline is internal/trace/baseline.tsv).
+//
+// -check CHAPTERS (comma-separated, e.g. A-01,A-02) checks every wbft-owned
+// requirement of those chapters for an owner package that exists, symbols,
+// a "// Spec:" comment in an owner package and evidence: a vector handler
+// that the adapter implements (-adapter runs the adapter and reads its hello;
+// -handlers reads the names from a file) or a test with "// Covers: ID". It
+// prints every gap to standard error and makes the exit status 1 when there
+// is one. It needs -owners and -code.
 package main
 
 import (
@@ -55,6 +63,9 @@ func run(args []string, stdout, stderr io.Writer) int {
 	strict := fs.Bool("strict", false, "exit 1 when a source references an ID that is not in the requirement list")
 	baseline := fs.String("baseline", "", "baseline file to compare with; exit 1 when the requirement list or the vector handlers differ")
 	writeBaseline := fs.String("write-baseline", "", "write the requirement list and vector handlers of the matrix to this baseline file")
+	check := fs.String("check", "", "comma-separated chapters (e.g. A-01,A-08) whose wbft-owned requirements must have symbols, code and evidence")
+	adapter := fs.String("adapter", "", "vector adapter binary whose hello lists the implemented handlers (with -check)")
+	handlersFile := fs.String("handlers", "", "file with the implemented vector handlers (with -check; alternative to -adapter)")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -70,6 +81,9 @@ func run(args []string, stdout, stderr io.Writer) int {
 	}
 	if *baseline != "" && *writeBaseline != "" {
 		return fail(fmt.Errorf("give at most one of -baseline and -write-baseline"))
+	}
+	if *check != "" && (*owners == "" || *code == "" || (*adapter == "") == (*handlersFile == "")) {
+		return fail(fmt.Errorf("-check needs -owners, -code and exactly one of -adapter and -handlers"))
 	}
 
 	var in Inputs
@@ -169,6 +183,29 @@ func run(args []string, stdout, stderr io.Writer) int {
 			status = 1
 		} else {
 			fmt.Fprintf(stderr, "tracegen: matrix matches baseline %s (%d requirements)\n", *baseline, len(want))
+		}
+	}
+	if *check != "" {
+		var handlers map[string]bool
+		if *adapter != "" {
+			handlers, err = AdapterHandlers(*adapter)
+		} else {
+			handlers, err = readHandlers(*handlersFile)
+		}
+		if err != nil {
+			return fail(err)
+		}
+		decls, err := ScanDecls(*code)
+		if err != nil {
+			return fail(err)
+		}
+		res := Check(m, splitList(*check), handlers, decls)
+		for _, g := range res.Gaps {
+			fmt.Fprintf(stderr, "tracegen: gap %s\n", g)
+		}
+		fmt.Fprintf(stderr, "tracegen: check %s: %s\n", *check, res.Summary())
+		if !res.Complete() {
+			status = 1
 		}
 	}
 	return status

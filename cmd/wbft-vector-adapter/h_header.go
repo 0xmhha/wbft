@@ -8,6 +8,7 @@ import (
 	"github.com/0xmhha/wbft/codec"
 	"github.com/0xmhha/wbft/crypto/ecdsa"
 	"github.com/0xmhha/wbft/header"
+	"github.com/0xmhha/wbft/internal/snetpartb"
 	"github.com/0xmhha/wbft/types"
 	"github.com/0xmhha/wbft/validator"
 	"github.com/0xmhha/wbft/validator/source"
@@ -45,7 +46,7 @@ func headerEnv(f *fixtureIn, now Dec) (*header.Env, error) {
 	return &header.Env{
 		Config: cfg,
 		Chain:  chain,
-		PartB:  &vectorPartB{forks: fk},
+		PartB:  &snetpartb.PartB{Forks: fk},
 		Now:    nowAt(sec),
 	}, nil
 }
@@ -128,7 +129,7 @@ func hVerifyLight(_ string, input json.RawMessage) (any, error) {
 	res, _ := header.VerifyLight(header.LightInputs{
 		Config:  cfg,
 		Trusted: &fixtureTrust{chain: chain, cfg: cfg},
-		PartB:   &vectorPartB{forks: fk},
+		PartB:   &snetpartb.PartB{Forks: fk},
 	}, h, chain.HeaderByHash(h.ParentHash))
 	return obj{"result": res.String()}, nil
 }

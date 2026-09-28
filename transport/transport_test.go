@@ -14,6 +14,8 @@ import (
 )
 
 // One case per row of the frame rules.
+//
+// Covers: WBFT-MSG-050
 func TestDecodeFrame(t *testing.T) {
 	msg := []byte{0xc3, 0x01, 0x02, 0x03}
 	wrapped := rlp.EncodeString(msg)
@@ -67,6 +69,7 @@ func TestFrameOutcomes(t *testing.T) {
 	}
 }
 
+// Covers: WBFT-MSG-051
 func TestCheckOutbound(t *testing.T) {
 	for code := uint64(0); code < 0x20; code++ {
 		err := CheckOutbound(code, []byte{0xc0})

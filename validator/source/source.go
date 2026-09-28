@@ -101,7 +101,12 @@ func (s *AuthoritySnapshot) Eligibility(addr types.Address) types.Eligibility {
 // AuthoritySource is implemented by the execution side of a node.
 type AuthoritySource interface {
 	// CandidatesAfterExecution returns the candidates of the epoch block
-	// whose execution is in progress in ctx.
+	// whose execution is in progress in ctx. The implementation reads them,
+	// and their BLS keys, from the state after the system-contract upgrades
+	// and the base-fee distribution of that block and before its state root
+	// is computed (post_state).
+	//
+	// Spec: WBFT-EPOCH-007
 	CandidatesAfterExecution(ctx context.Context) ([]types.CandidateEntry, error)
 	// Snapshot returns the snapshot of the executed block with that hash.
 	Snapshot(ctx context.Context, hash types.Hash) (*AuthoritySnapshot, error)

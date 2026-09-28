@@ -180,6 +180,8 @@ func TestOutcomeRows(t *testing.T) {
 
 // PREPAREs and COMMITs whose seal does not verify are rejected like a wrong
 // digest; a sealer outside the set fails before the BLS check.
+//
+// Covers: WBFT-CRYPTO-043
 func TestVerifySealMembership(t *testing.T) {
 	h := newHarness(t, 5, 1)
 	b := h.proposal(1)

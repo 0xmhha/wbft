@@ -102,6 +102,7 @@ dependencies never enter the `wbft` module graph:
 | `tools/lint/coredet` | `go/analysis` analyzer for the determinism rules that linters cannot express |
 | `tools/lint/heightlow` | Analyzer for the truncation of heights and rounds: every use of `RefLow64`, `RefLowInt64` or `RefLow32` carries `//wbft:low64 HH-nn` |
 | `tools/tracegen` | Builds the requirement traceability matrix |
+| `tools/headerscan` | Verifies the headers of a running network over JSON-RPC |
 | `internal/trace/owners.yaml` | Owner table read by `tracegen`: requirement ID to package and symbols |
 | `internal/trace/wbft-spec.ref` | Commit of wbft-spec that CI checks out |
 | `internal/trace/baseline.tsv` | Committed baseline of the matrix (requirement IDs and vector handlers) that CI compares against |
@@ -122,11 +123,8 @@ rejects anything else (`.golangci.yml`, `scripts/check-deps.sh`):
 
 `golang.org/x/sys` is linked as a dependency of the go-ethereum `crypto`
 package only; no `wbft` package may import it. The go-ethereum packages
-`core/*`, `consensus/*`, `eth/*` and `p2p` are forbidden. Because the go-stablenet fork has the module path
-`github.com/ethereum/go-ethereum`, a build that embeds `wbft` in the fork
-resolves these imports to the fork's packages; `wbft` therefore uses only
-APIs present in both upstream v1.17.x and the fork, and CI builds both ways
-(`.github/workflows/dual-build.yml`).
+`core/*`, `consensus/*`, `eth/*` and `p2p` are forbidden. `wbft` is built
+and tested against upstream go-ethereum v1.17.x only (`.github/workflows/ci.yml`).
 
 ## Build, test and lint
 
@@ -211,8 +209,18 @@ limits, empty payloads) are answered `unsupported` here and by the
 application's adapter there. Handlers of the execution layer are answered by
 the adapters of the application repositories. The header handlers decide the execution-side steps of header
 verification (uncle hash, gas limit, fork times, base fee) with a stand-in of
-the application hook for the StableNet presets (`partb.go`). The adapter exits with status 0 after `bye`, 1 when
+the application hook for the StableNet presets (`internal/snetpartb`). The adapter exits with status 0 after `bye`, 1 when
 its input ends without `bye`, and 2 on a protocol error.
+
+`scripts/cross-arch-vectors.sh` runs the vectors whose results rest on
+binary64 arithmetic (`validators/quorum`, `timers/round_timeout`) and writes
+one line per case with the adapter's result. CI runs it on amd64 and arm64
+(`determinism-cross-arch`) and fails when a case fails on either
+architecture or when the two result files differ.
+
+```sh
+scripts/cross-arch-vectors.sh <wbft-spec>/spec bin/wbft-vector-adapter vectors.txt
+```
 
 ## Simulation and journal replay
 
@@ -233,6 +241,28 @@ go test -run TestReplayDeterminism ./conformance/stepdriver/
 bin/wbft-replay -journal <dir>/<node> -chain <dir>/chain.rlp
 ```
 
+## Testnet header scan
+
+`tools/headerscan` checks the headers of a running StableNet network with
+the header rules of `wbft`. It fetches headers over JSON-RPC, one request at
+a time and at most five per second, and verifies every header of the scanned
+ranges with `header.VerifyHeader` (header-only mode with seal checks; the
+steps that need the parent state are skipped) and with `header.VerifyLight`.
+It also checks that the block hash computed by `wbft` equals the hash the
+node reports. The ranges are blocks 0 to 100 and, for every fork block F
+after genesis, blocks F to F + 100 (`-span`).
+
+```sh
+make headerscan
+bin/headerscan -rpc https://api.test.stablenet.network
+```
+
+The built-in preset is the StableNet testnet (chain ID 8283, Boho at block
+14 408 500); `-config` and `-forks` select another network. Every rejected
+header is printed with its number, hash, failing step and error; the exit
+status is 1 when a header is rejected. CI does not run the scan, since it
+depends on a public endpoint.
+
 ## Traceability matrix
 
 ```sh
@@ -247,6 +277,34 @@ every vector case, the owner table and the `// Spec:` / `// Covers:` comments
 in the code, and writes one row per requirement: owner, symbols, code and test
 references, vector handlers and case count. References to unknown IDs are
 reported on standard error; `-strict` turns them into a failure.
+
+### Coverage check
+
+`-check` decides, for the chapters it names, whether every requirement that
+`owners.yaml` gives to a `wbft` package (no `class`) is implemented and has
+evidence. A requirement passes when
+
+- every package in its `owner` field exists in the module,
+- its `symbols` field is not empty and every symbol is declared in the
+  module (`pkg.Name`, `pkg.Type.Method` or `pkg.Type.Field`, where `pkg` is
+  a package name; an unqualified name is looked up in the owner packages),
+- a `// Spec: ID` comment sits in a non-test file of one of its owner
+  packages, and
+- a vector handler that cites it is implemented by the adapter (its cases
+  then run in the conformance step, which fails on any failed case), or,
+  when no implemented handler cites it, a test file carries a
+  `// Covers: ID` comment next to the test that checks it.
+
+```sh
+make adapter tracegen
+bin/tracegen -spec <wbft-spec>/spec -vectors <wbft-spec>/spec/vectors \
+    -owners internal/trace/owners.yaml -code . -prefix WBFT- -o /dev/null \
+    -check A-01,A-02,A-03,A-04,A-08 -adapter bin/wbft-vector-adapter
+```
+
+Every gap is printed with its kind (`owner`, `symbols`, `code`,
+`evidence`) and the exit status is 1 when there is one. CI runs the check
+for chapters A-01, A-02, A-03, A-04 and A-08 after the conformance vectors.
 
 ### Baseline
 
