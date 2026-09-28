@@ -17,17 +17,36 @@ allowed=(
   github.com/cockroachdb/pebble
 )
 
+# Modules that may appear only as dependencies of allowed modules: the
+# go-ethereum crypto package links golang.org/x/sys/cpu (Keccak CPU feature
+# detection). No wbft package may import them directly; depguard's "modules"
+# rule already rejects a direct import, and the check below repeats it on the
+# build graph.
+transitive=(
+  golang.org/x/sys
+)
+
 # Modules that provide packages linked into wbft (test dependencies included).
 mods=$(go list -deps -test -f '{{with .Module}}{{.Path}}{{end}}' ./... | sort -u)
 
 status=0
 for m in $mods; do
   ok=0
-  for a in "${allowed[@]}"; do
+  for a in "${allowed[@]}" "${transitive[@]}"; do
     [[ "$m" == "$a" ]] && ok=1 && break
   done
   if [[ $ok -eq 0 ]]; then
     echo "check-deps: module $m is not in the allow-list" >&2
+    status=1
+  fi
+done
+
+# Direct imports of the transitive-only modules from wbft packages.
+direct=$(go list -test -f '{{range .Imports}}{{.}}
+{{end}}' ./... | sort -u)
+for t in "${transitive[@]}"; do
+  if grep -q "^$t" <<<"$direct"; then
+    echo "check-deps: module $t is imported directly; it is allowed only as a dependency of go-ethereum" >&2
     status=1
   fi
 done
