@@ -23,6 +23,31 @@ var poison = []byte("wbft-sim-poison")
 // errPoison is the execution failure of a poisoned block.
 var errPoison = errors.New("sim: block execution failed")
 
+// importFail is the transaction that makes a block fail import after it
+// passed proposal validation.
+var importFail = []byte("wbft-sim-import-fail")
+
+// errImportFail is the import failure of a block carrying importFail.
+var errImportFail = errors.New("sim: block import failed")
+
+// hasTx reports whether the transaction list of body holds tx.
+func hasTx(body types.BodyRaw, tx []byte) bool {
+	if len(body) == 0 {
+		return false
+	}
+	items, err := rlp.ListItems(body[0])
+	if err != nil {
+		return false
+	}
+	for _, it := range items {
+		var b []byte
+		if rlp.DecodeStrict(it, &b) == nil && string(b) == string(tx) {
+			return true
+		}
+	}
+	return false
+}
+
 // app is the fake application of a node: a key-value-free chain whose
 // headers are real WBFT headers (block hash, seals, EpochInfo and randao
 // are real). Its chain is durable: an imported block survives a crash.
@@ -62,18 +87,8 @@ func (a *app) Get(h types.Hash) (*source.AuthoritySnapshot, bool) {
 type partB struct{ a *app }
 
 func (p partB) VerifyPartB(step string, _ *types.Header, _ *types.Header, body types.BodyRaw) error {
-	if step != "P4" || len(body) == 0 {
-		return nil
-	}
-	items, err := rlp.ListItems(body[0])
-	if err != nil {
-		return nil
-	}
-	for _, it := range items {
-		var b []byte
-		if rlp.DecodeStrict(it, &b) == nil && string(b) == string(poison) {
-			return errPoison
-		}
+	if step == "P4" && hasTx(body, poison) {
+		return errPoison
 	}
 	return nil
 }
@@ -167,6 +182,13 @@ func (a *app) build(head *types.Header) (*types.Block, error) {
 			}
 		}
 	}
+	for _, bp := range s.sc.App.FailedImports {
+		if bp.Proposer == a.n.v.address && n.CmpUint64(bp.Height) == 0 {
+			if txs, err = rlp.Encode([][]byte{importFail}); err != nil {
+				return nil, err
+			}
+		}
+	}
 	if isEpoch, err := validator.IsEpochBlock(s.cfg, n); err == nil && isEpoch {
 		ei, err := epoch.ComputeNextEpochInfo(a.chain, s.cfg, h, s.candidates(index(h)))
 		if err != nil {
@@ -213,6 +235,13 @@ func (a *app) FinalizeBlock(b *types.Block, _ types.Round) error {
 			d = x.Delay
 		}
 	}
+	if hasTx(b.Body, importFail) {
+		for _, x := range s.sc.App.FailedImports {
+			if x.Height == index(b.Header) && x.Proposer == b.Header.Coinbase {
+				d = x.Delay
+			}
+		}
+	}
 	gen := a.gen
 	a.n.clock.AfterFunc(d, func() {
 		if gen != a.gen {
@@ -230,6 +259,13 @@ func (a *app) FinalizeBlock(b *types.Block, _ types.Round) error {
 func (a *app) importBlock(b *types.Block, path string) error {
 	s := a.n.s
 	h := index(b.Header)
+	if hasTx(b.Body, importFail) {
+		// The block fails import whenever it is imported, also when a
+		// repeated finalize arrives after the height was decided otherwise.
+		a.bad[codec.BlockHash(b.Header)] = true
+		delete(a.pending, h)
+		return errImportFail
+	}
 	head := a.head()
 	switch {
 	case h <= head:

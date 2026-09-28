@@ -85,6 +85,19 @@ type AppModel struct {
 	// BadProposals makes the blocks a proposer builds at a height fail
 	// execution at every node (the bad-block path).
 	BadProposals []BadProposal
+	// FailedImports makes the blocks a proposer builds at a height pass
+	// proposal validation and fail import at every node after the
+	// decision. A node records such a block as bad when its import fails,
+	// so the bad-block rule releases the lock in the next round change.
+	FailedImports []FailedImport
+}
+
+// FailedImport names a proposer and a height whose blocks fail import, and
+// the time the import takes before it fails.
+type FailedImport struct {
+	Height   uint64
+	Proposer types.Address
+	Delay    time.Duration
 }
 
 // SlowImport is the import time of the block of Height at Node (every
@@ -181,8 +194,8 @@ type Scenario struct {
 	NoProgress bool
 }
 
-// DefaultNode is the node of Part 1: reference behaviour with the two
-// restart-safety rules (the round-0 proposal guard of the core and the
+// DefaultNode is the default node: reference behaviour with the two
+// restart-safety rules (consensus.RestartSafety of the core and the
 // write-ahead log replay; the sign rules of privval are always on).
 func DefaultNode() NodeSpec {
 	return NodeSpec{Options: consensus.Options{Improvements: consensus.RestartSafety}, Profile: "compat", ReplayWAL: true}
@@ -229,6 +242,7 @@ type Result struct {
 	Crashes    int
 	Replays    []runner.ReplayInfo
 	Refinalize int                                 // blocks finalized again by the start-up handshake
+	Refusals   int                                 // signatures refused by the private validators of honest nodes
 	LockChecks int                                 // restored locks compared after a crash
 	Damaged    int                                 // disk faults applied
 	Journals   map[types.Address]map[string][]byte // journal files per node
@@ -349,6 +363,7 @@ type simulation struct {
 	refinal  int
 	locks    int
 	evidence int
+	refused  int
 	damaged  int
 	ctx      context.Context
 }
@@ -576,7 +591,7 @@ func (s *simulation) noteDecided(n *node, b *types.Block) {
 }
 
 func (s *simulation) result() *Result {
-	res := &Result{Rounds: s.rounds, Violations: s.viol, Crashes: s.crashes, Replays: s.replays, Refinalize: s.refinal,
+	res := &Result{Rounds: s.rounds, Violations: s.viol, Crashes: s.crashes, Replays: s.replays, Refinalize: s.refinal, Refusals: s.refused,
 		LockChecks: s.locks, Damaged: s.damaged, Evidence: s.evidence, Journals: map[types.Address]map[string][]byte{}, Events: map[string][]byte{}, SimTime: s.l.now}
 	for i := uint64(0); ; i++ {
 		b := s.decBlock[i]

@@ -3,6 +3,7 @@ package sim
 import (
 	"bytes"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"math/big"
 	"math/rand/v2"
@@ -181,9 +182,12 @@ func (n *node) start() {
 		fail(err)
 		return
 	case runner.Refinalize:
-		if err := n.app.importBlock(cr.Block, "sealed_locally"); err != nil {
+		switch err := n.app.importBlock(cr.Block, "sealed_locally"); {
+		case errors.Is(err, errImportFail):
+			// The decided block fails import again and stays bad.
+		case err != nil:
 			n.s.violate("refinalize", n.v.address, "%v", err)
-		} else {
+		default:
 			n.s.refinal++
 		}
 	}
@@ -394,8 +398,11 @@ type recSigner struct {
 
 func (s recSigner) SignVote(req privval.VoteRequest) (privval.VoteSignature, error) {
 	sig, err := s.FileSigner.SignVote(req)
-	if err == nil {
+	switch {
+	case err == nil:
 		s.n.s.noteSigned(s.n, req.Msg)
+	case privval.IsRefusal(err) && !s.n.adversary:
+		s.n.s.refused++
 	}
 	return sig, err
 }

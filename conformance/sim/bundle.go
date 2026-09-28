@@ -24,7 +24,8 @@ type Template struct {
 // progress, a stopped round-0 proposer, two stopped consecutive proposers,
 // a partition that heals, validators added and removed at epoch blocks, an
 // import slower than the round timeout, restarts at random moments and in
-// the middle of a height, a proposal that fails execution, a validator that
+// the middle of a height, a proposal that fails execution, a decided block
+// that fails import, a validator that
 // signs two values in one view, a flood of invalid messages, a flood of
 // validly signed messages, a peer that overflows its receive queue and a
 // node whose clock is ahead.
@@ -40,6 +41,7 @@ func Bundle() []Template {
 		{"slow_import", 4, slowImport},
 		{"restarts", 4, restarts},
 		{"bad_block", 4, badBlock},
+		{"bad_block_after_commit", 4, badBlockAfterCommit},
 		{"double_signer", 4, doubleSigner},
 		{"invalid_flood", 4, invalidFlood},
 		{"valid_flood", 4, validFlood},
@@ -201,6 +203,28 @@ func badBlock(seed int64, keys []Validator) Scenario {
 	a := addrOf(sc.Validators[r.IntN(4)])
 	for h := uint64(2); h <= 6; h++ {
 		sc.App.BadProposals = append(sc.App.BadProposals, BadProposal{Height: h, Proposer: a})
+	}
+	mixRestart(&sc, r, 4)
+	return sc
+}
+
+// badBlockAfterCommit makes the blocks one node builds at some heights pass
+// validation, gather a COMMIT quorum and fail import at every node. Every
+// node then leaves the decided round with a round change and releases its
+// lock by the bad-block rule, so its next ROUND-CHANGE of the height carries
+// no prepared pair although it signed a COMMIT. In some seeds the import
+// takes longer than the round timeout, so a node first sends a ROUND-CHANGE
+// with the prepared pair and then one without it.
+func badBlockAfterCommit(seed int64, keys []Validator) Scenario {
+	r := seedRand(seed, 14)
+	sc := base("bad_block_after_commit", seed, keys, 4, 7)
+	a := addrOf(sc.Validators[r.IntN(4)])
+	for h := uint64(2); h <= 4; h++ {
+		fi := FailedImport{Height: h, Proposer: a}
+		if r.IntN(2) == 0 {
+			fi.Delay = ms(r, 2500, 5000)
+		}
+		sc.App.FailedImports = append(sc.App.FailedImports, fi)
 	}
 	mixRestart(&sc, r, 4)
 	return sc
