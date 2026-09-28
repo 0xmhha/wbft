@@ -211,6 +211,16 @@ verification (uncle hash, gas limit, fork times, base fee) with a stand-in of
 the application hook for the StableNet presets (`partb.go`). The adapter exits with status 0 after `bye`, 1 when
 its input ends without `bye`, and 2 on a protocol error.
 
+`scripts/cross-arch-vectors.sh` runs the vectors whose results rest on
+binary64 arithmetic (`validators/quorum`, `timers/round_timeout`) and writes
+one line per case with the adapter's result. CI runs it on amd64 and arm64
+(`determinism-cross-arch`) and fails when a case fails on either
+architecture or when the two result files differ.
+
+```sh
+scripts/cross-arch-vectors.sh <wbft-spec>/spec bin/wbft-vector-adapter vectors.txt
+```
+
 ## Simulation and journal replay
 
 `conformance/sim` runs N nodes on a manual clock with the real runner,

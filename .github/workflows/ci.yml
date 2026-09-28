@@ -183,8 +183,10 @@ jobs:
   determinism-cross-arch:
     # The binary64 quorum and round-timeout tables and the reference sort
     # fixtures must give the same results on amd64 and arm64. Each runner
-    # also writes the message journals of the simulation scenarios; the
-    # next job replays them on the other architecture.
+    # also runs the validators/quorum and timers/round_timeout vectors of the
+    # pinned wbft-spec revision and writes their per-case results, and writes
+    # the message journals of the simulation scenarios; the next jobs compare
+    # the vector results and replay the journals on the other architecture.
     name: determinism (${{ matrix.arch }})
     strategy:
       fail-fast: false
@@ -210,6 +212,47 @@ jobs:
         with:
           name: journals-${{ matrix.arch }}
           path: journals
+      - if: ${{ vars.WBFT_SPEC_REPOSITORY != '' }}
+        id: specref
+        run: echo "ref=$(cat internal/trace/wbft-spec.ref)" >> "$GITHUB_OUTPUT"
+      - if: ${{ vars.WBFT_SPEC_REPOSITORY != '' }}
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ vars.WBFT_SPEC_REPOSITORY }}
+          ref: ${{ steps.specref.outputs.ref }}
+          path: wbft-spec
+      - if: ${{ vars.WBFT_SPEC_REPOSITORY != '' }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - if: ${{ vars.WBFT_SPEC_REPOSITORY != '' }}
+        name: quorum and round-timeout vectors on this architecture
+        # Fails when a case fails or is unsupported.
+        run: |
+          pip install pyyaml
+          go build -o bin/wbft-vector-adapter ./cmd/wbft-vector-adapter
+          scripts/cross-arch-vectors.sh wbft-spec/spec bin/wbft-vector-adapter vectors-${{ matrix.arch }}.txt
+      - if: ${{ vars.WBFT_SPEC_REPOSITORY != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: vectors-${{ matrix.arch }}
+          path: vectors-${{ matrix.arch }}.txt
+
+  vectors-cross-arch:
+    # The per-case results of the quorum and round-timeout vectors are the
+    # same on amd64 and arm64.
+    name: vector results equal on amd64 and arm64
+    if: ${{ vars.WBFT_SPEC_REPOSITORY != '' }}
+    needs: determinism-cross-arch
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: vectors-*
+          merge-multiple: true
+      - run: |
+          wc -l vectors-amd64.txt vectors-arm64.txt
+          diff vectors-amd64.txt vectors-arm64.txt
 
   journal-replay-cross-arch:
     # A journal written on one architecture replays with every step
