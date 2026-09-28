@@ -217,6 +217,14 @@ verification (uncle hash, gas limit, fork times, base fee) with a stand-in of
 the application hook for the StableNet presets (`internal/snetpartb`). The adapter exits with status 0 after `bye`, 1 when
 its input ends without `bye`, and 2 on a protocol error.
 
+`conformance/stepdriver` can also run the steps cases the way a node runs
+them: the core with `consensus.RestartSafety` and own messages signed by a
+private validator (`Options.Improvements`, `Options.PrivVal`,
+`Options.SignFloor`). `TestVectorsWithRestartSafety` checks that every
+steps case then sends and records exactly the reference output, and
+`TestVectorsWithSignFloor` that a node which took over its key signs
+nothing at the first height.
+
 `scripts/cross-arch-vectors.sh` runs the vectors whose results rest on
 binary64 arithmetic (`validators/quorum`, `timers/round_timeout`) and writes
 one line per case with the adapter's result. CI runs it on amd64 and arm64

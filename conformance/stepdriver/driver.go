@@ -12,7 +12,9 @@ import (
 	"github.com/0xmhha/wbft/crypto/bls"
 	"github.com/0xmhha/wbft/crypto/ecdsa"
 	"github.com/0xmhha/wbft/header"
+	"github.com/0xmhha/wbft/internal/fsys"
 	"github.com/0xmhha/wbft/observe/event"
+	"github.com/0xmhha/wbft/privval"
 	"github.com/0xmhha/wbft/transport"
 	"github.com/0xmhha/wbft/types"
 	"github.com/0xmhha/wbft/validator"
@@ -38,6 +40,22 @@ type Options struct {
 	// depends on it (codes other than 0x12 .. 0x15, 0x11 while the engine
 	// runs, empty or oversized payloads) make the case unsupported.
 	Frame FrameDecoder
+	// Improvements are the optional behaviours of the core. Conformance
+	// runs leave the set empty (the reference behaviour); a node runs
+	// consensus.RestartSafety.
+	Improvements consensus.ImprovementSet
+	// PrivVal signs own messages with a private validator (privval) that
+	// starts with an empty sign state on an in-memory file system, as a
+	// node does. A refused signature sends nothing, is reported to Refused
+	// and is fed back to the core as BroadcastFailed, as the runner does.
+	PrivVal bool
+	// SignFloor, with PrivVal, sets the sign floor of a node that takes
+	// over a key without its sign record: nothing is signed at or below
+	// the height of the head plus one.
+	SignFloor bool
+	// Refused is called for every refused signature; step is the index of
+	// the step, -1 for the start.
+	Refused func(step int, m *codec.Message, err error)
 }
 
 // Handlers answered by Run.
@@ -96,6 +114,10 @@ type driver struct {
 	queue  []consensus.Input
 	timers map[consensus.TimerKind][]*timerRec
 	rec    *record
+
+	signer  privval.Signer    // PrivVal only
+	failed  []consensus.Input // BroadcastFailed inputs of refused signatures
+	stepIdx int
 }
 
 func newDriver(in *caseInput, network bool, opts Options) (*driver, error) {
@@ -152,10 +174,28 @@ func newDriver(in *caseInput, network bool, opts Options) (*driver, error) {
 		EpochLength:           1 << 40,
 		ProposerPolicy:        &policyID,
 	}, nil, types.GenesisInit{}, nil)
+	var signer privval.Signer
+	if opts.PrivVal {
+		mem := fsys.NewMem()
+		if err := mem.MkdirAll("/privval", 0o700); err != nil {
+			return nil, err
+		}
+		pv, err := privval.NewKeySigner(mem, nil, ini.NodeKey, "/privval/state")
+		if err != nil {
+			return nil, err
+		}
+		if opts.SignFloor {
+			if err := pv.InitSignFloor(head.Header.Number.AddUint64(1)); err != nil {
+				return nil, err
+			}
+		}
+		signer = pv
+	}
 	d := &driver{
 		network: network,
 		opts:    opts,
-		state:   consensus.NewState(consensus.Options{Config: cfg, Self: self}),
+		state:   consensus.NewState(consensus.Options{Config: cfg, Self: self, Improvements: opts.Improvements}),
+		signer:  signer,
 		env:     e,
 		key:     key,
 		blsKey:  blsKey,
@@ -201,6 +241,7 @@ func hashSet(hs []hexb) map[types.Hash]bool {
 
 func (d *driver) run(steps []stepInput) (any, error) {
 	var start any
+	d.stepIdx = -1
 	if d.running {
 		d.rec = newRecord()
 		d.env.rec = d.rec
@@ -211,6 +252,7 @@ func (d *driver) run(steps []stepInput) (any, error) {
 	}
 	out := make([]any, 0, len(steps))
 	for i, s := range steps {
+		d.stepIdx = i
 		d.rec = newRecord()
 		d.env.rec = d.rec
 		if err := d.do(s); err != nil {
@@ -229,9 +271,20 @@ func (d *driver) finish(stopped bool) any {
 	return d.rec.out(d.network, stopped)
 }
 
-// step feeds one input to the core and applies its outputs.
+// step feeds one input to the core and applies its outputs, then feeds the
+// BroadcastFailed inputs of refused signatures.
 func (d *driver) step(in consensus.Input) error {
-	return d.apply(d.state.Step(d.env, in))
+	if err := d.apply(d.state.Step(d.env, in)); err != nil {
+		return err
+	}
+	for len(d.failed) > 0 {
+		in := d.failed[0]
+		d.failed = d.failed[1:]
+		if err := d.apply(d.state.Step(d.env, in)); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (d *driver) do(s stepInput) error {
@@ -494,15 +547,30 @@ func (d *driver) apply(outs []consensus.Output) error {
 // broadcast signs an own message as the node key does and records it.
 func (d *driver) broadcast(b consensus.Broadcast) error {
 	m := *b.Msg
-	if b.SealData != nil {
-		m.Seal = d.blsKey.Sign(b.SealData).Bytes()
-	}
-	p, err := codec.SigningPayload(&m, false, nil)
-	if err != nil {
-		return err
-	}
-	if m.Signature, err = ecdsa.SignData(p, d.key); err != nil {
-		return err
+	if d.signer != nil {
+		sig, err := d.signer.SignVote(privval.VoteRequest{Msg: b.Msg, SealData: b.SealData, BadBlockReleased: b.BadBlockReleased})
+		if err != nil {
+			if !privval.IsRefusal(err) {
+				return err
+			}
+			if d.opts.Refused != nil {
+				d.opts.Refused(d.stepIdx, b.Msg, err)
+			}
+			d.failed = append(d.failed, consensus.BroadcastFailed{Code: m.Code, View: m.View})
+			return nil
+		}
+		m.Seal, m.Signature = sig.Seal, sig.Signature
+	} else {
+		if b.SealData != nil {
+			m.Seal = d.blsKey.Sign(b.SealData).Bytes()
+		}
+		p, err := codec.SigningPayload(&m, false, nil)
+		if err != nil {
+			return err
+		}
+		if m.Signature, err = ecdsa.SignData(p, d.key); err != nil {
+			return err
+		}
 	}
 	o, err := messageOut(&m)
 	if err != nil {
