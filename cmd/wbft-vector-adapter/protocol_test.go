@@ -52,8 +52,13 @@ func TestHelloReply(t *testing.T) {
 		t.Errorf("improvements = %#v, want empty list", h["improvements"])
 	}
 	hs := h["handlers"].([]any)
-	if len(hs) != len(handlers) {
-		t.Errorf("handlers: %d listed, %d registered", len(hs), len(handlers))
+	if len(hs) != len(handlerNames()) {
+		t.Errorf("handlers: %d listed, %d implemented", len(hs), len(handlerNames()))
+	}
+	for _, name := range hs {
+		if handlers[name.(string)] == nil {
+			t.Errorf("hello lists %v, which is not implemented", name)
+		}
 	}
 	for i := 1; i < len(hs); i++ {
 		if hs[i-1].(string) >= hs[i].(string) {
@@ -62,9 +67,14 @@ func TestHelloReply(t *testing.T) {
 	}
 }
 
-func TestEveryCaseUnsupported(t *testing.T) {
+func TestUnimplementedCasesUnsupported(t *testing.T) {
 	lines := []string{runnerHello}
-	names := handlerNames()
+	var names []string
+	for name, h := range handlers {
+		if h == nil {
+			names = append(names, name)
+		}
+	}
 	names = append(names, "execution/process_finalize") // not listed: still answered
 	for i, n := range names {
 		r, h, _ := strings.Cut(n, "/")

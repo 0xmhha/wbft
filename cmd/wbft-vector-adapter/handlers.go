@@ -19,39 +19,40 @@ type handler func(kind string, input json.RawMessage) (output any, err error)
 // handlers this adapter answers for the consensus layer; handlers of the
 // execution layer are answered by other adapters (WBFT-VEC-054).
 //
-// A nil entry is listed in hello but answered "unsupported". In milestone W0
-// every entry is nil.
+// A nil entry is not announced in hello and its cases are answered
+// "unsupported": the handlers of the consensus core (state machine, network,
+// build wait) come with milestone W2.
 var handlers = map[string]handler{
 	// crypto
-	"crypto/keccak256":             nil,
-	"crypto/ecdsa_sign":            nil,
-	"crypto/ecdsa_recover":         nil,
-	"crypto/bls_derive":            nil,
-	"crypto/bls_sign":              nil,
-	"crypto/bls_verify":            nil,
-	"crypto/bls_aggregate":         nil,
-	"crypto/aggregate_public_keys": nil,
-	"crypto/seal_data":             nil,
-	"crypto/randao_data":           nil,
-	"crypto/randao_mix":            nil,
+	"crypto/keccak256":             hKeccak256,
+	"crypto/ecdsa_sign":            hEcdsaSign,
+	"crypto/ecdsa_recover":         hEcdsaRecover,
+	"crypto/bls_derive":            hBLSDerive,
+	"crypto/bls_sign":              hBLSSign,
+	"crypto/bls_verify":            hBLSVerify,
+	"crypto/bls_aggregate":         hBLSAggregate,
+	"crypto/aggregate_public_keys": hAggregatePublicKeys,
+	"crypto/seal_data":             hSealData,
+	"crypto/randao_data":           hRandaoData,
+	"crypto/randao_mix":            hRandaoMix,
 	// encoding
-	"encoding/extra_codec":     nil,
-	"encoding/block_hash":      nil,
-	"encoding/hash_with_round": nil,
-	"encoding/filtered_header": nil,
-	"encoding/message_codec":   nil,
-	"encoding/signing_payload": nil,
-	"encoding/dedup_key":       nil,
+	"encoding/extra_codec":     hExtraCodec,
+	"encoding/block_hash":      hBlockHash,
+	"encoding/hash_with_round": hHashWithRound,
+	"encoding/filtered_header": hFilteredHeader,
+	"encoding/message_codec":   hMessageCodec,
+	"encoding/signing_payload": hSigningPayload,
+	"encoding/dedup_key":       hDedupKey,
 	// validators
-	"validators/quorum":          nil,
-	"validators/proposer":        nil,
-	"validators/epoch_boundary":  nil,
-	"validators/validators_at":   nil,
-	"validators/shuffle":         nil,
-	"validators/sort_candidates": nil,
-	"validators/next_epoch_info": nil,
+	"validators/quorum":          hQuorum,
+	"validators/proposer":        hProposer,
+	"validators/epoch_boundary":  hEpochBoundary,
+	"validators/validators_at":   hValidatorsAt,
+	"validators/shuffle":         hShuffle,
+	"validators/sort_candidates": hSortCandidates,
+	"validators/next_epoch_info": hNextEpochInfo,
 	// timers
-	"timers/round_timeout": nil,
+	"timers/round_timeout": hRoundTimeout,
 	"timers/build_wait":    nil,
 	// state machine
 	"state_machine/check_message": nil,
@@ -61,19 +62,23 @@ var handlers = map[string]handler{
 	// decided by the transport adapter stay "unsupported" here.
 	"network/receive_outcome": nil,
 	// header
-	"header/build_proposal_header": nil,
-	"header/verify_header":         nil,
-	"header/verify_headers":        nil,
-	"header/verify_light":          nil,
+	"header/build_proposal_header": hBuildProposalHeader,
+	"header/verify_header":         hVerifyHeader,
+	"header/verify_headers":        hVerifyHeaders,
+	"header/verify_light":          hVerifyLight,
 	// chain
-	"chain/config_at": nil,
+	"chain/config_at": hConfigAt,
 }
 
-// handlerNames returns the keys of handlers in sorted order, for hello.
+// handlerNames returns, in sorted order, the handlers this adapter
+// implements: the keys of handlers with a non-nil entry. hello announces only
+// these; a case of any other handler is answered "unsupported".
 func handlerNames() []string {
 	names := make([]string, 0, len(handlers))
-	for name := range handlers {
-		names = append(names, name)
+	for name, h := range handlers { //wbft:unordered the names are sorted below
+		if h != nil {
+			names = append(names, name)
+		}
 	}
 	slices.Sort(names)
 	return names

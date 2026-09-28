@@ -37,8 +37,8 @@ type helloReply struct {
 	Protocol string   `json:"protocol"`
 	Impl     Impl     `json:"impl"`
 	Handlers []string `json:"handlers"`
-	// Improvements lists enabled improvement items. A conformance run
-	// disables all of them and reports an empty list (WBFT-VEC-055).
+	// Improvements lists optional behaviour switches that are enabled.
+	// A conformance run reports an empty list.
 	Improvements []string `json:"improvements"`
 }
 
