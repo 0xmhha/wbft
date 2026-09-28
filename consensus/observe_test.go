@@ -2,6 +2,7 @@ package consensus
 
 import (
 	"testing"
+	"time"
 
 	"github.com/0xmhha/wbft/codec"
 	"github.com/0xmhha/wbft/observe/event"
@@ -111,4 +112,39 @@ func TestBacklogAndExtraSealEvents(t *testing.T) {
 	if ev := eventsOf(h.out, event.ExtraSeal); len(ev) != 1 || ev[0].Fields["op"] != "ignore" {
 		t.Fatalf("not newer %v", ev)
 	}
+}
+
+// An expiry of a replaced future-proposal timer that was queued before the
+// replacement re-processes its PRE-PREPARE (the reference processes the
+// queued event); an expiry without its message and with an old generation
+// does nothing.
+func TestQueuedFutureExpiryAfterReplacement(t *testing.T) {
+	h := newHarness(t, 4, 1)
+	h.start()
+	a, b := h.proposal(1), h.proposal(2)
+	h.env.future[blockHash(a)] = time.Second
+	h.env.future[blockHash(b)] = time.Second
+	h.deliver(0, h.preprepare(0, view(10, 0), a, nil, nil))
+	armA := outputsOf[ArmTimer](h.out)[0]
+	h.deliver(0, h.preprepare(0, view(10, 0), b, nil, nil))
+	armB := outputsOf[ArmTimer](h.out)[0]
+	if armA.Msg == nil || armB.Gen == armA.Gen {
+		t.Fatalf("timers %+v %+v", armA, armB)
+	}
+	h.step(Timeout{Kind: FutureTimer, Gen: armA.Gen})
+	if len(h.out) != 0 {
+		t.Fatalf("stale expiry without message: %v", h.out)
+	}
+	delete(h.env.future, blockHash(a))
+	h.step(Timeout{Kind: FutureTimer, Gen: armA.Gen, Msg: armA.Msg})
+	sch := outputsOf[Schedule](h.out)
+	if len(sch) != 1 || blockHash(sch[0].In.(Replay).Msg.Msg.Proposal) != blockHash(a) {
+		t.Fatalf("queued expiry of A: %v", h.out)
+	}
+	h.step(sch[0].In)
+	h.expect(Process, rowPreprepareAccept, true)
+	// B's timer is still armed; its expiry finds the node in Preprepared.
+	h.step(Timeout{Kind: FutureTimer, Gen: armB.Gen, Msg: armB.Msg})
+	h.step(outputsOf[Schedule](h.out)[0].In)
+	h.expect(Invalid, rowInvalid, false)
 }

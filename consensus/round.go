@@ -266,7 +266,7 @@ func (st *step) armFutureTimer(m *Verified, d time.Duration) {
 
 // onTimeout handles the expiry of a timer.
 //
-// Spec: WBFT-SM-075, WBFT-SM-077, WBFT-TIMER-014, WBFT-TIMER-015, WBFT-TIMER-021
+// Spec: WBFT-SM-075, WBFT-SM-077, WBFT-TIMER-014, WBFT-TIMER-015, WBFT-TIMER-021, WBFT-TIMER-031, WBFT-TIMER-032
 func (st *step) onTimeout(t Timeout) {
 	s := st.s
 	switch t.Kind {
@@ -282,12 +282,22 @@ func (st *step) onTimeout(t Timeout) {
 		// Retry expiries are not cancellable once queued.
 		st.broadcastRoundChange(t.Round)
 	case FutureTimer:
-		if !s.futureLive || t.Gen != s.gen[FutureTimer] || s.future == nil {
-			return
+		// An expiry that carries its PRE-PREPARE was queued before the
+		// timer was cancelled or replaced (a cancelled timer that had not
+		// fired produces no expiry): the reference processes it, and so
+		// does the core. An expiry without its message stands for the
+		// deferred PRE-PREPARE of the armed timer.
+		m := t.Msg
+		if m == nil {
+			if !s.futureLive || t.Gen != s.gen[FutureTimer] || s.future == nil {
+				return
+			}
+			m = s.future
 		}
-		m := s.future
-		s.futureLive = false
-		s.future = nil
+		if t.Gen == s.gen[FutureTimer] {
+			s.futureLive = false
+			s.future = nil
+		}
 		st.emit(Schedule{In: Replay{Msg: m}})
 	}
 }
