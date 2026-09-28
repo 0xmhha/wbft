@@ -109,7 +109,7 @@ jobs:
           out=$(printf '%s\n' \
             '{"type":"hello","protocol":"wbft-vector/1","runner":{"name":"ci","version":"0"},"spec_commit":"none"}' \
             '{"type":"case","id":1,"runner":"crypto","handler":"keccak256","case":"smoke","kind":"pure","input":{"data":"0x"}}' \
-            '{"type":"case","id":2,"runner":"state_machine","handler":"rounds","case":"smoke","kind":"steps","input":{}}' \
+            '{"type":"case","id":2,"runner":"chain","handler":"genesis","case":"smoke","kind":"pure","input":{}}' \
             '{"type":"bye"}' | bin/wbft-vector-adapter)
           echo "$out"
           echo "$out" | sed -n 1p | grep -q '"protocol":"wbft-vector/1"'
@@ -129,10 +129,13 @@ jobs:
         run: |
           pip install pyyaml
           # check_adapter.py exits 1 while any case is unsupported (the
-          # consensus-core handlers come with W2, execution handlers belong
+          # execution handlers and the transport-framing network cases belong
           # to other adapters), so the gate is on failed cases only.
           python3 wbft-spec/spec/tools/vectorgen/check_adapter.py wbft-spec/spec/vectors -- bin/wbft-vector-adapter | tee vectors.txt || true
           grep -q '^pass=[0-9]* fail=0 ' vectors.txt
+      - if: ${{ vars.WBFT_SPEC_REPOSITORY != '' }}
+        name: steps vectors through the step driver (with the transport frame stage)
+        run: WBFT_SPEC_VECTORS="$PWD/wbft-spec/spec/vectors" go test -count=1 ./conformance/stepdriver/
       - if: ${{ vars.WBFT_SPEC_REPOSITORY != '' }}
         name: traceability matrix
         run: |

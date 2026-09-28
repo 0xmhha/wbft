@@ -27,18 +27,35 @@ interfaces of package `app`, `validator/source`, `mempool` and `transport`.
 
 ## Status
 
-Milestone **W1 (pure modules)**. The pure modules are implemented and pass
-the conformance vectors of their handlers: `crypto/keccak`, `crypto/ecdsa`,
-`crypto/bls`, `types` (heights and rounds as arbitrary-precision integers,
-chain configuration and `config_at`), `codec/rlp` and `codec` (extra data,
-headers, blocks, the four consensus messages, signing payloads and hashes),
-`internal/refsort` (the reference implementation's sort), `validator` (quorum,
-proposer selection, epoch schedule, validator-set lookup), `epoch`
-(next-epoch computation, candidate order, shuffle), `validator/source`
-(authority snapshots and their cache), `header` (proposal construction, seal
-writing and merging, proposal, header, batch and light verification) and the
-round-timeout formula of `consensus`. The consensus core, the runner and the
-node come with the next milestones.
+Milestone **W1 (pure modules)** is complete: `crypto/keccak`,
+`crypto/ecdsa`, `crypto/bls`, `types` (heights and rounds as
+arbitrary-precision integers, chain configuration and `config_at`),
+`codec/rlp` and `codec` (extra data, headers, blocks, the four consensus
+messages, signing payloads and hashes), `internal/refsort` (the reference
+implementation's sort), `validator` (quorum, proposer selection, epoch
+schedule, validator-set lookup), `epoch` (next-epoch computation, candidate
+order, shuffle), `validator/source` (authority snapshots and their cache) and
+`header` (proposal construction, seal writing and merging, proposal, header,
+batch and light verification) pass the conformance vectors of their handlers.
+
+Milestone **W2 (consensus core)** is in progress. Done:
+
+- `consensus`: the pure state machine with the reference behaviour. One
+  `Step` takes one input (start, stop, new head, request, message, replay,
+  timer expiry) and returns the outputs to execute (messages to sign and
+  send, relays, scheduled inputs, timer requests, build requests, commits,
+  message outcomes, events). It reads the outside only through `Env`;
+  `Vars` exposes the state variables and `Snapshot` the extra seals for
+  proposal building.
+- `transport`: the transport interface, the deduplication caches with the
+  gossip target choice, and the frame verdicts `DecodeFrame`,
+  `CheckOutbound` and `StoppedEngineAction` for the application adapters.
+- `observe/event`: the event vocabulary and a JSON Lines writer.
+- `conformance/stepdriver`: the driver of the steps vectors, which a
+  transport adapter can reuse with its own frame stage.
+
+The write-ahead log, the private validator, the runner around the core, the
+message journal and the simulator come next; the node follows in W3.
 
 ## Layout
 
@@ -160,11 +177,13 @@ python3 <wbft-spec>/spec/tools/vectorgen/check_adapter.py <wbft-spec>/spec/vecto
 In a conformance run all optional behaviour switches are off and
 `hello.improvements` is empty. The adapter announces in its `hello` the
 handlers it implements: `crypto/*`, `encoding/*`, `validators/*`,
-`timers/round_timeout`, `header/*` and `chain/config_at`. Cases of the
-consensus-core handlers (`state_machine/*`, `network/receive_outcome`,
-`timers/build_wait`) are answered `unsupported` until milestone W2; handlers
-of the execution layer are answered by the adapters of the application
-repositories. The header handlers decide the execution-side steps of header
+`timers/*`, `state_machine/*`, `network/receive_outcome`, `header/*` and
+`chain/config_at`. The steps handlers run the core through
+`conformance/stepdriver` without a frame stage, so network cases whose
+verdict belongs to the transport adapter (framing, the legacy code, size
+limits, empty payloads) are answered `unsupported` here and by the
+application's adapter there. Handlers of the execution layer are answered by
+the adapters of the application repositories. The header handlers decide the execution-side steps of header
 verification (uncle hash, gas limit, fork times, base fee) with a stand-in of
 the application hook for the StableNet presets (`partb.go`). The adapter exits with status 0 after `bye`, 1 when
 its input ends without `bye`, and 2 on a protocol error.

@@ -33,6 +33,11 @@ func TestHandlerExamples(t *testing.T) {
 			`{"request_timeout":"2000","block_period":"1","epoch":"10","proposer_policy":"0","max_request_timeout_seconds":"0","allowed_future_block_time":"0"}`},
 		{"validators/epoch_boundary", `{"config":{"wbft":{"request_timeout_seconds":"2","block_period_seconds":"1","epoch_length":"10","allowed_future_block_time":"0","proposer_policy":"0","max_request_timeout_seconds":null},"transitions":[]},"number":"25"}`,
 			`{"is_epoch_block":false,"last_epoch_block":"20"}`},
+		{"state_machine/check_message", `{"view":{"sequence":"10","round":"2"},"state":"AcceptRequest","prior_round":"1","code":"20","message_view":{"sequence":"9","round":"1"}}`, `{"result":"EXTRA_SEAL"}`},
+		{"state_machine/check_message", `{"view":{"sequence":"10","round":"2"},"state":"Busy","prior_round":"1","code":"20","message_view":{"sequence":"9","round":"1"}}`, ""},
+		{"state_machine/is_justified", `{"proposal":"0x0000000000000000000000000000000000000000000000000000000000000001","target_view":{"sequence":"10","round":"1"},"round_changes":[],"prepares":[],"quorum":"3"}`, `{"justified":false}`},
+		{"timers/build_wait", `{"block_period":"1","head_time":"1700000000","round":"0","now":"1700000000250000000"}`, `{"wait":"750000000"}`},
+		{"timers/build_wait", `{"block_period":"1","head_time":"1700000000","round":"1","now":"1700000000250000000"}`, `{"wait":"0"}`},
 		// An unknown input field is a malformed case, not a silent pass.
 		{"crypto/keccak256", `{"data":"0x","extra":"0x"}`, ""},
 	}
