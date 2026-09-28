@@ -1,0 +1,73 @@
+# Dual build: the same wbft code must build and pass the same checks both
+#   (a) standalone, where go-ethereum resolves to upstream v1.17.x, and
+#   (b) embedded in the go-stablenet fork, whose main module path is also
+#       github.com/ethereum/go-ethereum, so wbft's go-ethereum imports resolve
+#       to the fork's own rlp/crypto/common packages.
+# Results that differ between (a) and (b) are failures.
+#
+# Status (milestone W0): wbft does not import go-ethereum yet, so (a) is a
+# plain build and (b) is a documented placeholder, disabled until the
+# repository variable FORK_REPOSITORY (owner/name of the fork) is set.
+name: dual-build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CGO_ENABLED: "1"
+  GOTOOLCHAIN: local
+
+jobs:
+  standalone:
+    name: standalone (upstream go-ethereum v1.17.x)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25.x"
+      - name: go-ethereum version line
+        # check-deps.sh fails unless go-ethereum (once required) is v1.17.x.
+        run: scripts/check-deps.sh
+      - run: go build ./...
+      - run: go test ./...
+      # From W1: run the conformance vectors here and upload the results for
+      # comparison with the embedded job.
+
+  embedded:
+    name: embedded (go-stablenet fork)
+    if: ${{ vars.FORK_REPOSITORY != '' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: wbft
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ vars.FORK_REPOSITORY }}
+          ref: ${{ vars.FORK_REF }}
+          path: fork
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25.x"
+      - name: point the fork at this wbft
+        working-directory: fork
+        run: |
+          go mod edit -require=github.com/0xmhha/wbft@v0.0.0 -replace=github.com/0xmhha/wbft=../wbft
+          # wbft requires go >= 1.24.0 while the fork pins an older
+          # toolchain; the embedded build uses the newer one.
+          go mod edit -go=1.24.0
+          GOFLAGS=-mod=mod go mod tidy
+      - name: build and test wbft against the fork's go-ethereum packages
+        working-directory: fork
+        run: |
+          go build github.com/0xmhha/wbft/...
+          go test github.com/0xmhha/wbft/...
+      # From W1: run the conformance vectors with this build and compare with
+      # the standalone job's results.

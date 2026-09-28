@@ -1,0 +1,5 @@
+runner: "encoding"
+handler: "extra_codec"
+case: "flow"
+kind: "pure"
+requirements: ["WBFT-TYPE-002", "WBFT-VEC-033"]

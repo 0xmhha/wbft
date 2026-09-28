@@ -1,0 +1,1703 @@
+# Owners of the public Part A requirements of the wbft specification.
+#
+# Each entry maps a requirement ID to the wbft package that implements it
+# (owner) and the functions, types or mechanisms that do so (symbols). class
+# marks requirements whose subject is not wbft itself:
+#   external   - the application or an adapter outside wbft implements it
+#   deployment - network operation, not decidable by a node
+#   spec       - rules for vector files, runners or generators
+#   withdrawn  - withdrawn requirement (informative)
+# Entries without class are owned by wbft. tools/tracegen joins this table with
+# the specification, the vectors and the "// Spec:" comments in the code.
+# This is the design baseline before implementation; symbols follow the
+# planned API and change as the code lands.
+
+WBFT-TYPE-001:
+  owner: types
+  symbols: types.Address, types.Hash, types.Nonce, types.Bloom
+
+WBFT-TYPE-002:
+  owner: types
+  symbols: types.Address, types.Hash, types.Nonce, types.Bloom
+
+WBFT-TYPE-003:
+  owner: types
+  symbols: types.Address, types.Hash, types.Nonce, types.Bloom
+
+WBFT-TYPE-004:
+  owner: types
+  symbols: types.Address, types.Hash, types.Nonce, types.Bloom
+
+WBFT-TYPE-005:
+  owner: types
+  symbols: types.Address, types.Hash, types.Nonce, types.Bloom
+
+WBFT-TYPE-010:
+  owner: types
+  symbols: types.Height, types.Round
+
+WBFT-TYPE-011:
+  owner: types
+  symbols: types.Height, types.Round
+  class: withdrawn
+
+WBFT-TYPE-012:
+  owner: types
+  symbols: types.Height, types.Round
+
+WBFT-TYPE-020:
+  owner: types
+  symbols: types.View.Cmp, types.EpochInfo, validator.NewSetFromEpochInfo
+
+WBFT-TYPE-021:
+  owner: types
+  symbols: types.View.Cmp, types.EpochInfo, validator.NewSetFromEpochInfo
+
+WBFT-TYPE-022:
+  owner: types
+  symbols: types.View.Cmp, types.EpochInfo, validator.NewSetFromEpochInfo
+
+WBFT-PARAM-001:
+  owner: types, codec
+  symbols: codec.Code, codec.DecodeMessage
+
+WBFT-PARAM-002:
+  owner: types, codec
+  symbols: codec.Code, codec.DecodeMessage
+
+WBFT-PARAM-010:
+  owner: types, crypto/bls
+  symbols: types.SealLength, types.ExtraVanity, bls.Aggregate
+
+WBFT-PARAM-011:
+  owner: types, crypto/bls
+  symbols: types.SealLength, types.ExtraVanity, bls.Aggregate
+
+WBFT-PARAM-012:
+  owner: types, crypto/bls
+  symbols: types.SealLength, types.ExtraVanity, bls.Aggregate
+
+WBFT-PARAM-020:
+  owner: types
+  symbols: types.Config
+
+WBFT-PARAM-030:
+  owner: node, types
+  symbols: types.ParseChainConfig, node.checkChainConfig
+
+WBFT-PARAM-031:
+  owner: wbft-sdk x/genesis, node
+  symbols: node.checkChainConfig
+  class: external
+
+WBFT-PARAM-032:
+  owner: node, types
+  symbols: node.checkChainConfig
+
+WBFT-PARAM-034:
+  owner: node, types
+  symbols: node.checkChainConfig
+
+WBFT-PARAM-033:
+  owner: node, types
+  symbols: types.ParseChainConfig, node.checkChainConfig
+
+WBFT-PARAM-050:
+  owner: types
+  symbols: types.Config.ConfigAt
+
+WBFT-PARAM-051:
+  owner: types
+  symbols: types.Config.ConfigAt
+
+WBFT-PARAM-052:
+  owner: types
+  symbols: types.Config.ConfigAt
+
+WBFT-PARAM-053:
+  owner: types
+  symbols: types.Config.ConfigAt
+
+WBFT-PARAM-054:
+  owner: types
+  symbols: types.Config.ConfigAt
+
+WBFT-PARAM-060:
+  owner: deployment
+  symbols: rules_digest, config_digest
+  class: deployment
+
+WBFT-CRYPTO-001:
+  owner: crypto/keccak
+  symbols: keccak.Sum256
+
+WBFT-CRYPTO-010:
+  owner: crypto/ecdsa
+  symbols: ecdsa.PubkeyToAddress
+
+WBFT-CRYPTO-011:
+  owner: crypto/ecdsa, privval
+  symbols: ecdsa.Sign, privval.FileSigner
+
+WBFT-CRYPTO-017:
+  owner: crypto/ecdsa, privval
+  symbols: ecdsa.Sign, privval.FileSigner
+
+WBFT-CRYPTO-013:
+  owner: crypto/ecdsa
+  symbols: ecdsa.RecoverAddress
+
+WBFT-CRYPTO-014:
+  owner: crypto/ecdsa
+  symbols: ecdsa.RecoverAddress
+
+WBFT-CRYPTO-015:
+  owner: crypto/ecdsa, validator
+  symbols: ecdsa.CheckValidatorSignature, ecdsa.CheckSigner
+
+WBFT-CRYPTO-016:
+  owner: crypto/ecdsa, validator
+  symbols: ecdsa.CheckValidatorSignature, ecdsa.CheckSigner
+
+WBFT-CRYPTO-020:
+  owner: crypto/bls
+  symbols: bls.DeriveSecretKey
+
+WBFT-CRYPTO-021:
+  owner: crypto/bls
+  symbols: bls.DeriveSecretKey
+
+WBFT-CRYPTO-022:
+  owner: crypto/bls
+  symbols: bls.PublicKey.Bytes, bls.Signature.Bytes
+
+WBFT-CRYPTO-023:
+  owner: crypto/bls
+  symbols: bls.DecodePublicKey, bls.DecodeSignature
+
+WBFT-CRYPTO-024:
+  owner: crypto/bls
+  symbols: bls.DecodePublicKey, bls.DecodeSignature
+
+WBFT-CRYPTO-056:
+  owner: crypto/bls
+  symbols: bls.DecodePublicKey, bls.DecodeSignature
+
+WBFT-CRYPTO-025:
+  owner: crypto/bls, privval
+  symbols: bls.Sign
+
+WBFT-CRYPTO-026:
+  owner: crypto/bls
+  symbols: bls.Verify
+
+WBFT-CRYPTO-055:
+  owner: crypto/bls
+  symbols: bls.Verify
+
+WBFT-CRYPTO-027:
+  owner: crypto/bls
+  symbols: bls.Aggregate, bls.AggregatePublicKeys
+
+WBFT-CRYPTO-028:
+  owner: crypto/bls
+  symbols: bls.Aggregate, bls.AggregatePublicKeys
+
+WBFT-CRYPTO-030:
+  owner: header
+  symbols: header.VerifyAggregatedSeal
+
+WBFT-CRYPTO-031:
+  owner: header
+  symbols: header.VerifyAggregatedSeal
+
+WBFT-CRYPTO-040:
+  owner: codec, consensus
+  symbols: codec.SealData, verifySeal
+
+WBFT-CRYPTO-041:
+  owner: codec, consensus
+  symbols: codec.SealData, verifySeal
+
+WBFT-CRYPTO-042:
+  owner: codec, consensus
+  symbols: codec.SealData, verifySeal
+
+WBFT-CRYPTO-043:
+  owner: codec, consensus
+  symbols: verifySeal
+
+WBFT-CRYPTO-044:
+  owner: codec, consensus
+  symbols: codec.SealData, verifySeal
+
+WBFT-CRYPTO-050:
+  owner: codec
+  symbols: codec.RandaoData
+
+WBFT-CRYPTO-053:
+  owner: header
+  symbols: header.RandaoMix
+
+WBFT-ENC-001:
+  owner: codec/rlp
+
+WBFT-ENC-002:
+  owner: codec/rlp
+
+WBFT-ENC-003:
+  owner: codec/rlp
+
+WBFT-ENC-004:
+  owner: codec/rlp
+
+WBFT-ENC-005:
+  owner: codec/rlp
+
+WBFT-ENC-006:
+  owner: codec/rlp
+
+WBFT-ENC-007:
+  owner: codec/rlp
+
+WBFT-ENC-008:
+  owner: codec/rlp
+
+WBFT-ENC-010:
+  owner: codec/rlp
+
+WBFT-ENC-011:
+  owner: codec/rlp
+
+WBFT-ENC-020:
+  owner: codec
+  symbols: codec.EncodeExtra, codec.DecodeExtra
+
+WBFT-ENC-021:
+  owner: codec
+  symbols: codec.EncodeExtra, codec.DecodeExtra
+
+WBFT-ENC-022:
+  owner: codec
+  symbols: codec.EncodeExtra, codec.DecodeExtra
+
+WBFT-ENC-030:
+  owner: codec
+  symbols: codec.EncodeExtra, codec.DecodeExtra
+
+WBFT-ENC-031:
+  owner: codec
+  symbols: codec.EncodeExtra, codec.DecodeExtra
+
+WBFT-ENC-032:
+  owner: codec
+  symbols: codec.EncodeExtra, codec.DecodeExtra
+
+WBFT-ENC-033:
+  owner: codec
+  symbols: codec.EncodeExtra, codec.DecodeExtra
+
+WBFT-ENC-040:
+  owner: codec
+  symbols: codec.EncodeExtra, codec.DecodeExtra
+
+WBFT-ENC-041:
+  owner: codec
+  symbols: codec.EncodeExtra, codec.DecodeExtra
+
+WBFT-ENC-043:
+  owner: codec
+  symbols: codec.EncodeExtra, codec.DecodeExtra
+
+WBFT-ENC-050:
+  owner: codec
+  symbols: codec.EncodeExtra, codec.DecodeExtra
+
+WBFT-ENC-051:
+  owner: codec
+  symbols: codec.EncodeExtra, codec.DecodeExtra
+
+WBFT-ENC-060:
+  owner: codec
+  symbols: codec.EncodeExtra, codec.DecodeExtra
+
+WBFT-ENC-070:
+  owner: codec
+  symbols: codec.EncodeHeader, codec.DecodeBlock
+
+WBFT-ENC-071:
+  owner: codec
+  symbols: codec.EncodeHeader, codec.DecodeBlock
+
+WBFT-ENC-080:
+  owner: codec
+  symbols: codec.FilteredHeader, codec.HashWithRound, codec.BlockHash
+
+WBFT-ENC-081:
+  owner: codec
+  symbols: codec.FilteredHeader, codec.HashWithRound, codec.BlockHash
+
+WBFT-ENC-082:
+  owner: codec
+  symbols: codec.FilteredHeader, codec.HashWithRound, codec.BlockHash
+
+WBFT-ENC-084:
+  owner: codec
+  symbols: codec.FilteredHeader, codec.HashWithRound, codec.BlockHash
+
+WBFT-ENC-090:
+  owner: codec
+  symbols: codec.EncodeMessage
+
+WBFT-MSG-001:
+  owner: codec
+  symbols: codec.EncodeMessage, codec.DecodeMessage, codec.SigningPayload, codec.DedupKey
+
+WBFT-MSG-002:
+  owner: codec
+  symbols: codec.EncodeMessage, codec.DecodeMessage, codec.SigningPayload, codec.DedupKey
+
+WBFT-MSG-003:
+  owner: codec
+  symbols: codec.EncodeMessage, codec.DecodeMessage, codec.SigningPayload, codec.DedupKey
+
+WBFT-MSG-004:
+  owner: codec
+  symbols: codec.EncodeMessage, codec.DecodeMessage, codec.SigningPayload, codec.DedupKey
+
+WBFT-MSG-010:
+  owner: codec
+  symbols: codec.EncodeMessage, codec.DecodeMessage, codec.SigningPayload, codec.DedupKey
+
+WBFT-MSG-011:
+  owner: codec
+  symbols: codec.EncodeMessage, codec.DecodeMessage, codec.SigningPayload, codec.DedupKey
+
+WBFT-MSG-020:
+  owner: codec
+  symbols: codec.EncodeMessage, codec.DecodeMessage, codec.SigningPayload, codec.DedupKey
+
+WBFT-MSG-030:
+  owner: codec
+  symbols: codec.EncodeMessage, codec.DecodeMessage, codec.SigningPayload, codec.DedupKey
+
+WBFT-MSG-031:
+  owner: codec
+  symbols: codec.EncodeMessage, codec.DecodeMessage, codec.SigningPayload, codec.DedupKey
+
+WBFT-MSG-032:
+  owner: codec
+  symbols: codec.EncodeMessage, codec.DecodeMessage, codec.SigningPayload, codec.DedupKey
+
+WBFT-MSG-033:
+  owner: codec
+  symbols: codec.EncodeMessage, codec.DecodeMessage, codec.SigningPayload, codec.DedupKey
+
+WBFT-MSG-034:
+  owner: codec
+  symbols: codec.EncodeMessage, codec.DecodeMessage, codec.SigningPayload, codec.DedupKey
+
+WBFT-MSG-040:
+  owner: codec
+  symbols: codec.EncodeMessage, codec.DecodeMessage, codec.SigningPayload, codec.DedupKey
+
+WBFT-MSG-041:
+  owner: codec
+  symbols: codec.EncodeMessage, codec.DecodeMessage, codec.SigningPayload, codec.DedupKey
+
+WBFT-MSG-050:
+  owner: codec
+  symbols: codec.EncodeMessage, codec.DecodeMessage, codec.SigningPayload, codec.DedupKey
+
+WBFT-MSG-051:
+  owner: codec
+  symbols: codec.EncodeMessage, codec.DecodeMessage, codec.SigningPayload, codec.DedupKey
+
+WBFT-MSG-060:
+  owner: codec
+  symbols: codec.EncodeMessage, codec.DecodeMessage, codec.SigningPayload, codec.DedupKey
+
+WBFT-VAL-001:
+  owner: validator
+  symbols: validator.FValue, validator.QuorumSize
+
+WBFT-VAL-002:
+  owner: validator
+  symbols: validator.FValue, validator.QuorumSize
+
+WBFT-VAL-003:
+  owner: validator
+  symbols: validator.FValue, validator.QuorumSize
+
+WBFT-VAL-004:
+  owner: validator
+  symbols: validator.ValidatorsAt, validator.PrevValidatorsAt, validator.GoverningEpochInfo
+
+WBFT-VAL-006:
+  owner: validator
+  symbols: validator.ValidatorsAt, validator.PrevValidatorsAt, validator.GoverningEpochInfo
+
+WBFT-VAL-007:
+  owner: validator
+  symbols: validator.ValidatorsAt, validator.PrevValidatorsAt, validator.GoverningEpochInfo
+
+WBFT-VAL-009:
+  owner: validator
+  symbols: validator.ValidatorsAt, validator.PrevValidatorsAt, validator.GoverningEpochInfo
+
+WBFT-VAL-010:
+  owner: validator
+  symbols: validator.ValidatorsAt, validator.PrevValidatorsAt, validator.GoverningEpochInfo
+
+WBFT-VAL-011:
+  owner: validator
+  symbols: validator.ValidatorsAt, validator.PrevValidatorsAt, validator.GoverningEpochInfo
+
+WBFT-EPOCH-001:
+  owner: validator
+  symbols: validator.IsEpochBlock, validator.LastEpochBlock
+
+WBFT-EPOCH-002:
+  owner: validator
+  symbols: validator.IsEpochBlock, validator.LastEpochBlock
+
+WBFT-EPOCH-003:
+  owner: validator
+  symbols: validator.IsEpochBlock, validator.LastEpochBlock
+
+WBFT-EPOCH-006:
+  owner: validator
+  symbols: validator.IsEpochBlock, validator.LastEpochBlock
+
+WBFT-PROP-001:
+  owner: validator
+  symbols: validator.CalcProposer, validator.Set.IsProposer, validator.LastProposer
+
+WBFT-PROP-002:
+  owner: validator
+  symbols: validator.CalcProposer, validator.Set.IsProposer, validator.LastProposer
+
+WBFT-PROP-003:
+  owner: validator
+  symbols: validator.CalcProposer, validator.Set.IsProposer, validator.LastProposer
+
+WBFT-PROP-004:
+  owner: validator
+  symbols: validator.CalcProposer, validator.Set.IsProposer, validator.LastProposer
+
+WBFT-PROP-005:
+  owner: validator
+  symbols: validator.CalcProposer, validator.Set.IsProposer, validator.LastProposer
+
+WBFT-PROP-006:
+  owner: validator
+  symbols: validator.CalcProposer, validator.Set.IsProposer, validator.LastProposer
+
+WBFT-PROP-007:
+  owner: validator
+  symbols: validator.CalcProposer, validator.Set.IsProposer, validator.LastProposer
+
+WBFT-EPOCH-007:
+  owner: validator/source
+  symbols: CandidatesAfterExecution
+
+WBFT-EPOCH-008:
+  owner: epoch
+  symbols: epoch.ComputeNextEpochInfo, epoch.VerifyEpochInfo, epoch.SortCandidates, epoch.Shuffle
+
+WBFT-EPOCH-009:
+  owner: epoch
+  symbols: epoch.ComputeNextEpochInfo, epoch.VerifyEpochInfo, epoch.SortCandidates, epoch.Shuffle
+
+WBFT-EPOCH-010:
+  owner: epoch
+  symbols: epoch.ComputeNextEpochInfo, epoch.VerifyEpochInfo, epoch.SortCandidates, epoch.Shuffle
+
+WBFT-EPOCH-011:
+  owner: epoch
+  symbols: epoch.ComputeNextEpochInfo, epoch.VerifyEpochInfo, epoch.SortCandidates, epoch.Shuffle
+
+WBFT-EPOCH-013:
+  owner: epoch
+  symbols: epoch.ComputeNextEpochInfo, epoch.VerifyEpochInfo, epoch.SortCandidates, epoch.Shuffle
+
+WBFT-EPOCH-016:
+  owner: epoch
+  symbols: epoch.ComputeNextEpochInfo, epoch.VerifyEpochInfo, epoch.SortCandidates, epoch.Shuffle
+
+WBFT-EPOCH-018:
+  owner: epoch
+  symbols: epoch.ComputeNextEpochInfo, epoch.VerifyEpochInfo, epoch.SortCandidates, epoch.Shuffle
+
+WBFT-EPOCH-019:
+  owner: epoch
+  symbols: epoch.ComputeNextEpochInfo, epoch.VerifyEpochInfo, epoch.SortCandidates, epoch.Shuffle
+
+WBFT-EPOCH-020:
+  owner: epoch
+  symbols: epoch.ComputeNextEpochInfo, epoch.VerifyEpochInfo, epoch.SortCandidates, epoch.Shuffle
+
+WBFT-EPOCH-021:
+  owner: epoch
+  symbols: epoch.VerifyEpochInfo, Consensus.VerifyEpochInfo
+
+WBFT-EPOCH-023:
+  owner: epoch, node
+  symbols: epoch.InitialEpochInfo, node.checkChainConfig
+
+WBFT-EPOCH-024:
+  owner: epoch, node
+  symbols: epoch.InitialEpochInfo, node.checkChainConfig
+
+WBFT-SM-001:
+  owner: consensus/runner
+  symbols: internalQ
+
+WBFT-SM-002:
+  owner: consensus/runner
+  symbols: internalQ
+
+WBFT-SM-003:
+  owner: consensus/runner
+  symbols: internalQ
+
+WBFT-SM-004:
+  owner: consensus
+  symbols: consensus.State, consensus.NewState
+
+WBFT-SM-005:
+  owner: consensus
+  symbols: consensus.State, consensus.NewState
+
+WBFT-SM-006:
+  owner: consensus
+  symbols: consensus.State, consensus.NewState
+
+WBFT-SM-007:
+  owner: consensus
+  symbols: consensus.State, consensus.NewState
+  class: withdrawn
+
+WBFT-SM-008:
+  owner: consensus, consensus/runner
+  symbols: Step(Start), Step(Stop), runner.Stop
+
+WBFT-SM-009:
+  owner: consensus, consensus/runner
+  symbols: Step(Start), Step(Stop), runner.Stop
+
+WBFT-SM-010:
+  owner: consensus
+  symbols: onNewHead
+
+WBFT-SM-011:
+  owner: consensus, transport
+  symbols: Output.Relay, transport.Dedup.Gossip
+
+WBFT-SM-012:
+  owner: consensus, transport
+  symbols: Output.Relay, transport.Dedup.Gossip
+
+WBFT-SM-013:
+  owner: consensus, transport
+  symbols: Output.Relay, transport.Dedup.Gossip
+
+WBFT-SM-014:
+  owner: consensus/runner
+  symbols: internalQ
+
+WBFT-SM-015:
+  owner: consensus, consensus/runner
+  symbols: consensus.signatureValidatorSet
+
+WBFT-SM-016:
+  owner: consensus, consensus/runner
+  symbols: consensus.signatureValidatorSet
+
+WBFT-SM-017:
+  owner: consensus, consensus/runner
+  symbols: consensus.signatureValidatorSet
+
+WBFT-SM-018:
+  owner: consensus, consensus/runner
+  symbols: consensus.signatureValidatorSet
+
+WBFT-SM-019:
+  owner: consensus
+  symbols: consensus.CheckMessage
+
+WBFT-SM-020:
+  owner: consensus
+  symbols: consensus.CheckMessage
+
+WBFT-SM-022:
+  owner: consensus
+  symbols: startNewRound
+
+WBFT-SM-023:
+  owner: consensus
+  symbols: startNewRound
+
+WBFT-SM-024:
+  owner: consensus
+  symbols: startNewRound
+
+WBFT-SM-025:
+  owner: consensus
+  symbols: startNewRound
+
+WBFT-SM-026:
+  owner: consensus
+  symbols: startNewRound
+
+WBFT-SM-027:
+  owner: consensus
+  symbols: startNewRound
+
+WBFT-SM-028:
+  owner: consensus
+  symbols: startNewRound
+
+WBFT-SM-029:
+  owner: consensus
+  symbols: startNewRound
+
+WBFT-SM-030:
+  owner: consensus
+  symbols: startNewRound
+
+WBFT-SM-031:
+  owner: consensus
+  symbols: onRequest, checkRequest
+
+WBFT-SM-032:
+  owner: consensus
+  symbols: onRequest, checkRequest
+
+WBFT-SM-033:
+  owner: consensus
+  symbols: onRequest, checkRequest
+
+WBFT-SM-034:
+  owner: consensus
+  symbols: sendPrePrepare, onPrePrepare
+
+WBFT-SM-035:
+  owner: consensus
+  symbols: sendPrePrepare, onPrePrepare
+
+WBFT-SM-036:
+  owner: consensus
+  symbols: sendPrePrepare, onPrePrepare
+
+WBFT-SM-037:
+  owner: consensus
+  symbols: sendPrePrepare, onPrePrepare
+
+WBFT-SM-038:
+  owner: consensus
+  symbols: sendPrePrepare, onPrePrepare
+
+WBFT-SM-039:
+  owner: consensus
+  symbols: sendPrePrepare, onPrePrepare
+
+WBFT-SM-040:
+  owner: consensus
+  symbols: onPrepare, verifySeal
+
+WBFT-SM-041:
+  owner: consensus
+  symbols: onPrepare, verifySeal
+
+WBFT-SM-042:
+  owner: consensus
+  symbols: onPrepare, verifySeal
+
+WBFT-SM-043:
+  owner: consensus
+  symbols: onPrepare, verifySeal
+
+WBFT-SM-044:
+  owner: consensus, header
+  symbols: onCommit, decide, header.CommitHeader
+
+WBFT-SM-045:
+  owner: consensus, header
+  symbols: onCommit, decide, header.CommitHeader
+
+WBFT-SM-046:
+  owner: consensus, header
+  symbols: onCommit, decide, header.CommitHeader
+
+WBFT-SM-047:
+  owner: consensus, header
+  symbols: onCommit, decide, header.CommitHeader
+
+WBFT-SM-048:
+  owner: consensus, header
+  symbols: onCommit, decide, header.CommitHeader
+
+WBFT-SM-049:
+  owner: consensus, header
+  symbols: onCommit, decide, header.CommitHeader
+
+WBFT-SM-050:
+  owner: consensus, header
+  symbols: onCommit, decide, header.CommitHeader
+
+WBFT-SM-051:
+  owner: consensus
+  symbols: broadcastRoundChange, onRoundChange, consensus.IsJustified
+
+WBFT-SM-052:
+  owner: consensus
+  symbols: broadcastRoundChange, onRoundChange, consensus.IsJustified
+
+WBFT-SM-053:
+  owner: consensus
+  symbols: broadcastRoundChange, onRoundChange, consensus.IsJustified
+
+WBFT-SM-054:
+  owner: consensus
+  symbols: broadcastRoundChange, onRoundChange, consensus.IsJustified
+
+WBFT-SM-055:
+  owner: consensus
+  symbols: broadcastRoundChange, onRoundChange, consensus.IsJustified
+
+WBFT-SM-056:
+  owner: consensus
+  symbols: broadcastRoundChange, onRoundChange, consensus.IsJustified
+
+WBFT-SM-057:
+  owner: consensus
+  symbols: broadcastRoundChange, onRoundChange, consensus.IsJustified
+
+WBFT-SM-058:
+  owner: consensus
+  symbols: broadcastRoundChange, onRoundChange, consensus.IsJustified
+
+WBFT-SM-059:
+  owner: consensus
+  symbols: broadcastRoundChange, onRoundChange, consensus.IsJustified
+
+WBFT-SM-060:
+  owner: consensus
+  symbols: broadcastRoundChange, onRoundChange, consensus.IsJustified
+
+WBFT-SM-061:
+  owner: consensus
+  symbols: broadcastRoundChange, onRoundChange, consensus.IsJustified
+
+WBFT-SM-062:
+  owner: consensus
+  symbols: broadcastRoundChange, onRoundChange, consensus.IsJustified
+
+WBFT-SM-063:
+  owner: consensus, header
+  symbols: onExtraSeal, header.PrepareProposal
+
+WBFT-SM-064:
+  owner: consensus, header
+  symbols: onExtraSeal, header.PrepareProposal
+
+WBFT-SM-065:
+  owner: consensus, header
+  symbols: onExtraSeal, header.PrepareProposal
+
+WBFT-SM-066:
+  owner: consensus, header
+  symbols: onExtraSeal, header.PrepareProposal
+
+WBFT-SM-067:
+  owner: consensus, header
+  symbols: onExtraSeal, header.PrepareProposal
+
+WBFT-SM-068:
+  owner: consensus, header
+  symbols: onExtraSeal, header.PrepareProposal
+
+WBFT-SM-069:
+  owner: consensus
+  symbols: consensus.backlog
+
+WBFT-SM-070:
+  owner: consensus
+  symbols: consensus.backlog
+
+WBFT-SM-071:
+  owner: consensus
+  symbols: consensus.backlog
+
+WBFT-SM-072:
+  owner: consensus
+  symbols: consensus.backlog
+
+WBFT-SM-073:
+  owner: consensus
+  symbols: consensus.backlog
+
+WBFT-SM-074:
+  owner: consensus
+  symbols: consensus.backlog
+
+WBFT-SM-075:
+  owner: consensus
+  symbols: onRoundTimeout, onRetryTimeout
+
+WBFT-SM-077:
+  owner: consensus
+  symbols: onRoundTimeout, onRetryTimeout
+
+WBFT-SM-078:
+  owner: consensus/runner
+
+WBFT-SM-079:
+  owner: consensus/runner
+
+WBFT-SM-080:
+  owner: consensus/runner
+
+WBFT-SM-081:
+  owner: consensus/runner
+
+WBFT-SM-082:
+  owner: consensus/runner
+
+WBFT-SM-083:
+  owner: consensus, privval
+
+WBFT-SM-084:
+  owner: consensus, privval
+
+WBFT-SM-085:
+  owner: consensus, privval
+
+WBFT-SM-086:
+  owner: consensus, privval
+
+WBFT-SM-087:
+  owner: consensus, privval
+
+WBFT-SM-088:
+  owner: consensus, privval
+
+WBFT-SM-089:
+  owner: consensus, privval
+
+WBFT-SM-090:
+  owner: consensus, privval
+
+WBFT-SM-091:
+  owner: inspector
+  class: external
+
+WBFT-TIMER-001:
+  owner: consensus/runner
+  symbols: runner.Clock
+
+WBFT-TIMER-002:
+  owner: types, consensus
+  symbols: types.Config.ConfigAt, consensus.RoundTimeout
+
+WBFT-TIMER-003:
+  owner: types, consensus
+  symbols: types.Config.ConfigAt, consensus.RoundTimeout
+
+WBFT-TIMER-004:
+  owner: types, consensus
+  symbols: types.Config.ConfigAt, consensus.RoundTimeout
+
+WBFT-TIMER-005:
+  owner: consensus
+  symbols: consensus.RoundTimeout
+
+WBFT-TIMER-006:
+  owner: consensus
+  symbols: consensus.RoundTimeout
+
+WBFT-TIMER-007:
+  owner: consensus
+  symbols: consensus.RoundTimeout
+
+WBFT-TIMER-008:
+  owner: consensus
+  symbols: consensus.RoundTimeout
+
+WBFT-TIMER-010:
+  owner: consensus, consensus/runner
+  symbols: Output.ArmTimer
+
+WBFT-TIMER-011:
+  owner: consensus, consensus/runner
+  symbols: Output.ArmTimer
+
+WBFT-TIMER-012:
+  owner: consensus, consensus/runner
+  symbols: Output.ArmTimer
+
+WBFT-TIMER-013:
+  owner: consensus, consensus/runner
+  symbols: Output.ArmTimer
+
+WBFT-TIMER-014:
+  owner: consensus, consensus/runner
+  symbols: Output.ArmTimer
+
+WBFT-TIMER-015:
+  owner: consensus, consensus/runner
+  symbols: Output.ArmTimer
+
+WBFT-TIMER-016:
+  owner: consensus, consensus/runner
+  symbols: Output.ArmTimer
+
+WBFT-TIMER-017:
+  owner: consensus, consensus/runner
+  symbols: Output.ArmTimer
+
+WBFT-TIMER-018:
+  owner: consensus, consensus/runner
+  symbols: Output.ArmTimer
+
+WBFT-TIMER-020:
+  owner: consensus, consensus/runner
+
+WBFT-TIMER-021:
+  owner: consensus, consensus/runner
+
+WBFT-TIMER-022:
+  owner: consensus, consensus/runner
+
+WBFT-TIMER-023:
+  owner: consensus, consensus/runner
+
+WBFT-TIMER-024:
+  owner: consensus, consensus/runner
+
+WBFT-TIMER-030:
+  owner: consensus, consensus/runner
+
+WBFT-TIMER-031:
+  owner: consensus, consensus/runner
+
+WBFT-TIMER-032:
+  owner: consensus, consensus/runner
+
+WBFT-TIMER-033:
+  owner: consensus, consensus/runner
+
+WBFT-TIMER-040:
+  owner: consensus, header
+  symbols: Output.RequestBuild, header.PrepareProposal
+
+WBFT-TIMER-041:
+  owner: consensus, header
+  symbols: Output.RequestBuild, header.PrepareProposal
+
+WBFT-TIMER-042:
+  owner: consensus, header
+  symbols: Output.RequestBuild, header.PrepareProposal
+
+WBFT-TIMER-043:
+  owner: consensus, header
+  symbols: Output.RequestBuild, header.PrepareProposal
+
+WBFT-NET-001:
+  owner: application transport adapter
+  class: external
+
+WBFT-NET-002:
+  owner: application transport adapter
+  class: external
+
+WBFT-NET-052:
+  owner: application transport adapter
+  class: external
+
+WBFT-NET-003:
+  owner: application transport adapter
+  class: external
+
+WBFT-NET-004:
+  owner: application transport adapter
+  class: external
+
+WBFT-NET-005:
+  owner: application transport adapter
+  class: external
+
+WBFT-NET-006:
+  owner: application transport adapter
+  class: external
+
+WBFT-NET-007:
+  owner: application transport adapter
+  class: external
+
+WBFT-NET-010:
+  owner: transport, application transport adapter
+  symbols: transport.CheckOutbound
+
+WBFT-NET-011:
+  owner: transport, application transport adapter
+  symbols: transport.CheckOutbound
+
+WBFT-NET-012:
+  owner: transport, application transport adapter
+  symbols: transport.DecodeFrame
+
+WBFT-NET-013:
+  owner: transport, application transport adapter
+  symbols: transport.DecodeFrame
+
+WBFT-NET-020:
+  owner: transport, application transport adapter, consensus/runner
+  symbols: transport.DecodeFrame, runner.Receiver.Offer
+
+WBFT-NET-021:
+  owner: transport, application transport adapter, consensus/runner
+  symbols: transport.DecodeFrame
+
+WBFT-NET-022:
+  owner: transport, consensus/runner
+  symbols: transport.Dedup, runner.Receiver.Offer
+
+WBFT-NET-023:
+  owner: transport, consensus/runner
+  symbols: transport.Dedup, runner.Receiver.Offer
+
+WBFT-NET-024:
+  owner: transport, consensus/runner
+  symbols: transport.Dedup, runner.Receiver.Offer
+
+WBFT-NET-025:
+  owner: consensus/runner
+
+WBFT-NET-026:
+  owner: transport, consensus/runner
+  symbols: transport.Dedup, runner.Receiver.Offer
+
+WBFT-NET-027:
+  owner: transport, consensus/runner
+  symbols: transport.Dedup, runner.Receiver.Offer
+
+WBFT-NET-028:
+  owner: transport, application transport adapter, consensus/runner
+  symbols: transport.DecodeFrame
+
+WBFT-NET-030:
+  owner: transport
+  symbols: transport.Dedup.Broadcast, transport.Dedup.Gossip
+
+WBFT-NET-031:
+  owner: transport
+  symbols: transport.Dedup.Broadcast, transport.Dedup.Gossip
+
+WBFT-NET-032:
+  owner: transport
+  symbols: transport.Dedup.Broadcast, transport.Dedup.Gossip
+
+WBFT-NET-033:
+  owner: consensus/runner
+
+WBFT-NET-040:
+  owner: transport, consensus
+  symbols: Output.Relay, transport.Dedup.Gossip
+
+WBFT-NET-041:
+  owner: transport, consensus
+  symbols: Output.Relay, transport.Dedup.Gossip
+
+WBFT-NET-042:
+  owner: transport, consensus
+  symbols: Output.Relay, transport.Dedup.Gossip
+
+WBFT-NET-043:
+  owner: transport, consensus
+  symbols: Output.Relay, transport.Dedup.Gossip
+
+WBFT-NET-044:
+  owner: transport, consensus/runner
+  symbols: MSG_OUTCOME
+
+WBFT-NET-050:
+  owner: deployment
+  symbols: wbft_peers
+  class: deployment
+
+WBFT-NET-051:
+  owner: deployment, application transport adapter
+  class: external
+
+WBFT-HDR-010:
+  owner: header
+  symbols: header.PrepareProposal
+
+WBFT-HDR-011:
+  owner: header
+  symbols: header.PrepareProposal
+
+WBFT-HDR-012:
+  owner: header
+  symbols: header.PrepareProposal
+
+WBFT-HDR-013:
+  owner: header
+  symbols: header.PrepareProposal
+
+WBFT-HDR-014:
+  owner: header
+  symbols: header.PrepareProposal
+
+WBFT-HDR-016:
+  owner: header
+  symbols: header.PrepareProposal
+
+WBFT-HDR-017:
+  owner: header
+  symbols: header.PrepareProposal
+
+WBFT-HDR-018:
+  owner: header
+  symbols: header.PrepareProposal
+
+WBFT-HDR-020:
+  owner: header
+  symbols: header.PrepareProposal
+
+WBFT-HDR-021:
+  owner: header
+  symbols: header.PrepareProposal
+
+WBFT-HDR-030:
+  owner: header
+  symbols: header.PrepareProposal
+
+WBFT-HDR-031:
+  owner: header
+  symbols: header.PrepareProposal
+
+WBFT-HDR-032:
+  owner: header
+  symbols: header.PrepareProposal
+
+WBFT-HDR-033:
+  owner: header
+  symbols: header.PrepareProposal
+
+WBFT-HDR-034:
+  owner: header
+  symbols: header.PrepareProposal
+
+WBFT-HDR-035:
+  owner: header
+  symbols: header.PrepareProposal
+
+WBFT-HDR-036:
+  owner: header
+  symbols: header.PrepareProposal
+
+WBFT-HDR-040:
+  owner: header
+  symbols: header.PrepareProposal
+
+WBFT-HDR-041:
+  owner: header
+  symbols: header.PrepareProposal
+
+WBFT-HDR-042:
+  owner: header
+  symbols: header.PrepareProposal
+
+WBFT-HDR-050:
+  owner: header
+  symbols: header.CommitHeader
+
+WBFT-HDR-051:
+  owner: header
+  symbols: header.CommitHeader
+
+WBFT-HDR-052:
+  owner: header
+  symbols: header.CommitHeader
+
+WBFT-HDR-053:
+  owner: header
+  symbols: header.CommitHeader
+
+WBFT-HDR-060:
+  owner: header
+  symbols: header.VerifyProposal
+
+WBFT-HDR-061:
+  owner: header
+  symbols: header.VerifyProposal
+
+WBFT-HDR-063:
+  owner: header
+  symbols: header.VerifyProposal
+
+WBFT-HDR-070:
+  owner: header
+  symbols: header.VerifyHeader, header.VerifyHeaders, header.ValidatorsForVerifying
+
+WBFT-HDR-071:
+  owner: header
+  symbols: header.VerifyHeader, header.VerifyHeaders, header.ValidatorsForVerifying
+
+WBFT-HDR-080:
+  owner: header
+  symbols: header.VerifyHeader, header.VerifyHeaders, header.ValidatorsForVerifying
+
+WBFT-HDR-081:
+  owner: header
+  symbols: header.VerifyHeader, header.VerifyHeaders, header.ValidatorsForVerifying
+
+WBFT-HDR-082:
+  owner: header
+  symbols: header.VerifyHeader, header.VerifyHeaders, header.ValidatorsForVerifying
+
+WBFT-HDR-083:
+  owner: header
+  symbols: header.VerifyHeader, header.VerifyHeaders, header.ValidatorsForVerifying
+
+WBFT-HDR-084:
+  owner: header
+  symbols: header.VerifyHeader, header.VerifyHeaders, header.ValidatorsForVerifying
+
+WBFT-HDR-085:
+  owner: header
+  symbols: header.VerifyHeader, header.VerifyHeaders, header.ValidatorsForVerifying
+
+WBFT-HDR-086:
+  owner: header
+  symbols: header.VerifyHeader, header.VerifyHeaders, header.ValidatorsForVerifying
+
+WBFT-HDR-088:
+  owner: header
+  symbols: header.VerifyHeader, header.VerifyHeaders, header.ValidatorsForVerifying
+
+WBFT-HDR-089:
+  owner: header
+  symbols: header.VerifyHeader, header.VerifyHeaders, header.ValidatorsForVerifying
+
+WBFT-HDR-090:
+  owner: header
+  symbols: header.VerifyHeader, header.VerifyHeaders, header.ValidatorsForVerifying
+
+WBFT-HDR-091:
+  owner: header
+  symbols: header.VerifyHeader, header.VerifyHeaders, header.ValidatorsForVerifying
+
+WBFT-HDR-100:
+  owner: header
+  symbols: header.VerifyHeader, header.VerifyHeaders, header.ValidatorsForVerifying
+
+WBFT-HDR-101:
+  owner: header
+  symbols: header.VerifyHeader, header.VerifyHeaders, header.ValidatorsForVerifying
+
+WBFT-HDR-102:
+  owner: header
+  symbols: header.VerifyHeader, header.VerifyHeaders, header.ValidatorsForVerifying
+
+WBFT-HDR-103:
+  owner: header
+  symbols: header.VerifyHeader, header.VerifyHeaders, header.ValidatorsForVerifying
+
+WBFT-HDR-111:
+  owner: header
+  symbols: header.VerifyHeader, header.VerifyHeaders, header.ValidatorsForVerifying
+
+WBFT-HDR-120:
+  owner: header
+  symbols: header.VerifyHeader, header.VerifyHeaders, header.ValidatorsForVerifying
+
+WBFT-HDR-121:
+  owner: header
+  symbols: header.VerifyHeader, header.VerifyHeaders, header.ValidatorsForVerifying
+
+WBFT-HDR-130:
+  owner: header, epoch
+  symbols: app.Consensus.VerifyEpochInfo
+
+WBFT-HDR-131:
+  owner: app, header
+  symbols: Consensus.VerifyEpochInfo
+
+WBFT-HDR-132:
+  owner: app, epoch
+  symbols: Consensus.VerifyEpochInfo, epoch.VerifyEpochInfo
+
+WBFT-HDR-140:
+  owner: header
+  symbols: header.VerifyLight
+
+WBFT-HDR-141:
+  owner: header
+  symbols: header.VerifyLight
+
+WBFT-HDR-142:
+  owner: header
+  symbols: header.VerifyLight
+
+WBFT-HDR-150:
+  owner: application
+  class: external
+
+WBFT-APP-001:
+  owner: app
+  symbols: types.ChainReader, app.Application.IsBadBlock
+  class: external
+
+WBFT-APP-003:
+  owner: app
+  symbols: types.ChainReader, app.Application.IsBadBlock
+  class: external
+
+WBFT-APP-004:
+  owner: app
+  symbols: types.ChainReader, app.Application.IsBadBlock
+  class: external
+
+WBFT-APP-010:
+  owner: validator/source
+  symbols: source.AuthoritySource.CandidatesAfterExecution
+  class: external
+
+WBFT-APP-011:
+  owner: validator/source
+  symbols: source.AuthoritySource.CandidatesAfterExecution
+  class: external
+
+WBFT-APP-012:
+  owner: validator/source
+  symbols: source.AuthoritySource.CandidatesAfterExecution
+  class: external
+
+WBFT-APP-021:
+  owner: validator/source, header
+  symbols: AuthoritySnapshot.GasTip, header.CheckGasTip
+
+WBFT-APP-030:
+  owner: app
+  symbols: Application.ReadyToBuild, Consensus.PrepareConsensusFields, Consensus.EpochInfo, Consensus.SubmitProposal
+
+WBFT-APP-031:
+  owner: app
+  symbols: Application.ReadyToBuild, Consensus.PrepareConsensusFields, Consensus.EpochInfo, Consensus.SubmitProposal
+
+WBFT-APP-032:
+  owner: app, consensus
+  symbols: SubmitProposal, pending_request
+
+WBFT-APP-033:
+  owner: app
+  symbols: Application.ReadyToBuild, Consensus.PrepareConsensusFields, Consensus.EpochInfo, Consensus.SubmitProposal
+
+WBFT-APP-034:
+  owner: application
+  class: external
+
+WBFT-APP-040:
+  owner: consensus/runner
+  symbols: Env.ValidatorsAt
+
+WBFT-APP-050:
+  owner: header
+  symbols: header.VerifyProposal
+
+WBFT-APP-051:
+  owner: header
+  symbols: header.VerifyProposal
+
+WBFT-APP-060:
+  owner: header, consensus
+  symbols: header.CommitHeader, decide
+
+WBFT-APP-070:
+  owner: application
+  symbols: OnNewHead
+  class: external
+
+WBFT-APP-071:
+  owner: application
+  class: external
+
+WBFT-APP-080:
+  owner: app, consensus/runner
+
+WBFT-APP-081:
+  owner: app, consensus/runner
+  symbols: Application.FinalizeBlock
+
+WBFT-APP-082:
+  owner: app, consensus/runner
+
+WBFT-APP-090:
+  owner: application
+  symbols: OnImportFailed
+  class: external
+
+WBFT-APP-100:
+  owner: app, consensus/runner
+  symbols: Application.FinalizeBlock
+
+WBFT-APP-110:
+  owner: consensus/runner
+
+WBFT-APP-111:
+  owner: application, node
+  symbols: OnBlockExecuted
+  class: external
+
+WBFT-SEC-001:
+  owner: deployment
+  symbols: validator.QuorumSize
+  class: deployment
+
+WBFT-SEC-002:
+  owner: deployment
+  symbols: wbft_peers
+  class: deployment
+
+WBFT-SEC-010:
+  owner: validator
+  symbols: validator.QuorumSize
+
+WBFT-SEC-021:
+  owner: transport
+  symbols: transport.Dedup, codec.DedupKey
+
+WBFT-SEC-030:
+  owner: deployment, wbft-sdk
+  class: deployment
+
+WBFT-SEC-031:
+  owner: deployment, node
+  symbols: node.checkChainConfig
+  class: deployment
+
+WBFT-SEC-032:
+  owner: application p2p
+  class: external
+
+WBFT-SEC-040:
+  owner: privval, observe
+
+WBFT-SEC-041:
+  owner: observe
+  symbols: EVIDENCE, wbft_evidence
+
+WBFT-SEC-050:
+  owner: consensus/runner
+
+WBFT-SEC-080:
+  owner: wbft-sdk x/evm
+  class: external
+
+WBFT-SEC-081:
+  owner: consensus, application
+
+WBFT-SEC-090:
+  owner: deployment
+  symbols: PROPOSAL_DEFERRED
+  class: deployment
+
+WBFT-SEC-120:
+  owner: wbft-stablenet
+  class: external
+
+WBFT-SEC-130:
+  owner: participation
+
+WBFT-VEC-001:
+  owner: cmd/wbft-vector-adapter
+  class: spec
+
+WBFT-VEC-002:
+  owner: cmd/wbft-vector-adapter
+  symbols: node.Config
+
+WBFT-VEC-004:
+  owner: cmd/wbft-vector-adapter
+  symbols: NODE_START.improvements, wbft_nodeInfo
+
+WBFT-VEC-005:
+  owner: cmd/wbft-vector-adapter
+
+WBFT-VEC-003:
+  owner: spec
+  class: spec
+
+WBFT-VEC-010:
+  owner: spec runner
+  class: spec
+
+WBFT-VEC-011:
+  owner: spec runner
+  class: spec
+
+WBFT-VEC-012:
+  owner: spec runner
+  class: spec
+
+WBFT-VEC-013:
+  owner: spec runner
+  class: spec
+
+WBFT-VEC-014:
+  owner: spec runner
+  class: spec
+
+WBFT-VEC-015:
+  owner: spec runner
+  class: spec
+
+WBFT-VEC-016:
+  owner: spec runner
+  class: spec
+
+WBFT-VEC-020:
+  owner: spec generator
+  class: spec
+
+WBFT-VEC-021:
+  owner: spec generator
+  class: spec
+
+WBFT-VEC-022:
+  owner: spec generator
+  class: spec
+
+WBFT-VEC-031:
+  owner: cmd/wbft-vector-adapter
+
+WBFT-VEC-030:
+  owner: spec runner
+  class: spec
+
+WBFT-VEC-032:
+  owner: cmd/wbft-vector-adapter
+
+WBFT-VEC-033:
+  owner: cmd/wbft-vector-adapter, wbft-sdk adapter, wbft-stablenet adapter
+
+WBFT-VEC-034:
+  owner: cmd/wbft-vector-adapter, wbft-sdk adapter, wbft-stablenet adapter
+
+WBFT-VEC-035:
+  owner: spec runner
+  class: spec
+
+WBFT-VEC-036:
+  owner: spec runner
+  class: spec
+
+WBFT-VEC-037:
+  owner: spec runner
+  class: spec
+
+WBFT-VEC-038:
+  owner: cmd/wbft-vector-adapter, wbft-sdk adapter, wbft-stablenet adapter
+  symbols: impl.build
+
+WBFT-VEC-039:
+  owner: spec runner
+  class: spec
+
+WBFT-VEC-040:
+  owner: spec runner
+  class: spec
+
+WBFT-VEC-041:
+  owner: cmd/wbft-vector-adapter, wbft-sdk adapter, wbft-stablenet adapter
+
+WBFT-VEC-042:
+  owner: spec runner
+  class: spec
+
+WBFT-VEC-043:
+  owner: cmd/wbft-vector-adapter, wbft-sdk adapter, wbft-stablenet adapter
+
+WBFT-VEC-044:
+  owner: spec runner
+  class: spec
+
+WBFT-VEC-045:
+  owner: spec runner
+  class: spec
+
+WBFT-VEC-046:
+  owner: cmd/wbft-vector-adapter, wbft-sdk adapter, wbft-stablenet adapter
+
+WBFT-VEC-047:
+  owner: spec runner
+  class: spec
+
+WBFT-VEC-048:
+  owner: spec runner
+  class: spec
+
+WBFT-VEC-049:
+  owner: spec runner
+  class: spec
+
+WBFT-VEC-050:
+  owner: spec runner
+  class: spec
+
+WBFT-VEC-051:
+  owner: spec runner
+  class: spec
+
+WBFT-VEC-052:
+  owner: spec runner
+  class: spec
+
+WBFT-VEC-053:
+  owner: cmd/wbft-vector-adapter, wbft-sdk adapter, wbft-stablenet adapter
+
+WBFT-VEC-054:
+  owner: spec runner
+  class: spec
+
+WBFT-VEC-055:
+  owner: cmd/wbft-vector-adapter, wbft-sdk adapter, wbft-stablenet adapter
+
+WBFT-VEC-056:
+  owner: spec runner
+  class: spec
+
+WBFT-VEC-057:
+  owner: spec runner
+  class: spec
+
+WBFT-VEC-058:
+  owner: cmd/wbft-vector-adapter, conformance/stepdriver
+  symbols: state_machine, Start, consensus.NewState, Step(Start)
+
+WBFT-VEC-059:
+  owner: cmd/wbft-vector-adapter, conformance/stepdriver
+  symbols: state_machine
+
+WBFT-VEC-060:
+  owner: cmd/wbft-vector-adapter, conformance/stepdriver
+
+WBFT-VEC-061:
+  owner: cmd/wbft-vector-adapter, conformance/stepdriver
+  symbols: state_machine
+
+WBFT-VEC-062:
+  owner: spec generator
+  class: spec
+
+WBFT-PROTO-001:
+  owner: consensus
+  symbols: onPrePrepare
+
+WBFT-PROTO-002:
+  owner: consensus
+  symbols: onPrePrepare

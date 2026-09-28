@@ -1,0 +1,17 @@
+# golangci-lint v2 configuration of the developer tools module. The boundary
+# and determinism rules of the wbft module (../.golangci.yml) do not apply to
+# tools; they may use golang.org/x/tools.
+version: "2"
+
+linters:
+  default: standard
+  enable:
+    - misspell
+    - unconvert
+  exclusions:
+    presets:
+      - std-error-handling
+
+formatters:
+  enable:
+    - gofmt
