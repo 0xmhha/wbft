@@ -106,6 +106,7 @@ func TestRecoveryRules(t *testing.T) {
 	}
 }
 
+// Covers: WBFT-CRYPTO-015, WBFT-CRYPTO-016
 func TestCheckValidatorSignature(t *testing.T) {
 	k := key0(t)
 	sig, _ := SignData([]byte("m"), k)

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/hex"
 	"errors"
+	"math"
 	"math/big"
 	"strconv"
 	"testing"
@@ -250,6 +251,10 @@ func TestBuiltChainVerifies(t *testing.T) {
 	}
 }
 
+// Every step of header verification in order, and vanity data of any length
+// or content is accepted.
+//
+// Covers: WBFT-HDR-017, WBFT-PARAM-012
 func TestVerifyHeaderFirstFailingStep(t *testing.T) {
 	b := newBuilder(t)
 	b.build(6)
@@ -291,6 +296,11 @@ func TestVerifyHeaderFirstFailingStep(t *testing.T) {
 		want error
 	}{
 		{"valid", next(1, nil, nil), now, "", nil},
+		{"empty vanity", next(1, func(h *types.Header) { setX(h, func(x *types.WBFTExtra) { x.VanityData = nil }) }, nil), now, "", nil},
+		{"short vanity", next(1, func(h *types.Header) { setX(h, func(x *types.WBFTExtra) { x.VanityData = []byte("wbft") }) }, nil), now, "", nil},
+		{"long vanity", next(1, func(h *types.Header) {
+			setX(h, func(x *types.WBFTExtra) { x.VanityData = bytes.Repeat([]byte{0xff}, 40) })
+		}, nil), now, "", nil},
 		{"future", next(1, func(h *types.Header) { h.Time = now + 10 }, nil), now, "H2", ErrFutureBlock},
 		{"future and bad difficulty", next(1, func(h *types.Header) { h.Time = now + 10; h.Difficulty = big.NewInt(2) }, nil), now, "H2", ErrFutureBlock},
 		{"difficulty", next(1, func(h *types.Header) { h.Difficulty = big.NewInt(0) }, nil), now, "H4", ErrInvalidDifficulty},
@@ -365,7 +375,10 @@ func TestVerifyHeaderBatchSemantics(t *testing.T) {
 	}
 }
 
-// A-02 §8.4: CommitHeader of H with the seals of validators 0, 1, 2.
+// A-02 §8.4: CommitHeader of H with the seals of validators 0, 1, 2, the
+// unchanged block hash, and the errors of seal writing in their order.
+//
+// Covers: WBFT-HDR-050, WBFT-HDR-051, WBFT-HDR-052, WBFT-PARAM-011
 func TestCommitHeaderWorkedExample(t *testing.T) {
 	acc := accounts(t, 3)
 	reveal, _ := ecdsa.SignData(codec.RandaoData(big.NewInt(8282), types.HeightFromUint64(2)), acc[0].key)
@@ -415,6 +428,24 @@ func TestCommitHeaderWorkedExample(t *testing.T) {
 	short := append([]types.SealEntry{{Sealer: 5, Seal: make([]byte, 95)}}, ps...)
 	if _, err := CommitHeader(&types.Block{Header: h}, r, short, cs); !errors.Is(err, ErrInvalidSeal) {
 		t.Errorf("short seal: %v", err)
+	}
+	if _, err := CommitHeader(&types.Block{Header: h}, r, ps, short); !errors.Is(err, ErrInvalidSeal) {
+		t.Errorf("short committed seal: %v", err)
+	}
+	// The prepared list is checked before the committed list.
+	if _, err := CommitHeader(&types.Block{Header: h}, r, nil, nil); !errors.Is(err, ErrInvalidPreparedSeals) {
+		t.Errorf("both lists empty: %v", err)
+	}
+	if _, err := CommitHeader(&types.Block{Header: h}, r, short, nil); !errors.Is(err, ErrInvalidSeal) {
+		t.Errorf("short prepared seal and no committed seals: %v", err)
+	}
+	// A 96-byte value that is not a G2 point fails the aggregation.
+	notPoint := append([]types.SealEntry{{Sealer: 5, Seal: bytes.Repeat([]byte{0xff}, 96)}}, ps...)
+	for name, lists := range map[string][2][]types.SealEntry{"prepared": {notPoint, cs}, "committed": {ps, notPoint}} {
+		_, err := CommitHeader(&types.Block{Header: h}, r, lists[0], lists[1])
+		if err == nil || errors.Is(err, ErrInvalidSeal) || errors.Is(err, ErrInvalidPreparedSeals) || errors.Is(err, ErrInvalidCommittedSeals) {
+			t.Errorf("%s aggregation: %v", name, err)
+		}
 	}
 }
 
@@ -468,6 +499,7 @@ func TestMergeSeals(t *testing.T) {
 	}
 }
 
+// Covers: WBFT-ENC-031
 func TestPrepareProposal(t *testing.T) {
 	b := newBuilder(t)
 	b.build(3)
@@ -514,6 +546,11 @@ func TestPrepareProposal(t *testing.T) {
 	unknown.ParentHash = types.Hash{1}
 	if _, err := PrepareProposal(b.env(0), unknown, in); !errors.Is(err, ErrUnknownAncestor) {
 		t.Errorf("unknown parent: %v", err)
+	}
+	skipped := skel(nil)
+	skipped.Number = parent.Number.AddUint64(2)
+	if _, err := PrepareProposal(b.env(0), skipped, in); !errors.Is(err, ErrUnknownAncestor) {
+		t.Errorf("number not parent + 1: %v", err)
 	}
 	opt := in
 	opt.Allow32ByteVanity = true
@@ -573,6 +610,7 @@ func TestStateDependentSteps(t *testing.T) {
 	}
 }
 
+// Covers: WBFT-HDR-060, WBFT-HDR-061, WBFT-HDR-063
 func TestVerifyProposal(t *testing.T) {
 	b := newBuilder(t)
 	b.build(3)
@@ -597,6 +635,60 @@ func TestVerifyProposal(t *testing.T) {
 	d, err := VerifyProposal(early, blk)
 	if !errors.Is(err, ErrFutureBlock) || d != 5*time.Second {
 		t.Errorf("future: %v %v", d, err)
+	}
+	// The bad-block check (P2) comes before the future check (P6).
+	earlyBad := *early
+	earlyBad.BadBlock = bad.BadBlock
+	if _, err := VerifyProposal(&earlyBad, blk); stepOf(err) != "P2" {
+		t.Errorf("bad block from the future: %v", err)
+	}
+	// Far in the future the duration saturates; from 2^63 on it is negative.
+	for _, tt := range []struct {
+		time uint64
+		want func(time.Duration) bool
+	}{
+		{1 << 62, func(d time.Duration) bool { return d == time.Duration(math.MaxInt64) }},
+		{1 << 63, func(d time.Duration) bool { return d < 0 }},
+		{math.MaxUint64, func(d time.Duration) bool { return d < 0 }},
+	} {
+		fh := h.Copy()
+		fh.Time = tt.time
+		d, err := VerifyProposal(env, &types.Block{Header: fh})
+		if !errors.Is(err, ErrFutureBlock) || !tt.want(d) {
+			t.Errorf("time %d: %v %v", tt.time, d, err)
+		}
+	}
+}
+
+// Round and seals of a finalized header are node-local: a verifier whose
+// stored copy of block n carries another round and other sealers than the
+// proposer's copy still accepts block n+1.
+//
+// Covers: WBFT-HDR-053
+func TestNodeLocalSeals(t *testing.T) {
+	b := newBuilder(t)
+	b.build(6)
+	h7 := b.seal(b.propose(1, nil, nil), 0, []int{0, 1, 2})
+	orig := b.hs[6]
+	alt := b.seal(orig.Copy(), 1, []int{1, 2, 3})
+	if codec.BlockHash(alt) != codec.BlockHash(orig) {
+		t.Fatal("resealed copy has another hash")
+	}
+	ox, _ := codec.DecodeExtra(orig)
+	ax, _ := codec.DecodeExtra(alt)
+	x7, _ := codec.DecodeExtra(h7)
+	if ax.Round == ox.Round || bytes.Equal(ax.PreparedSeal.Sealers, x7.PrevPreparedSeal.Sealers) || x7.PrevRound != ox.Round {
+		t.Fatal("fixture: the copies do not differ as intended")
+	}
+	now := uint64(t0 + 100)
+	for name, stored := range map[string]*types.Header{"same copy": orig, "other copy": alt} {
+		b.chain.add(stored)
+		if err := VerifyHeader(b.env(now), alt, nil, headerOnly); err != nil {
+			t.Errorf("%s: block 6: %v", name, err)
+		}
+		if err := VerifyHeader(b.env(now), h7, nil, headerOnly); err != nil {
+			t.Errorf("%s: block 7: %v", name, err)
+		}
 	}
 }
 
@@ -656,5 +748,36 @@ func TestRandaoMix(t *testing.T) {
 	}
 	if m := RandaoMix(keccak.Sum256(reveal), reveal); m != (types.Hash{}) {
 		t.Errorf("self mix %x", m)
+	}
+}
+
+// block_period is taken from config_at of the header being built or
+// verified: with a transition to a 10-second period at block 3, block 3 must
+// be at least 10 seconds after block 2 while block 2 needs 1 second.
+//
+// Covers: WBFT-PARAM-053
+func TestBlockPeriodConfigAt(t *testing.T) {
+	b := newBuilder(t)
+	pol := uint64(0)
+	b.cfg = types.NewConfig(types.WBFTParams{RequestTimeoutSeconds: 2, BlockPeriodSeconds: 1, EpochLength: 4, ProposerPolicy: &pol},
+		[]types.Transition{{Block: big.NewInt(3), WBFT: &types.WBFTParams{BlockPeriodSeconds: 10}}}, b.cfg.Init, b.cfg.ChainID)
+	b.build(2)
+	if got := b.hs[2].Time - b.hs[1].Time; got != 1 {
+		t.Fatalf("block 2 is %d s after block 1, want 1", got)
+	}
+	parent := b.head()
+	h3 := b.propose(2, nil, nil) // the clock is at the parent time
+	if h3.Time != parent.Time+10 {
+		t.Fatalf("block 3 time %d, want parent + 10", h3.Time)
+	}
+	now := parent.Time + 100
+	if err := VerifyHeader(b.env(now), b.seal(h3, 0, []int{1, 2, 3}), nil, headerOnly); err != nil {
+		t.Errorf("block 3 at parent + 10: %v", err)
+	}
+	early := b.propose(2, nil, nil)
+	early.Time = parent.Time + 9
+	resigned := b.seal(early, 0, []int{1, 2, 3})
+	if err := VerifyHeader(b.env(now), resigned, nil, headerOnly); !errors.Is(err, ErrInvalidTimestamp) || stepOf(err) != "H12" {
+		t.Errorf("block 3 at parent + 9: %v", err)
 	}
 }

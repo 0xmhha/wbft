@@ -199,7 +199,7 @@ func (s *State) Snapshot() *Snapshot {
 // seals for (head number, prior round) with the head's block hash, indexed in
 // the prior validator set. Both lists are empty when the core is not running.
 //
-// Spec: WBFT-SM-067
+// Spec: WBFT-SM-067, WBFT-HDR-035
 func (snap *Snapshot) ExtraSeals(head *types.Header) (prepared, committed []types.SealEntry) {
 	prepared, committed = []types.SealEntry{}, []types.SealEntry{}
 	if snap == nil || !snap.Running || head == nil || snap.PriorValidators == nil {

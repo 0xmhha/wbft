@@ -494,3 +494,49 @@ func TestRandaoData(t *testing.T) {
 		}
 	}
 }
+
+// The proposal digest covers EpochInfo, GasTip, RandaoReveal, PrevRound and
+// the previous seals of the finalized header, and not Round, PreparedSeal or
+// CommittedSeal.
+//
+// Covers: WBFT-HDR-041
+func TestBlockHashCoverage(t *testing.T) {
+	base := headerH(t)
+	want := BlockHash(base)
+	seal := &types.AggregatedSeal{Sealers: types.SealerSet{0x07}, Signature: bytes.Repeat([]byte{1}, 96)}
+	with := func(f func(x *types.WBFTExtra)) *types.Header {
+		h := base.Copy()
+		x, err := DecodeExtra(h)
+		if err != nil {
+			t.Fatal(err)
+		}
+		f(x)
+		if err := SetExtra(h, x); err != nil {
+			t.Fatal(err)
+		}
+		return h
+	}
+	covered := map[string]func(x *types.WBFTExtra){
+		"epoch info":         func(x *types.WBFTExtra) { x.EpochInfo = &types.EpochInfo{} },
+		"gas tip":            func(x *types.WBFTExtra) { x.GasTip = big.NewInt(1) },
+		"randao reveal":      func(x *types.WBFTExtra) { x.RandaoReveal = x.RandaoReveal[:64] },
+		"prev round":         func(x *types.WBFTExtra) { x.PrevRound = 1 },
+		"prev prepared seal": func(x *types.WBFTExtra) { x.PrevPreparedSeal = seal },
+		"prev commit seal":   func(x *types.WBFTExtra) { x.PrevCommittedSeal = seal },
+	}
+	for name, f := range covered {
+		if BlockHash(with(f)) == want {
+			t.Errorf("%s does not change the digest", name)
+		}
+	}
+	notCovered := map[string]func(x *types.WBFTExtra){
+		"round":          func(x *types.WBFTExtra) { x.Round = 7 },
+		"prepared seal":  func(x *types.WBFTExtra) { x.PreparedSeal = seal },
+		"committed seal": func(x *types.WBFTExtra) { x.CommittedSeal = seal },
+	}
+	for name, f := range notCovered {
+		if BlockHash(with(f)) != want {
+			t.Errorf("%s changes the digest", name)
+		}
+	}
+}

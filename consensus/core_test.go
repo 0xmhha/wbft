@@ -320,6 +320,8 @@ func TestDeterministicOutputs(t *testing.T) {
 
 // process_extra_seals selects the stored seals of (head number, prior round)
 // with the head's hash, indexed in the prior set.
+//
+// Covers: WBFT-HDR-035
 func TestSnapshotExtraSeals(t *testing.T) {
 	h := newHarness(t, 4, 1)
 	h.start()

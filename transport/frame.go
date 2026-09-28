@@ -84,7 +84,7 @@ func IsConsensusCode(code uint64) bool { return code >= CodeLegacy && code <= Co
 // The engine-stopped rule of the receive path (StoppedEngineAction) applies
 // after the size limit and before the other rules.
 //
-// Spec: WBFT-NET-012, WBFT-NET-013, WBFT-NET-020, WBFT-NET-021, WBFT-NET-028
+// Spec: WBFT-NET-012, WBFT-NET-013, WBFT-NET-020, WBFT-NET-021, WBFT-NET-028, WBFT-MSG-050
 func DecodeFrame(code uint64, payload []byte) (data []byte, deliverCode uint64, act FrameAction, reason string) {
 	if len(payload) > MaxFramePayload {
 		return nil, 0, FrameDisconnect, ReasonTooLarge
@@ -131,7 +131,7 @@ var (
 // to 0x15 (never 0x11) and the payload is not longer than the limit a
 // receiver reads.
 //
-// Spec: WBFT-NET-010, WBFT-NET-011
+// Spec: WBFT-NET-010, WBFT-NET-011, WBFT-MSG-051
 func CheckOutbound(code uint64, payload []byte) error {
 	if code < CodeFirst || code > CodeLast {
 		return fmt.Errorf("%w: 0x%x", ErrOutboundCode, code)

@@ -69,7 +69,11 @@ type ProposalInputs struct {
 // Number > 1 the previous-block seals of the canonical header at Number - 1
 // merged with the extra seals, and the gas tip; then MixDigest.
 //
-// Spec: WBFT-HDR-010, WBFT-HDR-011, WBFT-HDR-012, WBFT-HDR-013, WBFT-HDR-014, WBFT-HDR-016, WBFT-HDR-018, WBFT-HDR-020, WBFT-HDR-021, WBFT-HDR-030, WBFT-HDR-031, WBFT-HDR-032, WBFT-HDR-033, WBFT-HDR-040
+// The parent is looked up by ParentHash at Number - 1, so a skeleton whose
+// ParentHash or Number does not follow a stored parent fails with
+// ErrUnknownAncestor.
+//
+// Spec: WBFT-HDR-042, WBFT-HDR-010, WBFT-HDR-011, WBFT-HDR-012, WBFT-HDR-013, WBFT-HDR-014, WBFT-HDR-016, WBFT-HDR-018, WBFT-HDR-020, WBFT-HDR-021, WBFT-HDR-030, WBFT-HDR-031, WBFT-HDR-032, WBFT-HDR-033, WBFT-HDR-040
 func PrepareProposal(env *Env, skeleton *types.Header, in ProposalInputs) (*types.Header, error) {
 	if in.PrevSealByParentHash || in.VerifyMergedPrevSeals || in.Allow32ByteVanity {
 		return nil, ErrUnsupportedOption

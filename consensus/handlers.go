@@ -169,6 +169,8 @@ func (st *step) broadcastVote(code codec.Code) {
 // verifySeal checks that sealer is a member of vs and that seal is its BLS
 // signature over seal_data(h, round, t). Membership is checked before the
 // signature.
+//
+// Spec: WBFT-CRYPTO-043
 func verifySeal(vs *validator.Set, h *types.Header, round uint32, t types.SealType, seal []byte, sealer types.Address) bool {
 	if vs == nil {
 		return false
