@@ -49,7 +49,7 @@ jobs:
         run: |
           pip install pyyaml
           go build -o bin/wbft-vector-adapter ./cmd/wbft-vector-adapter
-          python3 wbft-spec/tools/vectorgen/check_adapter.py wbft-spec/vectors -- bin/wbft-vector-adapter > vectors-standalone.txt || true
+          python3 wbft-spec/spec/tools/vectorgen/check_adapter.py wbft-spec/spec/vectors -- bin/wbft-vector-adapter > vectors-standalone.txt || true
           cat vectors-standalone.txt
       - if: ${{ vars.WBFT_SPEC_REPOSITORY != '' }}
         uses: actions/upload-artifact@v4
@@ -97,7 +97,7 @@ jobs:
         run: |
           pip install pyyaml
           go build -o ../bin/wbft-vector-adapter github.com/0xmhha/wbft/cmd/wbft-vector-adapter
-          python3 ../wbft-spec/tools/vectorgen/check_adapter.py ../wbft-spec/vectors -- ../bin/wbft-vector-adapter > ../vectors-embedded.txt || true
+          python3 ../wbft-spec/spec/tools/vectorgen/check_adapter.py ../wbft-spec/spec/vectors -- ../bin/wbft-vector-adapter > ../vectors-embedded.txt || true
           cat ../vectors-embedded.txt
       - if: ${{ vars.WBFT_SPEC_REPOSITORY != '' }}
         uses: actions/upload-artifact@v4

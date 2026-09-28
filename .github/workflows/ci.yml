@@ -118,7 +118,7 @@ jobs:
       # Placeholder: run the conformance vectors once the public
       # specification repository publishes them. Set the repository variable
       # WBFT_SPEC_REPOSITORY (owner/name) to enable. The runner is expected at
-      # tools/vectorgen/check_adapter.py and the vectors at vectors/.
+      # spec/tools/vectorgen/check_adapter.py and the vectors at spec/vectors/.
       - if: ${{ vars.WBFT_SPEC_REPOSITORY != '' }}
         uses: actions/checkout@v4
         with:
@@ -131,13 +131,13 @@ jobs:
           # check_adapter.py exits 1 while any case is unsupported (the
           # consensus-core handlers come with W2, execution handlers belong
           # to other adapters), so the gate is on failed cases only.
-          python3 wbft-spec/tools/vectorgen/check_adapter.py wbft-spec/vectors -- bin/wbft-vector-adapter | tee vectors.txt || true
+          python3 wbft-spec/spec/tools/vectorgen/check_adapter.py wbft-spec/spec/vectors -- bin/wbft-vector-adapter | tee vectors.txt || true
           grep -q '^pass=[0-9]* fail=0 ' vectors.txt
       - if: ${{ vars.WBFT_SPEC_REPOSITORY != '' }}
         name: traceability matrix
         run: |
           go -C tools build -o ../bin/tracegen ./tracegen
-          bin/tracegen -spec wbft-spec -vectors wbft-spec/vectors \
+          bin/tracegen -spec wbft-spec/spec -vectors wbft-spec/spec/vectors \
             -owners internal/trace/owners.yaml -code . -prefix WBFT- -format md -o traceability.md
       - if: ${{ vars.WBFT_SPEC_REPOSITORY != '' }}
         uses: actions/upload-artifact@v4
