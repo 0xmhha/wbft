@@ -547,3 +547,23 @@ func TestInboxAllOverflowNoDisconnect(t *testing.T) {
 		t.Fatalf("disconnected %v", n.net.discon)
 	}
 }
+
+// An application head that moved without a notification is noticed by the
+// periodic head check, reported and handed to the core.
+func TestHeadCheck(t *testing.T) {
+	k := newKeys(t, 4)
+	n := newTNode(t, k, 1)
+	n.boot()
+	b := block(t, 10, 1, k.addrs[0], codec.BlockHash(n.chain.head))
+	n.chain.mu.Lock()
+	n.chain.head = b.Header
+	n.chain.mu.Unlock()
+	n.advance(HeadCheckPeriod)
+	h := n.events.kinds(event.Health)
+	if len(h) == 0 || h[0].Fields["what"] != "head_mismatch" {
+		t.Fatalf("health %v", h)
+	}
+	if v := n.r.Vars(); v.View.Sequence.CmpUint64(11) != 0 {
+		t.Fatalf("core at %s", v.View.Sequence)
+	}
+}

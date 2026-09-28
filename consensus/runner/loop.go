@@ -162,6 +162,7 @@ func (r *Runner) handle(q queued) {
 			return
 		}
 		r.env.head = nh.Header
+		r.lastHead.Store(nh.Header)
 	}
 	if t, ok := q.in.(consensus.Timeout); ok {
 		stale := t.Gen != r.lastGen[t.Kind]

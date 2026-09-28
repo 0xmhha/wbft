@@ -194,9 +194,11 @@ type Runner struct {
 	lastGen   [3]uint64
 	replay    ReplayInfo
 
-	running atomic.Bool
-	snap    atomic.Pointer[consensus.Snapshot]
-	halted  atomic.Pointer[error]
+	running  atomic.Bool
+	snap     atomic.Pointer[consensus.Snapshot]
+	halted   atomic.Pointer[error]
+	lastHead atomic.Pointer[types.Header] // head of the last processed NewHead or Start
+	hkGen    atomic.Uint64                // generation of the periodic tasks
 
 	appMu    sync.Mutex // runner.app.mu
 	appQ     []queued
@@ -416,6 +418,67 @@ func (r *Runner) Close() error {
 		r.stopLoop = nil
 	}
 	return nil
+}
+
+// Periods of the housekeeping tasks.
+const (
+	// WALSyncPeriod bounds how long a buffered write-ahead log record
+	// stays unsynced when no own message forces a sync.
+	WALSyncPeriod = 200 * time.Millisecond
+	// HeadCheckPeriod is how often the head the core works on is compared
+	// with the application's head.
+	HeadCheckPeriod = 30 * time.Second
+)
+
+// startHousekeeping arms the periodic write-ahead log sync and head check
+// of the engine run; stopHousekeeping ends them.
+func (r *Runner) startHousekeeping() {
+	gen := r.hkGen.Add(1)
+	var walTick, headTick func()
+	walTick = func() {
+		if r.hkGen.Load() != gen || r.Halted() != nil {
+			return
+		}
+		if err := r.d.WAL.Sync(); err != nil {
+			r.halt(err)
+			return
+		}
+		r.d.Clock.AfterFunc(WALSyncPeriod, walTick)
+	}
+	headTick = func() {
+		if r.hkGen.Load() != gen {
+			return
+		}
+		r.checkHead()
+		r.d.Clock.AfterFunc(HeadCheckPeriod, headTick)
+	}
+	if r.d.WAL != nil {
+		r.d.Clock.AfterFunc(WALSyncPeriod, walTick)
+	}
+	r.d.Clock.AfterFunc(HeadCheckPeriod, headTick)
+}
+
+func (r *Runner) stopHousekeeping() { r.hkGen.Add(1) }
+
+// checkHead compares the application's head with the head of the last
+// processed notification; when the application is ahead and no
+// notification is waiting, it reports head_mismatch and notifies the core
+// of the application's head.
+func (r *Runner) checkHead() {
+	app := r.d.Chain.Head()
+	cur := r.lastHead.Load()
+	if app == nil || cur == nil || app.Number.Cmp(cur.Number) <= 0 {
+		return
+	}
+	r.appMu.Lock()
+	waiting := r.headNote != nil
+	r.appMu.Unlock()
+	if waiting {
+		return
+	}
+	r.emit(event.Record{Kind: event.Health, Fields: map[string]any{"what": "head_mismatch",
+		"app_head": app.Number.String(), "core_head": cur.Number.String()}}, nil)
+	r.NewHead(app)
 }
 
 // emit writes an event record; step is the core step it belongs to.

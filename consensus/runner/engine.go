@@ -96,6 +96,8 @@ func (r *Runner) startEngine(_ context.Context, head *types.Header) error {
 		r.afterReplay(replayTimers, snap)
 	}
 	r.replay.Replayed = replayed
+	r.lastHead.Store(r.env.head)
+	r.startHousekeeping()
 	f := map[string]any{"engine_run": r.engineRun, "reason": "start", "replay": map[string]any{
 		"records": r.replay.Records, "stopped": nilIfEmpty(r.replay.Stopped), "replayed": replayed}}
 	r.emit(event.Record{Kind: event.EngineStart, Fields: f}, nil)
@@ -138,6 +140,7 @@ func (r *Runner) stopEngine(reason string) {
 		snap := r.core.Snapshot()
 		r.journalStep(sc, inputlog.KindStop, body, snap)
 	}
+	r.stopHousekeeping()
 	r.timers.clear()
 	r.inbox.clear()
 	r.internal = nil
