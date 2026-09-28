@@ -82,6 +82,7 @@ dependencies never enter the `wbft` module graph:
 | `tools/lint/heightlow` | Analyzer for the truncation of heights and rounds: every use of `RefLow64`, `RefLowInt64` or `RefLow32` carries `//wbft:low64 HH-nn` |
 | `tools/tracegen` | Builds the requirement traceability matrix |
 | `internal/trace/owners.yaml` | Owner table read by `tracegen`: requirement ID to package and symbols |
+| `internal/trace/baseline.tsv` | Committed baseline of the matrix (requirement IDs and vector handlers) that CI compares against |
 
 ## Dependencies
 
@@ -202,6 +203,34 @@ every vector case, the owner table and the `// Spec:` / `// Covers:` comments
 in the code, and writes one row per requirement: owner, symbols, code and test
 references, vector handlers and case count. References to unknown IDs are
 reported on standard error; `-strict` turns them into a failure.
+
+### Baseline
+
+`internal/trace/baseline.tsv` records two columns of the matrix: the
+requirement IDs of the public specification and, for each, the sorted vector
+handlers that cite it. The `traceability matrix` step of CI (enabled by the
+repository variable `WBFT_SPEC_REPOSITORY`) runs `tracegen` with
+`-baseline internal/trace/baseline.tsv` and fails when a requirement was
+added or removed or when the handler column of a requirement changed. The
+differences are printed one per line (`+` new requirement, `-` removed
+requirement, `~` changed handlers with the added and removed handlers).
+
+When the specification or the vectors change on purpose, regenerate the
+baseline against the new specification revision and commit it with the
+change:
+
+```sh
+make tracegen
+bin/tracegen -spec <spec-dir> -vectors <spec-dir>/vectors \
+    -owners internal/trace/owners.yaml -code . -prefix WBFT- -o /dev/null \
+    -write-baseline internal/trace/baseline.tsv
+git diff internal/trace/baseline.tsv
+```
+
+Review the diff of `baseline.tsv` in the pull request: every added or removed
+ID and every added or removed handler should be explained by the
+specification or vector change it follows. A removed handler or a
+requirement that lost all its vectors is a coverage loss and needs a reason.
 
 ## License
 

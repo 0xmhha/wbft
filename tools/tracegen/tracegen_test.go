@@ -185,3 +185,110 @@ func writeFile(t *testing.T, path, content string) {
 		t.Fatal(err)
 	}
 }
+
+func TestBaselineRoundTrip(t *testing.T) {
+	entries := []BaselineEntry{
+		{ID: "WBFT-TYPE-001", Handlers: []string{"crypto/keccak256"}},
+		{ID: "WBFT-TYPE-002"},
+		{ID: "WBFT-VEC-033", Handlers: []string{"crypto/keccak256", "encoding/extra_codec"}},
+	}
+	var buf bytes.Buffer
+	if err := WriteBaseline(&buf, entries); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(buf.String(), "\nWBFT-TYPE-002\t\n") {
+		t.Errorf("empty handler column not kept:\n%s", buf.String())
+	}
+	got, err := ReadBaseline(&buf, "rt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if diff := CompareBaseline(entries, got); len(diff) != 0 {
+		t.Errorf("round trip differs: %v", diff)
+	}
+}
+
+func TestReadBaselineErrors(t *testing.T) {
+	for name, text := range map[string]string{
+		"not an id":      "WBFT-TYPE-01\tcrypto/keccak256\n",
+		"id with suffix": "WBFT-TYPE-001x\t\n",
+		"duplicate id":   "WBFT-TYPE-001\t\nWBFT-TYPE-001\tcrypto/keccak256\n",
+		"bad handler":    "WBFT-TYPE-001\tkeccak256\n",
+		"deep handler":   "WBFT-TYPE-001\tcrypto/keccak256/empty\n",
+	} {
+		if _, err := ReadBaseline(strings.NewReader(text), name); err == nil {
+			t.Errorf("%s: no error", name)
+		}
+	}
+}
+
+func TestCompareBaseline(t *testing.T) {
+	want := []BaselineEntry{
+		{ID: "WBFT-TYPE-001", Handlers: []string{"crypto/keccak256"}},
+		{ID: "WBFT-TYPE-002", Handlers: []string{"crypto/keccak256", "encoding/extra_codec"}},
+		{ID: "WBFT-VEC-033", Handlers: []string{"encoding/extra_codec"}},
+	}
+	got := []BaselineEntry{
+		{ID: "WBFT-TYPE-001", Handlers: []string{"crypto/keccak256"}},
+		{ID: "WBFT-TYPE-002", Handlers: []string{"encoding/extra_codec", "encoding/message_codec"}},
+		{ID: "WBFT-TYPE-003"},
+	}
+	wantDiff := []string{
+		"~ WBFT-TYPE-002  handlers: +encoding/message_codec -crypto/keccak256",
+		"+ WBFT-TYPE-003  requirement not in the baseline (handlers: none)",
+		"- WBFT-VEC-033  requirement in the baseline but not in the matrix",
+	}
+	if diff := CompareBaseline(want, got); !slices.Equal(diff, wantDiff) {
+		t.Errorf("diff =\n%s\nwant\n%s", strings.Join(diff, "\n"), strings.Join(wantDiff, "\n"))
+	}
+	if diff := CompareBaseline(want, want); len(diff) != 0 {
+		t.Errorf("equal entries: diff = %v", diff)
+	}
+}
+
+func TestRunBaseline(t *testing.T) {
+	sources := []string{"-spec", "testdata/spec", "-vectors", "testdata/vectors", "-o", os.DevNull}
+	var out, errOut bytes.Buffer
+
+	// The committed fixture matches the fixture sources.
+	if code := run(append(sources, "-baseline", "testdata/baseline.tsv"), &out, &errOut); code != 0 {
+		t.Fatalf("matching baseline: exit = %d: %s", code, errOut.String())
+	}
+
+	// -write-baseline reproduces a file that compares equal.
+	path := filepath.Join(t.TempDir(), "baseline.tsv")
+	errOut.Reset()
+	if code := run(append(sources, "-write-baseline", path), &out, &errOut); code != 0 {
+		t.Fatalf("write: exit = %d: %s", code, errOut.String())
+	}
+	errOut.Reset()
+	if code := run(append(sources, "-baseline", path), &out, &errOut); code != 0 {
+		t.Fatalf("written baseline: exit = %d: %s", code, errOut.String())
+	}
+
+	// Drift in the requirement list and the handler column fails with a diff.
+	writeFile(t, path, "WBFT-TYPE-001\tcrypto/keccak256\nWBFT-TYPE-002\tcrypto/keccak256\nWBFT-TYPE-005\t\n")
+	errOut.Reset()
+	if code := run(append(sources, "-baseline", path), &out, &errOut); code != 1 {
+		t.Fatalf("drift: exit = %d, want 1: %s", code, errOut.String())
+	}
+	for _, s := range []string{
+		"~ WBFT-TYPE-002  handlers: +encoding/extra_codec",
+		"+ WBFT-VEC-033  requirement not in the baseline (handlers: encoding/extra_codec)",
+		"- WBFT-TYPE-005  requirement in the baseline but not in the matrix",
+		"3 differences",
+	} {
+		if !strings.Contains(errOut.String(), s) {
+			t.Errorf("stderr lacks %q:\n%s", s, errOut.String())
+		}
+	}
+
+	// A missing or malformed baseline is a usage error, not drift.
+	errOut.Reset()
+	if code := run(append(sources, "-baseline", filepath.Join(t.TempDir(), "none.tsv")), &out, &errOut); code != 2 {
+		t.Errorf("missing baseline: exit = %d, want 2", code)
+	}
+	if code := run(append(sources, "-baseline", path, "-write-baseline", path), &out, &errOut); code != 2 {
+		t.Errorf("both flags: exit = %d, want 2", code)
+	}
+}

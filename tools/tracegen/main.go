@@ -20,6 +20,11 @@
 // The matrix goes to standard output (or -o), a summary and every reference
 // to an unknown ID go to standard error. With -strict, unknown references
 // make the exit status 1.
+//
+// -write-baseline FILE records the requirement list and the vector-handler
+// column of the matrix; -baseline FILE compares the matrix with such a file,
+// prints every difference to standard error and makes the exit status 1 when
+// there is one (the repository baseline is internal/trace/baseline.tsv).
 package main
 
 import (
@@ -48,6 +53,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 	format := fs.String("format", "csv", "output format: csv or md")
 	out := fs.String("o", "", "output file (default standard output)")
 	strict := fs.Bool("strict", false, "exit 1 when a source references an ID that is not in the requirement list")
+	baseline := fs.String("baseline", "", "baseline file to compare with; exit 1 when the requirement list or the vector handlers differ")
+	writeBaseline := fs.String("write-baseline", "", "write the requirement list and vector handlers of the matrix to this baseline file")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -60,6 +67,9 @@ func run(args []string, stdout, stderr io.Writer) int {
 	}
 	if *format != "csv" && *format != "md" {
 		return fail(fmt.Errorf("unknown -format %q", *format))
+	}
+	if *baseline != "" && *writeBaseline != "" {
+		return fail(fmt.Errorf("give at most one of -baseline and -write-baseline"))
 	}
 
 	var in Inputs
@@ -135,10 +145,58 @@ func run(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "tracegen: unknown ID in %s\n", u)
 	}
 	fmt.Fprintf(stderr, "tracegen: %s cases=%d\n", m.Summary(), len(in.Vectors))
+	status := 0
 	if *strict && len(m.Unknown) > 0 {
-		return 1
+		status = 1
 	}
-	return 0
+	if *writeBaseline != "" {
+		if err := writeBaselineFile(*writeBaseline, m.Baseline()); err != nil {
+			return fail(err)
+		}
+		fmt.Fprintf(stderr, "tracegen: wrote baseline %s (%d requirements)\n", *writeBaseline, len(m.Rows))
+	}
+	if *baseline != "" {
+		want, err := readBaselineFile(*baseline)
+		if err != nil {
+			return fail(err)
+		}
+		if diff := CompareBaseline(want, m.Baseline()); len(diff) > 0 {
+			fmt.Fprintf(stderr, "tracegen: matrix differs from baseline %s:\n", *baseline)
+			for _, d := range diff {
+				fmt.Fprintf(stderr, "  %s\n", d)
+			}
+			fmt.Fprintf(stderr, "tracegen: %d differences; if the change is intended, regenerate the baseline with -write-baseline and review the diff\n", len(diff))
+			status = 1
+		} else {
+			fmt.Fprintf(stderr, "tracegen: matrix matches baseline %s (%d requirements)\n", *baseline, len(want))
+		}
+	}
+	return status
+}
+
+func writeBaselineFile(path string, entries []BaselineEntry) error {
+	f, err := os.Create(path)
+	if err != nil {
+		return err
+	}
+	bw := bufio.NewWriter(f)
+	err = WriteBaseline(bw, entries)
+	if err == nil {
+		err = bw.Flush()
+	}
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	return err
+}
+
+func readBaselineFile(path string) ([]BaselineEntry, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	return ReadBaseline(f, path)
 }
 
 func readList(path string) ([]Requirement, error) {
