@@ -180,5 +180,17 @@ func sum(m map[string]int) (n int) {
 }
 EOF
 
+expect "core input log imports the write-ahead log" lint consensus/inputlog/zz_neg.go "core-boundary" <<'EOF'
+package inputlog
+
+import _ "github.com/0xmhha/wbft/wal"
+EOF
+
+expect "goroutine in the core input log" coredet consensus/inputlog/zz_neg.go "go statement" <<'EOF'
+package inputlog
+
+func spawn(f func()) { go f() }
+EOF
+
 echo "lint-negative: $pass passed, $fails failed"
 [[ $fails -eq 0 ]]
