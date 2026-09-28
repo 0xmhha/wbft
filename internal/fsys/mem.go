@@ -28,9 +28,27 @@ type Mem struct {
 	LieSync bool
 }
 
+// inode is a file: its content and what of it is durable. While the file
+// is only appended to, the durable content is the prefix data[:synced];
+// a write into that prefix first copies it to kept.
 type inode struct {
 	data   []byte
-	synced []byte
+	synced int
+	kept   []byte // durable content when the prefix was overwritten, else nil
+}
+
+func (ino *inode) durable() []byte {
+	if ino.kept != nil {
+		return ino.kept
+	}
+	return ino.data[:ino.synced]
+}
+
+// touch prepares a change of data at offsets >= off.
+func (ino *inode) touch(off int) {
+	if ino.kept == nil && off < ino.synced {
+		ino.kept = bytes.Clone(ino.data[:ino.synced])
+	}
 }
 
 // NewMem returns an empty file system with the root directory.
@@ -63,6 +81,7 @@ func (m *Mem) OpenFile(name string, flag int, _ fs.FileMode) (File, error) {
 		m.live[name] = ino
 	}
 	if flag&os.O_TRUNC != 0 {
+		ino.touch(0)
 		ino.data = nil
 	}
 	acc := flag & (os.O_RDONLY | os.O_WRONLY | os.O_RDWR)
@@ -200,12 +219,17 @@ func (m *Mem) Crash(r *rand.Rand) {
 		old := m.durable[name]
 		n, ok := fresh[old]
 		if !ok {
-			data := bytes.Clone(old.synced)
-			if r != nil && len(old.data) > len(old.synced) && bytes.HasPrefix(old.data, old.synced) {
-				k := r.IntN(len(old.data) - len(old.synced) + 1)
-				data = append(data, old.data[len(old.synced):len(old.synced)+k]...)
+			data := bytes.Clone(old.durable())
+			if r != nil && old.kept == nil && len(old.data) > old.synced {
+				k := r.IntN(len(old.data) - old.synced + 1)
+				data = append(data, old.data[old.synced:old.synced+k]...)
 			}
-			n = &inode{data: data, synced: bytes.Clone(old.synced)}
+			n = &inode{data: data}
+			n.synced = len(n.data)
+			if r != nil && old.kept == nil && len(old.data) > old.synced {
+				// The torn bytes were not synced.
+				n.synced = len(old.durable())
+			}
 			fresh[old] = n
 		}
 		live[name] = n
@@ -224,7 +248,7 @@ func (m *Mem) Corrupt(name string, f func([]byte) []byte) error {
 		return notExist("corrupt", name)
 	}
 	ino.data = f(bytes.Clone(ino.data))
-	ino.synced = bytes.Clone(ino.data)
+	ino.synced, ino.kept = len(ino.data), nil
 	return nil
 }
 
@@ -277,6 +301,7 @@ func (f *memFile) Write(p []byte) (int, error) {
 	if f.appendMode {
 		f.off = int64(len(f.ino.data))
 	}
+	f.ino.touch(int(f.off))
 	end := f.off + int64(len(p))
 	if end > int64(len(f.ino.data)) {
 		f.ino.data = append(f.ino.data, make([]byte, end-int64(len(f.ino.data)))...)
@@ -300,7 +325,7 @@ func (f *memFile) Sync() error {
 		return fmt.Errorf("fsys: sync %s: file closed", f.name)
 	}
 	if !f.m.LieSync {
-		f.ino.synced = bytes.Clone(f.ino.data)
+		f.ino.synced, f.ino.kept = len(f.ino.data), nil
 	}
 	return nil
 }
@@ -308,6 +333,7 @@ func (f *memFile) Sync() error {
 func (f *memFile) Truncate(size int64) error {
 	f.m.mu.Lock()
 	defer f.m.mu.Unlock()
+	f.ino.touch(int(size))
 	if size < int64(len(f.ino.data)) {
 		f.ino.data = f.ino.data[:size]
 	} else {
