@@ -153,6 +153,7 @@ type Snapshot struct {
 	State           StateName
 	Proposer        types.Address
 	IsProposer      bool
+	Validators      *validator.Set
 	PriorRound      types.Round
 	PriorValidators *validator.Set
 	ExtraPrepare    []ExtraSealEntry
@@ -178,6 +179,7 @@ func (s *State) Snapshot() *Snapshot {
 	snap.State = s.state
 	snap.Proposer = s.proposerAddress()
 	snap.IsProposer = s.isProposer(s.opt.Self)
+	snap.Validators = s.validators
 	snap.PriorRound = s.prior.round
 	snap.PriorValidators = s.prior.validators
 	conv := func(m map[types.Address]*Verified) []ExtraSealEntry {

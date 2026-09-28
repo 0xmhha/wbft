@@ -97,6 +97,7 @@ func (st *step) sendPreprepare(p *types.Block, rcs, ps []*Verified) {
 	}
 	if st.broadcast(m, nil) {
 		s.cur.preprepareSent = v.Round
+		s.cur.preprepareSentValid = true
 	}
 }
 

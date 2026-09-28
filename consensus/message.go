@@ -119,6 +119,7 @@ func (st *step) onMessage(in Message) {
 		return
 	}
 	o.Source = v.Source
+	st.observe(v)
 	ok, cls, row := st.handleDecoded(v)
 	o.Check, o.Row, o.Relayed = cls, row, ok
 	if ok {

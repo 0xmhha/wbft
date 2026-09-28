@@ -100,6 +100,7 @@ func (st *step) startNewRound(round types.Round, cause string) {
 		if s.cur != nil {
 			st.addEffectiveSealsToExtraSeals()
 		}
+		s.pruneSeen(next)
 	}
 	st.updateRoundState(nextVS, newView, branch == branchRoundChange)
 	s.proposer = s.validators.CalcProposer(head.Proposer, newView.Round.RefLow64()) //wbft:low64 HH-71
@@ -112,6 +113,7 @@ func (st *step) startNewRound(round types.Round, cause string) {
 			"requested_round": round.String(),
 			"proposer":        hexAddr(s.proposerAddress()),
 			"is_proposer":     s.isProposer(s.opt.Self),
+			"valset_digest":   hexHash(ValsetDigest(s.validators)),
 		},
 	}})
 	st.setState(AcceptRequest)
@@ -254,7 +256,7 @@ func (st *step) armFutureTimer(m *Verified, d time.Duration) {
 	s.gen[FutureTimer]++
 	s.futureLive = true
 	s.future = m
-	st.emit(ArmTimer{Kind: FutureTimer, View: m.Msg.View, Round: m.Msg.View.Round, Duration: d, Gen: s.gen[FutureTimer], Digest: blockHash(m.Msg.Proposal)})
+	st.emit(ArmTimer{Kind: FutureTimer, View: m.Msg.View, Round: m.Msg.View.Round, Duration: d, Gen: s.gen[FutureTimer], Digest: blockHash(m.Msg.Proposal), Msg: m})
 	st.emit(Event{Record: event.Record{
 		Kind:   event.ProposalDeferred,
 		View:   event.ViewOf(m.Msg.View),
@@ -320,6 +322,9 @@ func (st *step) onRequest(b *types.Block) {
 	}
 	s.cur.pendingRequest = b
 	if s.state == AcceptRequest && s.cur.view.Round.RefLow64() == 0 { //wbft:low64 HH-70
+		if s.opt.Improvements.Has(OneRound0Proposal) && s.cur.preprepareSentValid {
+			return
+		}
 		st.sendPreprepare(b, nil, nil)
 	}
 }

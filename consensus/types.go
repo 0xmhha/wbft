@@ -127,9 +127,24 @@ const (
 )
 
 // Improvement names an optional local behaviour that differs from the
-// reference. None is defined yet; the set is carried in Options so that
-// adding behaviours does not change the API.
+// reference. The set is carried in Options so that adding behaviours does
+// not change the API.
 type Improvement uint8
+
+// Optional behaviours.
+const (
+	// OneRound0Proposal keeps the proposer from sending a second
+	// PRE-PREPARE in a round-0 view once one was sent. The reference sends
+	// a second, different one when another proposal request is handled
+	// before the first PRE-PREPARE reached its own state. It is one of the
+	// restart-safety rules: after a restart the proposer cannot tell from
+	// preprepare_sent (0 either way) whether it already proposed.
+	OneRound0Proposal Improvement = iota
+)
+
+// RestartSafety is the set of the restart-safety rules of the core. Nodes
+// run with it; conformance vectors run with the empty set.
+var RestartSafety = ImprovementSet(0).With(OneRound0Proposal)
 
 // ImprovementSet is a set of optional behaviours, fixed when the core starts.
 type ImprovementSet uint64

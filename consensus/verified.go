@@ -101,3 +101,4 @@ func (v *Verified) roundChanges() []*Verified {
 
 func hexAddr(a types.Address) string { return "0x" + hex.EncodeToString(a[:]) }
 func hexHash(h types.Hash) string    { return "0x" + hex.EncodeToString(h[:]) }
+func hexBytes(b []byte) string       { return "0x" + hex.EncodeToString(b) }
