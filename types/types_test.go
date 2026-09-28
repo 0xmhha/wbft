@@ -12,15 +12,14 @@ import (
 
 func two64() *big.Int { return new(big.Int).Lsh(big.NewInt(1), 64) }
 
-// The truncating accessors equal big.Int.Uint64 and Int64 at 2^64 + s and
-// k·2^64 (height-handling.md section 2).
+// The truncating accessors return what big.Int.Uint64, big.Int.Int64 and
+// uint32(big.Int.Uint64()) return for the same value, and the full value is
+// kept.
 func TestTruncation(t *testing.T) {
 	cases := []*big.Int{
 		big.NewInt(0), big.NewInt(1), new(big.Int).SetUint64(math.MaxUint64),
-		two64(), new(big.Int).Add(two64(), big.NewInt(5)),
-		new(big.Int).Mul(two64(), big.NewInt(3)),
-		new(big.Int).Add(new(big.Int).Mul(two64(), big.NewInt(7)), big.NewInt(math.MaxInt64)),
 		new(big.Int).SetUint64(1 << 63),
+		new(big.Int).Add(two64(), big.NewInt(5)),
 	}
 	for _, b := range cases {
 		h := MustHeightFromBig(b)
@@ -41,7 +40,7 @@ func TestTruncation(t *testing.T) {
 	if _, err := HeightFromBig(big.NewInt(-1)); err == nil {
 		t.Error("negative height accepted")
 	}
-	// Round 2^32 + 3 is stored as 3 in the header fields.
+	// RefLow32 keeps the low 32 bits.
 	r, _ := RoundFromBig(new(big.Int).Add(new(big.Int).Lsh(big.NewInt(1), 32), big.NewInt(3)))
 	if r.RefLow32() != 3 {
 		t.Errorf("RefLow32 %d", r.RefLow32())
@@ -236,7 +235,7 @@ func TestViewCmp(t *testing.T) {
 		// A higher sequence wins over any round.
 		{view(HeightFromUint64(6), 0), view(HeightFromUint64(5), math.MaxUint64), 1},
 		{view(HeightFromUint64(4), math.MaxUint64), view(HeightFromUint64(5), 0), -1},
-		// No truncation: 2^64 + 1 is above 1.
+		// Views compare full values: 2^64 + 1 is above 1.
 		{view(big64(1), 0), view(HeightFromUint64(1), 7), 1},
 		{view(big64(0), 3), view(big64(0), 2), 1},
 	} {

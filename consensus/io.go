@@ -103,6 +103,10 @@ type Broadcast struct {
 	Msg        *codec.Message
 	SealData   []byte
 	Validators *validator.Set
+	// BadBlockReleased marks a ROUND-CHANGE without a prepared pair whose
+	// pair the bad-block rule released in this sequence
+	// (BadBlockReleaseMark); the runner passes it to the private validator.
+	BadBlockReleased bool
 }
 
 // Relay sends a processed message to Validators: the received bytes, or the

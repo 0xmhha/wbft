@@ -28,8 +28,8 @@ coredet: bin/coredet
 bin/heightlow: $(wildcard tools/lint/heightlow/*.go tools/lint/heightlow/cmd/heightlow/*.go)
 	go -C tools build -o ../bin/heightlow ./lint/heightlow/cmd/heightlow
 
-# The rows of the height-handling table that the implemented milestones must
-# annotate at least once (scripts/heightlow-rows.txt).
+# The site labels of 64-bit truncation that must each be annotated at least
+# once (scripts/heightlow-rows.txt).
 heightlow: bin/heightlow
 	bin/heightlow -require "$$(tr -d ' ' < scripts/heightlow-rows.txt | paste -sd, -)" ./...
 

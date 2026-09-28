@@ -140,11 +140,19 @@ const (
 	// restart-safety rules: after a restart the proposer cannot tell from
 	// preprepare_sent (0 either way) whether it already proposed.
 	OneRound0Proposal Improvement = iota
+	// BadBlockReleaseMark sets Broadcast.BadBlockReleased on a
+	// ROUND-CHANGE whose prepared pair the bad-block rule released. The
+	// messages are those of the reference; the mark lets the private
+	// validator sign a ROUND-CHANGE without a prepared pair after the node
+	// signed a COMMIT or a ROUND-CHANGE with a pair at that height. It is
+	// one of the restart-safety rules: without it the sign rules of the
+	// private validator refuse every such ROUND-CHANGE.
+	BadBlockReleaseMark
 )
 
 // RestartSafety is the set of the restart-safety rules of the core. Nodes
 // run with it; conformance vectors run with the empty set.
-var RestartSafety = ImprovementSet(0).With(OneRound0Proposal)
+var RestartSafety = ImprovementSet(0).With(OneRound0Proposal).With(BadBlockReleaseMark)
 
 // ImprovementSet is a set of optional behaviours, fixed when the core starts.
 type ImprovementSet uint64

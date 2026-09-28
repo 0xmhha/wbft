@@ -14,10 +14,10 @@ var ErrNegative = errors.New("types: negative height or round")
 // implementation. A Height is immutable: arithmetic returns a new value. The
 // zero value is 0.
 //
-// The truncating accessors RefLow64 and RefLowInt64 reproduce the places where
-// the reference reads only the low 64 bits of a number. They are called only
-// on lines that carry a "//wbft:low64 HH-nn" comment naming the row of the
-// height-handling table.
+// The truncating accessors RefLow64 and RefLowInt64 are used where the
+// reference implementation reads only the low 64 bits of a number. Outside
+// this package they are called only on lines that carry a
+// "//wbft:low64 HH-nn" comment naming the site label (tools/lint/heightlow).
 //
 // Spec: WBFT-TYPE-010
 type Height struct{ v *big.Int }

@@ -9,10 +9,12 @@
 //
 //	//wbft:low64 HH-nn [note]
 //
-// on its line or on the line above, where HH-nn is a row of the table of
-// reference places in the wbft height-handling design (flag -rows). The
-// command in cmd/heightlow also checks the other direction: every row given
-// with -require has at least one annotated use.
+// on its line or on the line above. The directive marks a site where wbft
+// truncates to 64 (or 32) bits because the reference implementation does the
+// same there; HH-nn is a label that groups such sites by the reference code
+// they reproduce (flag -rows lists the valid labels). The command in
+// cmd/heightlow also checks the other direction: every label given with
+// -require has at least one annotated use.
 package heightlow
 
 import (
@@ -31,7 +33,7 @@ const Directive = "//wbft:low64"
 
 const (
 	defaultModule = "github.com/0xmhha/wbft"
-	// defaultRows are the rows of the table of reference places: consensus
+	// defaultRows are the valid site labels, grouped by area: consensus
 	// core (HH-01 .. HH-14), header rules (HH-20 .. HH-34), validator sets
 	// and epochs (HH-40 .. HH-48), execution (HH-50 .. HH-55), the
 	// execution layer (HH-60 .. HH-67) and rounds (HH-70 .. HH-77).
@@ -43,7 +45,7 @@ var (
 	flagRows   string
 )
 
-// Analyzer is the heightlow analyzer. Its result is the sorted list of rows
+// Analyzer is the heightlow analyzer. Its result is the sorted list of site labels
 // named by the valid directives on uses in the package.
 var Analyzer = &analysis.Analyzer{
 	Name:       "heightlow",
@@ -55,10 +57,10 @@ var Analyzer = &analysis.Analyzer{
 
 func init() {
 	Analyzer.Flags.StringVar(&flagModule, "module", defaultModule, "module path of wbft")
-	Analyzer.Flags.StringVar(&flagRows, "rows", defaultRows, "comma-separated row ranges of the table (numbers without the HH- prefix)")
+	Analyzer.Flags.StringVar(&flagRows, "rows", defaultRows, "comma-separated ranges of valid site labels (numbers without the HH- prefix)")
 }
 
-// Rows is the result type: the rows named by annotated uses.
+// Rows is the result type: the site labels named by annotated uses.
 type Rows []string
 
 var typeOfRows = typeOf[Rows]()
@@ -98,9 +100,9 @@ func run(pass *analysis.Pass) (any, error) {
 			}
 			switch {
 			case !ok:
-				pass.Reportf(sel.Sel.Pos(), "%s without %s HH-nn: truncate only where the reference truncates, and name the row", sel.Sel.Name, Directive)
+				pass.Reportf(sel.Sel.Pos(), "%s without %s HH-nn: truncate only where the reference truncates, and name the site label", sel.Sel.Name, Directive)
 			case !known[row]:
-				pass.Reportf(sel.Sel.Pos(), "%s names unknown row %s", Directive, row)
+				pass.Reportf(sel.Sel.Pos(), "%s names unknown label %s", Directive, row)
 			default:
 				seen[row] = true
 			}
@@ -139,8 +141,8 @@ func isAccessor(info *types.Info, sel *ast.SelectorExpr, typesPkg string) bool {
 
 var directiveRE = regexp.MustCompile(`^` + regexp.QuoteMeta(Directive) + `\s+(HH-\d{2})\b`)
 
-// directives maps the lines of f that hold a directive to the row it names.
-// A directive without a well-formed row is recorded with an empty row, which
+// directives maps the lines of f that hold a directive to the label it names.
+// A directive without a well-formed label is recorded with an empty label, which
 // is reported as unknown.
 func directives(fset *token.FileSet, f *ast.File) map[int]string {
 	out := map[int]string{}

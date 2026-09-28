@@ -40,11 +40,18 @@ import (
 //
 // Spec: WBFT-SM-003
 func (st *step) broadcast(m *codec.Message, sealData []byte) bool {
+	return st.emitBroadcast(Broadcast{Msg: m, SealData: sealData})
+}
+
+// emitBroadcast emits b to the current validators when the node is one of
+// them.
+func (st *step) emitBroadcast(b Broadcast) bool {
 	s := st.s
 	if s.validators == nil || !s.validators.Contains(s.opt.Self) {
 		return false
 	}
-	st.emit(Broadcast{Msg: m, SealData: sealData, Validators: s.validators})
+	b.Validators = s.validators
+	st.emit(b)
 	return true
 }
 

@@ -169,7 +169,8 @@ func (st *step) broadcastRoundChange(round types.Round) {
 	if s.certificate != nil {
 		m.Prepares = sortByEncoding(messagesOf(s.certificate), codec.EncodeMessage)
 	}
-	st.broadcast(m, nil)
+	released := s.opt.Improvements.Has(BadBlockReleaseMark) && c.badBlockReleased && c.preparedBlock == nil
+	st.emitBroadcast(Broadcast{Msg: m, BadBlockReleased: released})
 }
 
 // handleRoundChange stores a ROUND-CHANGE of the current sequence and applies

@@ -75,7 +75,9 @@ simulation)** covers:
 
 Nodes run the reference behaviour with two restart-safety rules: the
 write-ahead log replay and the sign rules of the private validator (with
-the core's guard against a second round-0 proposal). Conformance vectors run
+the core's guard against a second round-0 proposal, and the core's mark on
+a ROUND-CHANGE whose prepared pair the bad-block rule released, which lets
+the private validator sign it). Conformance vectors run
 with every optional behaviour off. The node assembly follows in W3.
 
 ## Layout
@@ -100,7 +102,7 @@ dependencies never enter the `wbft` module graph:
 | Path | Purpose |
 |---|---|
 | `tools/lint/coredet` | `go/analysis` analyzer for the determinism rules that linters cannot express |
-| `tools/lint/heightlow` | Analyzer for the truncation of heights and rounds: every use of `RefLow64`, `RefLowInt64` or `RefLow32` carries `//wbft:low64 HH-nn` |
+| `tools/lint/heightlow` | Analyzer for the 64-bit truncation sites of heights and rounds: every use of `RefLow64`, `RefLowInt64` or `RefLow32` carries `//wbft:low64 HH-nn` |
 | `tools/tracegen` | Builds the requirement traceability matrix |
 | `tools/headerscan` | Verifies the headers of a running network over JSON-RPC |
 | `internal/trace/owners.yaml` | Owner table read by `tracegen`: requirement ID to package and symbols |
@@ -173,10 +175,13 @@ scripts/check-deps.sh
   - `coredet` forbids `go`, `select` and channel operations (in pure modules
     except `header.VerifyHeaders`) and requires `//wbft:unordered <reason>` on
     every direct range over a map.
-- **Heights and rounds**: `heightlow` requires `//wbft:low64 HH-nn` on every
-  use of a truncating accessor outside `types`, naming the row of the
-  reference place it reproduces, and requires at least one use for every row
-  listed in `scripts/heightlow-rows.txt`.
+- **Heights and rounds**: heights and rounds are arbitrary-precision
+  integers; the reference implementation reads only their low 64 (or 32)
+  bits at some places, and `wbft` does the same at those places.
+  `heightlow` requires `//wbft:low64 HH-nn` on every use of a truncating
+  accessor outside `types`, where `HH-nn` is a site label that groups the
+  uses by the reference code they reproduce, and requires at least one use
+  for every label listed in `scripts/heightlow-rows.txt`.
 
 ### Reference sort
 
@@ -211,6 +216,14 @@ the adapters of the application repositories. The header handlers decide the exe
 verification (uncle hash, gas limit, fork times, base fee) with a stand-in of
 the application hook for the StableNet presets (`internal/snetpartb`). The adapter exits with status 0 after `bye`, 1 when
 its input ends without `bye`, and 2 on a protocol error.
+
+`conformance/stepdriver` can also run the steps cases the way a node runs
+them: the core with `consensus.RestartSafety` and own messages signed by a
+private validator (`Options.Improvements`, `Options.PrivVal`,
+`Options.SignFloor`). `TestVectorsWithRestartSafety` checks that every
+steps case then sends and records exactly the reference output, and
+`TestVectorsWithSignFloor` that a node which took over its key signs
+nothing at the first height.
 
 `scripts/cross-arch-vectors.sh` runs the vectors whose results rest on
 binary64 arithmetic (`validators/quorum`, `timers/round_timeout`) and writes

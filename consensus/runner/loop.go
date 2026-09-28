@@ -300,7 +300,7 @@ func (r *Runner) broadcast(sc *stepCtx, b consensus.Broadcast) {
 		r.internal = append(r.internal, queued{in: consensus.BroadcastFailed{Code: m.Code, View: m.View}, via: viaInternal})
 		return
 	}
-	sig, err := r.d.Signer.SignVote(privval.VoteRequest{Msg: m, SealData: b.SealData})
+	sig, err := r.d.Signer.SignVote(privval.VoteRequest{Msg: m, SealData: b.SealData, BadBlockReleased: b.BadBlockReleased})
 	if err != nil {
 		if !privval.IsRefusal(err) {
 			r.halt(err)

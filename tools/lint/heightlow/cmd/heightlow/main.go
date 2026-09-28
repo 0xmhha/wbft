@@ -1,12 +1,12 @@
 // Command heightlow runs the heightlow analyzer over the given packages and
-// then checks that every row named with -require has an annotated use.
+// then checks that every site label named with -require has an annotated use.
 //
 // Usage (from the root of the wbft module):
 //
 //	go -C tools build -o ../bin/heightlow ./lint/heightlow/cmd/heightlow
 //	bin/heightlow -require HH-20,HH-21 ./...
 //
-// It exits with status 1 when the analyzer reports a use or a required row
+// It exits with status 1 when the analyzer reports a use or a required label
 // has no use, and 2 on a usage or load error.
 package main
 
@@ -24,7 +24,7 @@ import (
 )
 
 func main() {
-	require := flag.String("require", "", "comma-separated rows (HH-nn) that must have at least one annotated use")
+	require := flag.String("require", "", "comma-separated site labels (HH-nn) that must have at least one annotated use")
 	flag.Parse()
 	patterns := flag.Args()
 	if len(patterns) == 0 {
@@ -71,7 +71,7 @@ func main() {
 	slices.Sort(missing)
 	for _, r := range missing {
 		failed = true
-		fmt.Fprintf(os.Stderr, "heightlow: required row %s has no annotated use\n", r)
+		fmt.Fprintf(os.Stderr, "heightlow: required label %s has no annotated use\n", r)
 	}
 	if failed {
 		os.Exit(1)
