@@ -87,6 +87,9 @@ type boundaryRec struct {
 	// Replayed is false for a run start whose core did not continue from a
 	// replay: the records before it do not describe its state.
 	Replayed bool
+	// Gens are the timer generations of the core before the step that
+	// entered height From (zero for a new core).
+	Gens [3]uint64
 }
 
 type boundaryRLP struct {
@@ -97,6 +100,7 @@ type boundaryRLP struct {
 	Addrs    []types.Address
 	Keys     [][]byte
 	Replayed uint64
+	Gens     []uint64
 }
 
 func encodeBoundary(kind uint8, b boundaryRec) (wal.Record, error) {
@@ -104,7 +108,7 @@ func encodeBoundary(kind uint8, b boundaryRec) (wal.Record, error) {
 	if err != nil {
 		return wal.Record{}, err
 	}
-	w := boundaryRLP{From: b.From.Big(), Head: h, Addrs: []types.Address{}, Keys: [][]byte{}}
+	w := boundaryRLP{From: b.From.Big(), Head: h, Addrs: []types.Address{}, Keys: [][]byte{}, Gens: b.Gens[:]}
 	if b.Validators != nil {
 		w.HasSet, w.Policy = 1, b.Validators.Policy().ID
 		for i := 0; i < b.Validators.Len(); i++ {
@@ -134,6 +138,10 @@ func decodeBoundary(body []byte) (boundaryRec, error) {
 		return boundaryRec{}, err
 	}
 	b := boundaryRec{From: from, Head: h, Replayed: w.Replayed == 1}
+	if len(w.Gens) != 3 {
+		return boundaryRec{}, fmt.Errorf("runner: boundary record with %d timer generations", len(w.Gens))
+	}
+	copy(b.Gens[:], w.Gens)
 	if w.HasSet == 1 {
 		if b.Validators, err = validator.NewSet(w.Addrs, w.Keys, types.ProposerPolicy{ID: w.Policy}); err != nil {
 			return boundaryRec{}, err

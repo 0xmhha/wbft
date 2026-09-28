@@ -157,6 +157,7 @@ func (r *Runner) stopEngine(reason string) {
 type replayPlan struct {
 	head  *types.Header
 	vs    *validator.Set
+	gens  [3]uint64
 	steps []walStep
 }
 
@@ -194,7 +195,7 @@ func (r *Runner) planReplay(from types.Height) (*replayPlan, error) {
 	if start < 0 {
 		return &replayPlan{}, nil
 	}
-	plan := &replayPlan{head: b.Head, vs: b.Validators}
+	plan := &replayPlan{head: b.Head, vs: b.Validators, gens: b.Gens}
 	var cur *walStep
 	flush := func() {
 		if cur != nil {
@@ -266,6 +267,7 @@ type replayResult struct {
 func (r *Runner) runReplay(plan *replayPlan) (*consensus.State, []*journal.StepRec, replayResult) {
 	res := replayResult{lastOwn: map[ownKey][]byte{}}
 	core := consensus.NewState(r.cfg.Core)
+	core.RestoreTimerGens(plan.gens)
 	var recs []*journal.StepRec
 	var step uint64
 	senv := &startEnv{head: plan.head, vs: plan.vs}
@@ -303,6 +305,7 @@ func (r *Runner) runReplay(plan *replayPlan) (*consensus.State, []*journal.StepR
 	outs := core.Step(senv, consensus.Start{})
 	track(outs)
 	record(inputlog.KindStart, startBody, viaWAL, outs, nil, plan.head)
+	recs[0].TimerGens = plan.gens[:]
 	env := &replayEnv{head: plan.head}
 	for i, s := range plan.steps {
 		in, err := inputlog.Decode(s.kind, s.body, nil)

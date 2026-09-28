@@ -168,6 +168,9 @@ type StepRec struct {
 	Env          [][]byte
 	ValsetDigest types.Hash
 	OutDigest    types.Hash
+	// TimerGens, on a start step, are the timer generations the new core
+	// continues (from a write-ahead log replay); empty means zero.
+	TimerGens []uint64
 }
 
 // GapRec reports records dropped while the queue was full.
@@ -275,6 +278,7 @@ type stepRLP struct {
 	Env          [][]byte
 	ValsetDigest types.Hash
 	OutDigest    types.Hash
+	TimerGens    []uint64
 }
 
 type gapRLP struct {
@@ -328,9 +332,13 @@ func encodeBody(r Record, jseq uint64) ([]byte, error) {
 		if env == nil {
 			env = [][]byte{}
 		}
+		gens := b.TimerGens
+		if gens == nil {
+			gens = []uint64{}
+		}
 		return rlp.Encode(&stepRLP{Format: Format, JSeq: jseq, EngineRun: b.EngineRun, Step: b.Step, Mono: uint64(int64(b.Mono)),
 			WallNs: uint64(b.WallNs), InputKind: b.InputKind, Input: bytesOrEmpty(b.Input), Via: b.Via,
-			HeadNumber: heightBig(b.HeadNumber), HeadHash: b.HeadHash, Env: env, ValsetDigest: b.ValsetDigest, OutDigest: b.OutDigest})
+			HeadNumber: heightBig(b.HeadNumber), HeadHash: b.HeadHash, Env: env, ValsetDigest: b.ValsetDigest, OutDigest: b.OutDigest, TimerGens: gens})
 	case *GapRec:
 		bk := b.ByKind
 		if bk == nil {
@@ -424,7 +432,7 @@ func decodeBody(k Kind, body []byte) (Record, error) {
 		}
 		return Record{Kind: k, JSeq: w.JSeq, Body: &StepRec{EngineRun: w.EngineRun, Step: w.Step, Mono: time.Duration(int64(w.Mono)),
 			WallNs: int64(w.WallNs), InputKind: w.InputKind, Input: w.Input, Via: w.Via, HeadNumber: hn, HeadHash: w.HeadHash,
-			Env: w.Env, ValsetDigest: w.ValsetDigest, OutDigest: w.OutDigest}}, nil
+			Env: w.Env, ValsetDigest: w.ValsetDigest, OutDigest: w.OutDigest, TimerGens: w.TimerGens}}, nil
 	case KindGap:
 		var w gapRLP
 		if err := rlp.DecodeStrict(body, &w); err != nil {

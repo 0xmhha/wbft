@@ -132,6 +132,19 @@ func (s *State) reset() {
 	s.future = nil
 }
 
+// TimerGens returns the generation counters of the three timers.
+func (s *State) TimerGens() [3]uint64 { return s.gen }
+
+// RestoreTimerGens sets the generation counters of a stopped core, so that
+// a core rebuilt from a log continues the generations of the core that
+// wrote it: an expiry the log recorded then keeps its meaning. It does
+// nothing while the core runs.
+func (s *State) RestoreTimerGens(g [3]uint64) {
+	if !s.running {
+		s.gen = g
+	}
+}
+
 // Running reports whether the core has been started and not stopped.
 func (s *State) Running() bool { return s.running }
 

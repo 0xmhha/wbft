@@ -181,6 +181,7 @@ func (r *Runner) handle(q queued) {
 		}
 	}
 	before := r.core.Snapshot()
+	gens := r.core.TimerGens()
 	r.env.begin(true)
 	outs := r.core.Step(r.env, q.in)
 	answers := r.env.end()
@@ -192,18 +193,18 @@ func (r *Runner) handle(q queued) {
 	after := r.core.Snapshot()
 	r.snap.Store(after)
 	if _, ok := q.in.(consensus.NewHead); ok && after.Running && (!before.Running || after.View.Sequence.Cmp(before.View.Sequence) != 0) {
-		r.endHeight(after)
+		r.endHeight(after, gens)
 	}
 	r.journalStep(sc, kind, body, after)
 }
 
 // endHeight writes the end-of-height record of the head the core left
 // for, prunes the write-ahead log and releases the builder of the height.
-func (r *Runner) endHeight(snap *consensus.Snapshot) {
+func (r *Runner) endHeight(snap *consensus.Snapshot, gens [3]uint64) {
 	h := r.env.head
 	faultpoint.Hit(r.d.Faults, faultpoint.EndHeightBefore)
 	if r.d.WAL != nil {
-		rec, err := encodeBoundary(walEndHeight, boundaryRec{From: h.Number.AddUint64(1), Head: h, Validators: snap.Validators, Replayed: true})
+		rec, err := encodeBoundary(walEndHeight, boundaryRec{From: h.Number.AddUint64(1), Head: h, Validators: snap.Validators, Replayed: true, Gens: gens})
 		if err != nil {
 			r.halt(err)
 			return
