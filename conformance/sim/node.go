@@ -369,6 +369,16 @@ func (n *node) damage(kind string) {
 		if n.fs.Corrupt(privvalDir+"/state", func(b []byte) []byte { return b[:len(b)/2] }) == nil {
 			n.s.damaged++
 		}
+	case DiskLoseState:
+		_ = n.fs.Remove(privvalDir + "/state")
+		if segs, err := wal.Segments(n.fs, walDir); err == nil {
+			for _, sg := range segs {
+				_ = n.fs.Remove(walDir + "/" + sg.Name)
+			}
+		}
+		_ = n.fs.SyncDir(privvalDir)
+		_ = n.fs.SyncDir(walDir)
+		n.s.damaged++
 	}
 }
 

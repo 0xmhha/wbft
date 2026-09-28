@@ -55,3 +55,36 @@ func TestDiskFaults(t *testing.T) {
 		t.Logf("%s: %d seeds, %d faults applied, %d starts found moved-aside segments", kind, n, damaged, corrupted)
 	}
 }
+
+// A node that restarts without its sign state and write-ahead log and with
+// the takeover guard sets the sign floor at head + 1: it signs nothing at
+// that height (sign_floor_skip) and joins from the next one.
+func TestTakeoverGuard(t *testing.T) {
+	for seed := int64(0); seed < int64(seedCount(t, 4)); seed++ {
+		r := seedRand(seed, 98)
+		sc := base("takeover", seed, testValidators(t, 4), 4, 8)
+		i := r.IntN(4)
+		a := addrOf(sc.Validators[i])
+		for k := 0; k < 4; k++ {
+			spec := DefaultNode()
+			spec.TakeoverGuard = k == i
+			sc.Nodes = append(sc.Nodes, spec)
+		}
+		at := time.Duration(1+r.IntN(4))*time.Second + ms(r, 5, 60)
+		sc.Schedule = []NodeEvent{{At: at, Node: a, Action: ActionCrash}, {At: at + ms(r, 200, 800), Node: a, Action: ActionRestart}}
+		sc.Disk = []DiskFault{{At: at + time.Millisecond, Node: a, Kind: DiskLoseState}}
+		res, err := Run(context.Background(), sc, Output{})
+		if err != nil || len(res.Violations) > 0 {
+			t.Fatal(err, res.Violations)
+		}
+		floor, skip := false, false
+		for _, data := range res.Events {
+			floor = floor || strings.Contains(string(data), `"status":"set"`)
+			skip = skip || strings.Contains(string(data), `"what":"sign_floor_skip"`)
+		}
+		if !floor {
+			t.Fatalf("seed %d: no sign floor set", seed)
+		}
+		t.Logf("seed %d: floor set, skip reported %v, heads %v", seed, skip, res.Heads)
+	}
+}

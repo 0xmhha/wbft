@@ -333,14 +333,12 @@ func inboundOverflow(seed int64, keys []Validator) Scenario {
 	target := addrOf(sc.Validators[(r.IntN(3)+1+indexOf(sc.Validators, bad))%4])
 	// One delay on the flooding link: a burst arrives at one moment.
 	sc.Links = []Link{{From: bad, To: target, Delay: []time.Duration{10 * time.Millisecond}}}
-	count := uint64(0)
 	sc.Adversaries = []Adversary{{Node: bad, Every: 50 * time.Millisecond, From: 300 * time.Millisecond, Until: 3 * time.Second,
 		Tick: func(c *AdvContext) {
 			for i := 0; i < 400; i++ {
-				count++
 				// An undecodable list, distinct for every message.
 				p := []byte{0xc9, 0x88, 0, 0, 0, 0, 0, 0, 0, 0}
-				binary.BigEndian.PutUint64(p[2:], count)
+				binary.BigEndian.PutUint64(p[2:], uint64(c.Now/time.Millisecond)<<16|uint64(i))
 				c.Send(target, uint64(codec.CodeRoundChange), p)
 			}
 		}}}

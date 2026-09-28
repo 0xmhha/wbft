@@ -139,6 +139,9 @@ const (
 	DiskCorruptWAL = "wal_corrupt"
 	// DiskPartialSignState cuts the sign state file in half.
 	DiskPartialSignState = "privval_partial"
+	// DiskLoseState removes the sign state and the write-ahead log, as a
+	// node that takes over a key without its sign record.
+	DiskLoseState = "state_lost"
 )
 
 // DiskFault damages the files of a node that is down at At.
@@ -356,6 +359,11 @@ func newSimulation(sc Scenario) (*simulation, error) {
 	if len(sc.Validators) == 0 {
 		return nil, fmt.Errorf("%w: no validators", ErrScenario)
 	}
+	// The run may change these lists; the caller's scenario stays as it
+	// was, so that it can be run again.
+	sc.Validators = slices.Clone(sc.Validators)
+	sc.Partitions = slices.Clone(sc.Partitions)
+	sc.Schedule = slices.Clone(sc.Schedule)
 	for i := range sc.Validators {
 		v, err := NewValidator(sc.Validators[i].ECDSA)
 		if err != nil {
