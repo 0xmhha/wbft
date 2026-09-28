@@ -507,7 +507,13 @@ func msgBytes(m *codec.Message) []byte {
 func encodeOutput(o consensus.Output) (any, error) {
 	switch v := o.(type) {
 	case consensus.Broadcast:
-		return []any{uint64(1), msgBytes(v.Msg), bytesOrEmpty(v.SealData), consensus.ValsetDigest(v.Validators)}, nil
+		it := []any{uint64(1), msgBytes(v.Msg), bytesOrEmpty(v.SealData), consensus.ValsetDigest(v.Validators)}
+		if v.BadBlockReleased {
+			// Appended only when set, so the digests of earlier journals
+			// do not change.
+			it = append(it, uint64(1))
+		}
+		return it, nil
 	case consensus.Relay:
 		return []any{uint64(2), uint64(v.Code), v.Payload, consensus.ValsetDigest(v.Validators)}, nil
 	case consensus.Schedule:

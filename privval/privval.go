@@ -43,6 +43,11 @@ type VoteRequest struct {
 	Msg *codec.Message
 	// SealData is seal_data(header, round, type) for PREPARE and COMMIT.
 	SealData []byte
+	// BadBlockReleased states that the bad-block rule of the core released
+	// the prepared pair of this ROUND-CHANGE's sequence
+	// (consensus.Broadcast.BadBlockReleased). It is honoured only for a
+	// ROUND-CHANGE without a prepared pair.
+	BadBlockReleased bool
 }
 
 // VoteSignature is the result of SignVote.
@@ -278,7 +283,9 @@ func preparedRank(a, b *types.Round) int {
 //     different one is signed and replaces the stored one when its prepared
 //     round is not below the stored one, and refused otherwise; after a
 //     COMMIT of round r at the sequence, a ROUND-CHANGE of that sequence
-//     must report a prepared round of at least r.
+//     must report a prepared round of at least r. Both conditions are
+//     waived for a ROUND-CHANGE without a prepared pair whose request says
+//     that the bad-block rule released the pair (BadBlockReleased).
 //
 // Heights are compared with their full values.
 func (s *FileSigner) SignVote(req VoteRequest) (VoteSignature, error) {
@@ -323,10 +330,11 @@ func (s *FileSigner) SignVote(req VoteRequest) (VoteSignature, error) {
 	var prepared *types.Round
 	if m.Code == codec.CodeRoundChange {
 		prepared = m.PreparedRound
-		if cr, ok := st.commits[seq.String()]; ok && (prepared == nil || prepared.Cmp(cr) < 0) {
+		released := req.BadBlockReleased && prepared == nil
+		if cr, ok := st.commits[seq.String()]; ok && !released && (prepared == nil || prepared.Cmp(cr) < 0) {
 			return VoteSignature{}, fmt.Errorf("%w: ROUND-CHANGE below the COMMIT of round %s", ErrDoubleSign, cr)
 		}
-		if old != nil && preparedRank(prepared, old.prepared) < 0 {
+		if old != nil && !released && preparedRank(prepared, old.prepared) < 0 {
 			return VoteSignature{}, fmt.Errorf("%w: ROUND-CHANGE with a lower prepared round", ErrDoubleSign)
 		}
 	} else if old != nil {

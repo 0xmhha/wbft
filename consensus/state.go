@@ -79,6 +79,9 @@ type roundState struct {
 	// preprepareSentValid tells a sent round-0 PRE-PREPARE from the initial
 	// value of preprepareSent (OneRound0Proposal).
 	preprepareSentValid bool
+	// badBlockReleased records that the bad-block rule released a prepared
+	// pair in this sequence (BadBlockReleaseMark).
+	badBlockReleased bool
 }
 
 func newRoundState(view types.View) *roundState {

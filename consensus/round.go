@@ -180,6 +180,7 @@ func (st *step) updateRoundState(nextVS *validator.Set, view types.View, roundCh
 		if c.preparedBlock != nil && st.env.IsBadBlock(blockHash(c.preparedBlock)) {
 			c.preparedRound = nil
 			c.preparedBlock = nil
+			c.badBlockReleased = true
 			st.clearExtraSeals(c.view.Sequence.AddUint64(1))
 		}
 		n := newRoundState(view)
@@ -187,6 +188,7 @@ func (st *step) updateRoundState(nextVS *validator.Set, view types.View, roundCh
 		n.preparedRound = c.preparedRound
 		n.preparedBlock = c.preparedBlock
 		n.pendingRequest = c.pendingRequest
+		n.badBlockReleased = c.badBlockReleased
 		s.cur = n
 	} else {
 		if s.cur != nil {

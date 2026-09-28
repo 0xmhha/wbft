@@ -75,7 +75,9 @@ simulation)** covers:
 
 Nodes run the reference behaviour with two restart-safety rules: the
 write-ahead log replay and the sign rules of the private validator (with
-the core's guard against a second round-0 proposal). Conformance vectors run
+the core's guard against a second round-0 proposal, and the core's mark on
+a ROUND-CHANGE whose prepared pair the bad-block rule released, which lets
+the private validator sign it). Conformance vectors run
 with every optional behaviour off. The node assembly follows in W3.
 
 ## Layout
