@@ -102,6 +102,7 @@ dependencies never enter the `wbft` module graph:
 | `tools/lint/coredet` | `go/analysis` analyzer for the determinism rules that linters cannot express |
 | `tools/lint/heightlow` | Analyzer for the truncation of heights and rounds: every use of `RefLow64`, `RefLowInt64` or `RefLow32` carries `//wbft:low64 HH-nn` |
 | `tools/tracegen` | Builds the requirement traceability matrix |
+| `tools/headerscan` | Verifies the headers of a running network over JSON-RPC |
 | `internal/trace/owners.yaml` | Owner table read by `tracegen`: requirement ID to package and symbols |
 | `internal/trace/wbft-spec.ref` | Commit of wbft-spec that CI checks out |
 | `internal/trace/baseline.tsv` | Committed baseline of the matrix (requirement IDs and vector handlers) that CI compares against |
@@ -239,6 +240,28 @@ go test -run TestReplayDeterminism ./conformance/stepdriver/
 # Replay one node journal of a simulator export:
 bin/wbft-replay -journal <dir>/<node> -chain <dir>/chain.rlp
 ```
+
+## Testnet header scan
+
+`tools/headerscan` checks the headers of a running StableNet network with
+the header rules of `wbft`. It fetches headers over JSON-RPC, one request at
+a time and at most five per second, and verifies every header of the scanned
+ranges with `header.VerifyHeader` (header-only mode with seal checks; the
+steps that need the parent state are skipped) and with `header.VerifyLight`.
+It also checks that the block hash computed by `wbft` equals the hash the
+node reports. The ranges are blocks 0 to 100 and, for every fork block F
+after genesis, blocks F to F + 100 (`-span`).
+
+```sh
+make headerscan
+bin/headerscan -rpc https://api.test.stablenet.network
+```
+
+The built-in preset is the StableNet testnet (chain ID 8283, Boho at block
+14 408 500); `-config` and `-forks` select another network. Every rejected
+header is printed with its number, hash, failing step and error; the exit
+status is 1 when a header is rejected. CI does not run the scan, since it
+depends on a public endpoint.
 
 ## Traceability matrix
 
