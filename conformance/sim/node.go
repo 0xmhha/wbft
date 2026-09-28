@@ -117,7 +117,11 @@ func (n *node) start() {
 		n.s.violate("start", n.v.address, "%v", err)
 		n.alive, n.down = false, true
 	}
-	log, recov, err := wal.Open(n.fs, walDir, wal.Options{SegmentBytes: 256 << 10, KeepHeights: 2})
+	segBytes := n.spec.WALSegmentBytes
+	if segBytes <= 0 {
+		segBytes = 256 << 10
+	}
+	log, recov, err := wal.Open(n.fs, walDir, wal.Options{SegmentBytes: segBytes, KeepHeights: 2})
 	if err != nil {
 		fail(err)
 		return

@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/0xmhha/wbft/wal"
 )
 
 // A write-ahead log cut at any byte or with a damaged record is repaired at
@@ -87,4 +89,52 @@ func TestTakeoverGuard(t *testing.T) {
 		}
 		t.Logf("seed %d: floor set, skip reported %v, heads %v", seed, skip, res.Heads)
 	}
+}
+
+// With small write-ahead log segments the log rotates within a height and
+// old segments are removed as heights end; replays after crashes still
+// restore the state.
+func TestSmallWALSegments(t *testing.T) {
+	replays, maxSegs := 0, 0
+	var lastIndex uint64
+	for seed := int64(0); seed < int64(seedCount(t, 6)); seed++ {
+		sc := restarts(seed, testValidators(t, 4))
+		sc.Until.Height = 12
+		for k := 0; k < 4; k++ {
+			spec := DefaultNode()
+			spec.WALSegmentBytes = 4 << 10
+			sc.Nodes = append(sc.Nodes, spec)
+		}
+		s, err := newSimulation(sc)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := s.run(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		res := s.result()
+		if len(res.Violations) > 0 {
+			t.Fatal(res.Violations)
+		}
+		for _, r := range res.Replays {
+			if r.Replayed {
+				replays++
+			}
+		}
+		for _, n := range s.nodes {
+			segs, _ := wal.Segments(n.fs, walDir)
+			maxSegs = max(maxSegs, len(segs))
+			if len(segs) > 0 {
+				lastIndex = max(lastIndex, segs[len(segs)-1].Index)
+			}
+		}
+	}
+	if replays == 0 {
+		t.Fatal("no replay")
+	}
+	// Twelve heights write many more segments than a node keeps.
+	if lastIndex < 20 || maxSegs > 12 {
+		t.Fatalf("segments: highest index %d, most kept %d", lastIndex, maxSegs)
+	}
+	t.Logf("%d replays; highest segment index %d, at most %d segments kept", replays, lastIndex, maxSegs)
 }

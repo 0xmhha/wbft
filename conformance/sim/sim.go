@@ -44,6 +44,9 @@ type NodeSpec struct {
 	// TakeoverGuard sets the sign floor at start when the sign state is
 	// empty and the head is above genesis.
 	TakeoverGuard bool
+	// WALSegmentBytes is the segment size of the write-ahead log (default
+	// 256 KiB).
+	WALSegmentBytes int64
 }
 
 // Link is a directed link; pairs without a link use Scenario.DefaultLink.
