@@ -214,7 +214,7 @@ linters:
             - pkg: sync
               desc: "the core runs on one goroutine owned by the runner"
 
-        # The copy of the Go 1.23 sort is for reference-compatible orderings
+        # The copy of the reference sort is for reference-compatible orderings
         # in types and epoch only.
         refsort-users:
           files:
@@ -245,6 +245,11 @@ linters:
         path-except: '^(consensus|consensus/inputlog|crypto/keccak|crypto/ecdsa|crypto/bls|internal/refsort|types|codec|codec/rlp|validator|epoch|header)/[^/]+\.go$'
       - linters: [forbidigo]
         path: '_test\.go$'
+      # internal/refsort keeps the function bodies of the copied sort
+      # verbatim, including assignments the copied code does not read.
+      - linters: [ineffassign, staticcheck]
+        path: '^internal/refsort/pdqsort\.go$'
+        text: 'ineffectual assignment|SA4006'
 
 issues:
   # Report every finding; the boundary rules must never be hidden by caps.
