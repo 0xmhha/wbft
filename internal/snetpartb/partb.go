@@ -1,4 +1,14 @@
-package main
+// Package snetpartb is a stand-in for the execution-side steps of header
+// verification (B-03 §1 and §2: H3, H5 .. H9, H13, H14) on the StableNet
+// presets. In a node these steps belong to the application (header.PartB).
+// The vector adapter uses it to decide the header cases whose verdict an
+// execution-side step decides, and tools/headerscan uses it to check the
+// headers of a running StableNet network. The proposal body steps P4 and P5
+// are not implemented.
+//
+// The stand-in is temporary: it moves to the execution-layer adapter once
+// that adapter exists.
+package snetpartb
 
 import (
 	"errors"
@@ -8,19 +18,21 @@ import (
 	"github.com/0xmhha/wbft/types"
 )
 
-// vectorPartB answers the execution-side steps of header verification (B-03
-// §1 and §2: H3, H5 .. H9, H13, H14) for the header vectors, whose chain
-// fixtures use a StableNet preset. In a node these steps belong to the
-// application (header.PartB); this stand-in only lets the adapter decide the
-// header cases whose verdict an execution-side step decides. The proposal
-// body steps P4 and P5 are not used by any handler of this adapter.
-// The stand-in is temporary: it moves to the execution-layer adapter once
-// that adapter exists.
-type vectorPartB struct {
-	forks forks
+// Forks are the fork activations the Part B steps read. A nil field is a
+// fork that is not scheduled.
+type Forks struct {
+	London   *big.Int
+	Shanghai *uint64
+	Cancun   *uint64
 }
 
-var errPartBStep = errors.New("unknown Part B step")
+// PartB implements header.PartB for a StableNet preset with the given forks.
+type PartB struct {
+	Forks Forks
+}
+
+// ErrStep is returned for a step name the stand-in does not know.
+var ErrStep = errors.New("unknown Part B step")
 
 // Constants of the StableNet presets (B-03).
 const (
@@ -37,13 +49,14 @@ var (
 	maxBaseFee = big.NewInt(20_000_000_000_000_000)
 )
 
-func (p *vectorPartB) isLondon(n types.Height) bool {
-	return p.forks.london != nil && p.forks.london.Cmp(n.Big()) <= 0
+func (p *PartB) isLondon(n types.Height) bool {
+	return p.Forks.London != nil && p.Forks.London.Cmp(n.Big()) <= 0
 }
 
 func timeForked(s *uint64, t uint64) bool { return s != nil && *s <= t }
 
-func (p *vectorPartB) VerifyPartB(step string, h, parent *types.Header, _ types.BodyRaw) error {
+// VerifyPartB runs one execution-side step.
+func (p *PartB) VerifyPartB(step string, h, parent *types.Header, _ types.BodyRaw) error {
 	switch step {
 	case "H3":
 		if h.UncleHash != types.EmptyUncleHash {
@@ -54,7 +67,7 @@ func (p *vectorPartB) VerifyPartB(step string, h, parent *types.Header, _ types.
 			return fmt.Errorf("invalid gasLimit: have %d, max %d", h.GasLimit, types.MaxGasLimit)
 		}
 	case "H6":
-		if p.isLondon(h.Number) && timeForked(p.forks.shanghai, h.Time) {
+		if p.isLondon(h.Number) && timeForked(p.Forks.Shanghai, h.Time) {
 			return errors.New("wbft does not support shanghai fork")
 		}
 	case "H7":
@@ -62,7 +75,7 @@ func (p *vectorPartB) VerifyPartB(step string, h, parent *types.Header, _ types.
 			return errors.New("invalid withdrawalsHash")
 		}
 	case "H8":
-		if p.isLondon(h.Number) && timeForked(p.forks.cancun, h.Time) {
+		if p.isLondon(h.Number) && timeForked(p.Forks.Cancun, h.Time) {
 			return errors.New("wbft does not support cancun fork")
 		}
 	case "H9":
@@ -81,14 +94,14 @@ func (p *vectorPartB) VerifyPartB(step string, h, parent *types.Header, _ types.
 	case "H14":
 		return p.verifyFeeFields(h, parent)
 	default:
-		return fmt.Errorf("%w %q", errPartBStep, step)
+		return fmt.Errorf("%w %q", ErrStep, step)
 	}
 	return nil
 }
 
 // verifyFeeFields is SNET-BHDR-008 to SNET-BHDR-010 with the base-fee rule
 // of B-03 §2.3.
-func (p *vectorPartB) verifyFeeFields(h, parent *types.Header) error {
+func (p *PartB) verifyFeeFields(h, parent *types.Header) error {
 	if !p.isLondon(h.Number) {
 		if h.BaseFee != nil {
 			return errors.New("invalid baseFee before fork")
@@ -130,7 +143,7 @@ func verifyGasLimit(parentGasLimit, gasLimit uint64) error {
 	return nil
 }
 
-func (p *vectorPartB) calcBaseFee(parent *types.Header) (*big.Int, error) {
+func (p *PartB) calcBaseFee(parent *types.Header) (*big.Int, error) {
 	if !p.isLondon(parent.Number) {
 		return big.NewInt(initialBaseFee), nil
 	}

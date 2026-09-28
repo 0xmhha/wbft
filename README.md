@@ -208,7 +208,7 @@ limits, empty payloads) are answered `unsupported` here and by the
 application's adapter there. Handlers of the execution layer are answered by
 the adapters of the application repositories. The header handlers decide the execution-side steps of header
 verification (uncle hash, gas limit, fork times, base fee) with a stand-in of
-the application hook for the StableNet presets (`partb.go`). The adapter exits with status 0 after `bye`, 1 when
+the application hook for the StableNet presets (`internal/snetpartb`). The adapter exits with status 0 after `bye`, 1 when
 its input ends without `bye`, and 2 on a protocol error.
 
 `scripts/cross-arch-vectors.sh` runs the vectors whose results rest on
