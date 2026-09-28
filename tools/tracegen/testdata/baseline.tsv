@@ -1,0 +1,5 @@
+# fixture baseline of testdata/spec and testdata/vectors
+WBFT-TYPE-001	crypto/keccak256
+WBFT-TYPE-002	encoding/extra_codec crypto/keccak256
+
+WBFT-VEC-033	encoding/extra_codec

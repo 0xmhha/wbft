@@ -138,11 +138,14 @@ jobs:
         run: WBFT_SPEC_VECTORS="$PWD/wbft-spec/spec/vectors" go test -count=1 ./conformance/stepdriver/
       - if: ${{ vars.WBFT_SPEC_REPOSITORY != '' }}
         name: traceability matrix
+        # Fails when the requirement list or the vector-handler column of the
+        # matrix drifts from the committed baseline (internal/trace/baseline.tsv).
         run: |
           go -C tools build -o ../bin/tracegen ./tracegen
           bin/tracegen -spec wbft-spec/spec -vectors wbft-spec/spec/vectors \
-            -owners internal/trace/owners.yaml -code . -prefix WBFT- -format md -o traceability.md
-      - if: ${{ vars.WBFT_SPEC_REPOSITORY != '' }}
+            -owners internal/trace/owners.yaml -code . -prefix WBFT- -format md -o traceability.md \
+            -baseline internal/trace/baseline.tsv
+      - if: ${{ always() && vars.WBFT_SPEC_REPOSITORY != '' }}
         uses: actions/upload-artifact@v4
         with:
           name: traceability
