@@ -143,9 +143,15 @@ jobs:
       # WBFT_SPEC_REPOSITORY (owner/name) to enable. The runner is expected at
       # spec/tools/vectorgen/check_adapter.py and the vectors at spec/vectors/.
       - if: ${{ vars.WBFT_SPEC_REPOSITORY != '' }}
+        id: specref
+        # The specification revision is pinned in the repository so that a
+        # change in wbft-spec reaches wbft only through a reviewed update.
+        run: echo "ref=$(cat internal/trace/wbft-spec.ref)" >> "$GITHUB_OUTPUT"
+      - if: ${{ vars.WBFT_SPEC_REPOSITORY != '' }}
         uses: actions/checkout@v4
         with:
           repository: ${{ vars.WBFT_SPEC_REPOSITORY }}
+          ref: ${{ steps.specref.outputs.ref }}
           path: wbft-spec
       - if: ${{ vars.WBFT_SPEC_REPOSITORY != '' }}
         name: conformance vectors

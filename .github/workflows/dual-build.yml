@@ -40,9 +40,15 @@ jobs:
       - run: go build ./...
       - run: go test ./...
       - if: ${{ vars.WBFT_SPEC_REPOSITORY != '' }}
+        id: specref
+        # The specification revision is pinned in the repository so that a
+        # change in wbft-spec reaches wbft only through a reviewed update.
+        run: echo "ref=$(cat internal/trace/wbft-spec.ref)" >> "$GITHUB_OUTPUT"
+      - if: ${{ vars.WBFT_SPEC_REPOSITORY != '' }}
         uses: actions/checkout@v4
         with:
           repository: ${{ vars.WBFT_SPEC_REPOSITORY }}
+          ref: ${{ steps.specref.outputs.ref }}
           path: wbft-spec
       - if: ${{ vars.WBFT_SPEC_REPOSITORY != '' }}
         name: conformance vectors (standalone build)
@@ -87,9 +93,15 @@ jobs:
           go build github.com/0xmhha/wbft/...
           go test github.com/0xmhha/wbft/...
       - if: ${{ vars.WBFT_SPEC_REPOSITORY != '' }}
+        id: specref
+        # The specification revision is pinned in the repository so that a
+        # change in wbft-spec reaches wbft only through a reviewed update.
+        run: echo "ref=$(cat wbft/internal/trace/wbft-spec.ref)" >> "$GITHUB_OUTPUT"
+      - if: ${{ vars.WBFT_SPEC_REPOSITORY != '' }}
         uses: actions/checkout@v4
         with:
           repository: ${{ vars.WBFT_SPEC_REPOSITORY }}
+          ref: ${{ steps.specref.outputs.ref }}
           path: wbft-spec
       - if: ${{ vars.WBFT_SPEC_REPOSITORY != '' }}
         name: conformance vectors (embedded build)
