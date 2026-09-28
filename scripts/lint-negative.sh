@@ -60,8 +60,17 @@ expect() {
   fi
 }
 
-expect "header imports consensus" lint header/zz_neg.go "header-light-verifier" <<'EOF'
+# consensus imports header, so this import is also a cycle; either failure
+# rejects the branch.
+expect "header imports consensus" lint header/zz_neg.go "header-light-verifier|import cycle not allowed" <<'EOF'
 package header
+
+import _ "github.com/0xmhha/wbft/consensus"
+EOF
+
+# An external test package has no cycle and shows the boundary rule itself.
+expect "header test imports consensus" lint header/zz_neg_test.go "header-light-verifier" <<'EOF'
+package header_test
 
 import _ "github.com/0xmhha/wbft/consensus"
 EOF

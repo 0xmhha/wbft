@@ -12,8 +12,9 @@
 // error. The adapter never reads vector files: everything it needs arrives in
 // the case message.
 //
-// Status (milestone W0): the adapter completes the hello exchange and answers
-// every case with "unsupported". Handlers are filled in from milestone W1.
+// The adapter answers the handlers of the consensus layer; cases of other
+// handlers, and network cases whose verdict belongs to a transport adapter,
+// are answered "unsupported".
 package main
 
 import (

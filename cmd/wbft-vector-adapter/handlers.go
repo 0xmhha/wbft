@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"errors"
+	"github.com/0xmhha/wbft/conformance/stepdriver"
 	"slices"
 )
 
@@ -20,8 +21,7 @@ type handler func(kind string, input json.RawMessage) (output any, err error)
 // execution layer are answered by other adapters (WBFT-VEC-054).
 //
 // A nil entry is not announced in hello and its cases are answered
-// "unsupported": the handlers of the consensus core (state machine, network,
-// build wait) come with milestone W2.
+// "unsupported".
 var handlers = map[string]handler{
 	// crypto
 	"crypto/keccak256":             hKeccak256,
@@ -53,14 +53,14 @@ var handlers = map[string]handler{
 	"validators/next_epoch_info": hNextEpochInfo,
 	// timers
 	"timers/round_timeout": hRoundTimeout,
-	"timers/build_wait":    nil,
+	"timers/build_wait":    hBuildWait,
 	// state machine
-	"state_machine/check_message": nil,
-	"state_machine/is_justified":  nil,
-	"state_machine/rounds":        nil,
+	"state_machine/check_message": hCheckMessage,
+	"state_machine/is_justified":  hIsJustified,
+	"state_machine/rounds":        steps(stepdriver.HandlerRounds),
 	// network: cases decided by consensus code and engine state; cases
 	// decided by the transport adapter stay "unsupported" here.
-	"network/receive_outcome": nil,
+	"network/receive_outcome": steps(stepdriver.HandlerReceiveOutcome),
 	// header
 	"header/build_proposal_header": hBuildProposalHeader,
 	"header/verify_header":         hVerifyHeader,

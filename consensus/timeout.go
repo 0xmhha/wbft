@@ -90,3 +90,27 @@ func RoundTimeout(p types.Params, r types.Round) (time.Duration, TimeoutWarning)
 	}
 	return time.Duration(int64(f)), NoWarning
 }
+
+// BuildWait is the wait of the block builder before it builds a proposal
+// after a round started: for a requested round 0 (its low 64 bits) the time
+// from nowUnixNano until the second headTime + blockPeriod, and 0 when that
+// time has passed; for any other round 0. The difference saturates like
+// time.Time.Sub.
+//
+// Spec: WBFT-TIMER-040, WBFT-TIMER-041
+func BuildWait(headTime, blockPeriod uint64, round types.Round, nowUnixNano int64) time.Duration {
+	if round.RefLow64() != 0 { //wbft:low64 HH-70
+		return 0
+	}
+	next := time.Unix(int64(headTime+blockPeriod), 0)
+	d := next.Sub(time.Unix(0, nowUnixNano))
+	if d < 0 {
+		return 0
+	}
+	return d
+}
+
+// Wait returns BuildWait of the request at nowUnixNano.
+func (r RequestBuild) Wait(nowUnixNano int64) time.Duration {
+	return BuildWait(r.HeadTime, r.BlockPeriod, r.Round, nowUnixNano)
+}

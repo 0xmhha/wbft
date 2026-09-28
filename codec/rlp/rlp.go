@@ -112,3 +112,12 @@ const (
 	String = gethrlp.String
 	List   = gethrlp.List
 )
+
+// SplitString returns the content of the RLP byte string at the start of b
+// and the bytes after it. A single byte below 0x80 is its own content. It
+// fails when b starts with a list, with a non-canonical size, or with a size
+// that runs past the end of b.
+func SplitString(b []byte) (content, rest []byte, err error) {
+	content, rest, err = gethrlp.SplitString(b)
+	return content, rest, wrap(err)
+}
