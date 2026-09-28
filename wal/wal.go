@@ -105,6 +105,7 @@ type Log struct {
 	seg     uint64
 	f       fsys.File
 	size    int64 // bytes written to the current segment file
+	hdr     int64 // bytes of the header records at the start of the segment
 	buf     []byte
 	err     error // sticky write error
 	closed  bool
@@ -308,7 +309,7 @@ func (l *Log) startSegment(i uint64) error {
 		f.Close()
 		return err
 	}
-	l.f, l.seg, l.size, l.started = f, i, 0, true
+	l.f, l.seg, l.size, l.hdr, l.started = f, i, 0, 0, true
 	if l.opt.Header != nil {
 		for _, r := range l.opt.Header() {
 			b, err := Encode(r)
@@ -316,6 +317,7 @@ func (l *Log) startSegment(i uint64) error {
 				return err
 			}
 			l.buf = append(l.buf, b...)
+			l.hdr += int64(len(b))
 		}
 	}
 	return nil
@@ -357,8 +359,7 @@ func (l *Log) add(r Record) (Position, error) {
 	if err != nil {
 		return Position{}, err
 	}
-	pending := l.size + int64(len(l.buf))
-	if pending > 0 && pending+int64(len(b)) > l.opt.SegmentBytes {
+	if l.wouldRotate(int64(len(b))) {
 		if err := l.rotate(); err != nil {
 			l.err = err
 			return Position{}, err
@@ -367,6 +368,38 @@ func (l *Log) add(r Record) (Position, error) {
 	pos := Position{Segment: l.seg, Offset: l.size + int64(len(l.buf))}
 	l.buf = append(l.buf, b...)
 	return pos, nil
+}
+
+// wouldRotate reports whether a frame of n bytes starts a new segment: the
+// segment holds a record besides its header records and the frame would
+// take it beyond SegmentBytes.
+func (l *Log) wouldRotate(n int64) bool {
+	pending := l.size + int64(len(l.buf))
+	return pending > l.hdr && pending+n > l.opt.SegmentBytes
+}
+
+// WouldRotate reports whether appending r would start a new segment.
+func (l *Log) WouldRotate(r Record) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.wouldRotate(int64(headerLen + 2 + len(r.Body)))
+}
+
+// Rotate syncs the current segment and starts the next one.
+func (l *Log) Rotate() error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.closed {
+		return ErrClosed
+	}
+	if l.err != nil {
+		return l.err
+	}
+	if err := l.rotate(); err != nil {
+		l.err = err
+		return err
+	}
+	return nil
 }
 
 // Append implements Writer.
