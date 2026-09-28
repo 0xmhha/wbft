@@ -103,6 +103,7 @@ dependencies never enter the `wbft` module graph:
 | `tools/lint/heightlow` | Analyzer for the truncation of heights and rounds: every use of `RefLow64`, `RefLowInt64` or `RefLow32` carries `//wbft:low64 HH-nn` |
 | `tools/tracegen` | Builds the requirement traceability matrix |
 | `internal/trace/owners.yaml` | Owner table read by `tracegen`: requirement ID to package and symbols |
+| `internal/trace/wbft-spec.ref` | Commit of wbft-spec that CI checks out |
 | `internal/trace/baseline.tsv` | Committed baseline of the matrix (requirement IDs and vector handlers) that CI compares against |
 
 ## Dependencies
@@ -258,13 +259,15 @@ added or removed or when the handler column of a requirement changed. The
 differences are printed one per line (`+` new requirement, `-` removed
 requirement, `~` changed handlers with the added and removed handlers).
 
-When the specification or the vectors change on purpose, regenerate the
-baseline against the new specification revision and commit it with the
-change:
+CI checks out the specification at the commit recorded in
+`internal/trace/wbft-spec.ref`, so a change merged into wbft-spec does not
+affect wbft until this file is updated. To move to a newer specification
+revision, update `wbft-spec.ref`, regenerate the baseline against that
+revision and commit both in one pull request:
 
 ```sh
 make tracegen
-bin/tracegen -spec <spec-dir> -vectors <spec-dir>/vectors \
+bin/tracegen -spec <wbft-spec>/spec -vectors <wbft-spec>/spec/vectors \
     -owners internal/trace/owners.yaml -code . -prefix WBFT- -o /dev/null \
     -write-baseline internal/trace/baseline.tsv
 git diff internal/trace/baseline.tsv
