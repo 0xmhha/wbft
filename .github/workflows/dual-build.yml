@@ -5,9 +5,11 @@
 #       to the fork's own rlp/crypto/common packages.
 # Results that differ between (a) and (b) are failures.
 #
-# Status (milestone W0): wbft does not import go-ethereum yet, so (a) is a
-# plain build and (b) is a documented placeholder, disabled until the
-# repository variable FORK_REPOSITORY (owner/name of the fork) is set.
+# Status (milestone W1): wbft imports the go-ethereum rlp, crypto and common
+# packages. Both jobs run the conformance vectors when the repository variable
+# WBFT_SPEC_REPOSITORY is set and upload the per-case results; the compare job
+# fails when they differ. (b) stays disabled until the repository variable
+# FORK_REPOSITORY (owner/name of the fork) is set.
 name: dual-build
 
 on:
@@ -37,8 +39,23 @@ jobs:
         run: scripts/check-deps.sh
       - run: go build ./...
       - run: go test ./...
-      # From W1: run the conformance vectors here and upload the results for
-      # comparison with the embedded job.
+      - if: ${{ vars.WBFT_SPEC_REPOSITORY != '' }}
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ vars.WBFT_SPEC_REPOSITORY }}
+          path: wbft-spec
+      - if: ${{ vars.WBFT_SPEC_REPOSITORY != '' }}
+        name: conformance vectors (standalone build)
+        run: |
+          pip install pyyaml
+          go build -o bin/wbft-vector-adapter ./cmd/wbft-vector-adapter
+          python3 wbft-spec/tools/vectorgen/check_adapter.py wbft-spec/vectors -- bin/wbft-vector-adapter > vectors-standalone.txt || true
+          cat vectors-standalone.txt
+      - if: ${{ vars.WBFT_SPEC_REPOSITORY != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: vectors-standalone
+          path: vectors-standalone.txt
 
   embedded:
     name: embedded (go-stablenet fork)
@@ -69,5 +86,35 @@ jobs:
         run: |
           go build github.com/0xmhha/wbft/...
           go test github.com/0xmhha/wbft/...
-      # From W1: run the conformance vectors with this build and compare with
-      # the standalone job's results.
+      - if: ${{ vars.WBFT_SPEC_REPOSITORY != '' }}
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ vars.WBFT_SPEC_REPOSITORY }}
+          path: wbft-spec
+      - if: ${{ vars.WBFT_SPEC_REPOSITORY != '' }}
+        name: conformance vectors (embedded build)
+        working-directory: fork
+        run: |
+          pip install pyyaml
+          go build -o ../bin/wbft-vector-adapter github.com/0xmhha/wbft/cmd/wbft-vector-adapter
+          python3 ../wbft-spec/tools/vectorgen/check_adapter.py ../wbft-spec/vectors -- ../bin/wbft-vector-adapter > ../vectors-embedded.txt || true
+          cat ../vectors-embedded.txt
+      - if: ${{ vars.WBFT_SPEC_REPOSITORY != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: vectors-embedded
+          path: vectors-embedded.txt
+
+  compare:
+    name: standalone and embedded results are equal
+    if: ${{ vars.FORK_REPOSITORY != '' && vars.WBFT_SPEC_REPOSITORY != '' }}
+    needs: [standalone, embedded]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: vectors-standalone
+      - uses: actions/download-artifact@v4
+        with:
+          name: vectors-embedded
+      - run: diff vectors-standalone.txt vectors-embedded.txt
