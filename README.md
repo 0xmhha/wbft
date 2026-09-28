@@ -255,6 +255,34 @@ in the code, and writes one row per requirement: owner, symbols, code and test
 references, vector handlers and case count. References to unknown IDs are
 reported on standard error; `-strict` turns them into a failure.
 
+### Coverage check
+
+`-check` decides, for the chapters it names, whether every requirement that
+`owners.yaml` gives to a `wbft` package (no `class`) is implemented and has
+evidence. A requirement passes when
+
+- every package in its `owner` field exists in the module,
+- its `symbols` field is not empty and every symbol is declared in the
+  module (`pkg.Name`, `pkg.Type.Method` or `pkg.Type.Field`, where `pkg` is
+  a package name; an unqualified name is looked up in the owner packages),
+- a `// Spec: ID` comment sits in a non-test file of one of its owner
+  packages, and
+- a vector handler that cites it is implemented by the adapter (its cases
+  then run in the conformance step, which fails on any failed case), or,
+  when no implemented handler cites it, a test file carries a
+  `// Covers: ID` comment next to the test that checks it.
+
+```sh
+make adapter tracegen
+bin/tracegen -spec <wbft-spec>/spec -vectors <wbft-spec>/spec/vectors \
+    -owners internal/trace/owners.yaml -code . -prefix WBFT- -o /dev/null \
+    -check A-01,A-02,A-03,A-04,A-08 -adapter bin/wbft-vector-adapter
+```
+
+Every gap is printed with its kind (`owner`, `symbols`, `code`,
+`evidence`) and the exit status is 1 when there is one. CI runs the check
+for chapters A-01, A-02, A-03, A-04 and A-08 after the conformance vectors.
+
 ### Baseline
 
 `internal/trace/baseline.tsv` records two columns of the matrix: the
