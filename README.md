@@ -100,7 +100,7 @@ dependencies never enter the `wbft` module graph:
 | Path | Purpose |
 |---|---|
 | `tools/lint/coredet` | `go/analysis` analyzer for the determinism rules that linters cannot express |
-| `tools/lint/heightlow` | Analyzer for the truncation of heights and rounds: every use of `RefLow64`, `RefLowInt64` or `RefLow32` carries `//wbft:low64 HH-nn` |
+| `tools/lint/heightlow` | Analyzer for the 64-bit truncation sites of heights and rounds: every use of `RefLow64`, `RefLowInt64` or `RefLow32` carries `//wbft:low64 HH-nn` |
 | `tools/tracegen` | Builds the requirement traceability matrix |
 | `tools/headerscan` | Verifies the headers of a running network over JSON-RPC |
 | `internal/trace/owners.yaml` | Owner table read by `tracegen`: requirement ID to package and symbols |
@@ -173,10 +173,13 @@ scripts/check-deps.sh
   - `coredet` forbids `go`, `select` and channel operations (in pure modules
     except `header.VerifyHeaders`) and requires `//wbft:unordered <reason>` on
     every direct range over a map.
-- **Heights and rounds**: `heightlow` requires `//wbft:low64 HH-nn` on every
-  use of a truncating accessor outside `types`, naming the row of the
-  reference place it reproduces, and requires at least one use for every row
-  listed in `scripts/heightlow-rows.txt`.
+- **Heights and rounds**: heights and rounds are arbitrary-precision
+  integers; the reference implementation reads only their low 64 (or 32)
+  bits at some places, and `wbft` does the same at those places.
+  `heightlow` requires `//wbft:low64 HH-nn` on every use of a truncating
+  accessor outside `types`, where `HH-nn` is a site label that groups the
+  uses by the reference code they reproduce, and requires at least one use
+  for every label listed in `scripts/heightlow-rows.txt`.
 
 ### Reference sort
 

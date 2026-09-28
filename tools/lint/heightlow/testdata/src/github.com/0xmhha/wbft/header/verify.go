@@ -12,8 +12,8 @@ func ok(h types.Height, r types.Round) {
 
 func bad(h types.Height, r types.Round) {
 	_ = h.RefLow64()    // want `RefLow64 without //wbft:low64 HH-nn`
-	_ = h.RefLowInt64() //wbft:low64 HH-99 // want `names unknown row HH-99`
-	_ = r.RefLow64()    //wbft:low64 // want `names unknown row`
+	_ = h.RefLowInt64() //wbft:low64 HH-99 // want `names unknown label HH-99`
+	_ = r.RefLow64()    //wbft:low64 // want `names unknown label`
 	f := h.RefLow64     // want `RefLow64 without`
 	_ = f
 }
