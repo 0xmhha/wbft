@@ -38,7 +38,8 @@ order, shuffle), `validator/source` (authority snapshots and their cache) and
 `header` (proposal construction, seal writing and merging, proposal, header,
 batch and light verification) pass the conformance vectors of their handlers.
 
-Milestone **W2 (consensus core)** is in progress. Done:
+Milestone **W2 (consensus core, write-ahead log, private validator, in
+simulation)** covers:
 
 - `consensus`: the pure state machine with the reference behaviour. One
   `Step` takes one input (start, stop, new head, request, message, replay,
@@ -47,15 +48,35 @@ Milestone **W2 (consensus core)** is in progress. Done:
   message outcomes, events). It reads the outside only through `Env`;
   `Vars` exposes the state variables and `Snapshot` the extra seals for
   proposal building.
+- `consensus/inputlog`: the encoding of core inputs, `Env` answers and step
+  outputs shared by the write-ahead log and the message journal.
+- `wal`: a segmented append-only log with CRC-framed records, synced
+  appends and repair of a damaged tail.
+- `privval`: the signer on a go-stablenet node key file (the BLS key is
+  derived from it), per-kind sign rules that refuse a second value for a
+  view across restarts, and the sign floor for a node that takes over a key
+  without its sign record.
+- `consensus/runner`: the consensus goroutine, bounded per-peer receive
+  queues with receive-check workers and a slot table, the timer scheduler
+  with generations, signing and logging of own messages, the commit
+  goroutine, and the replay of the write-ahead log at start.
 - `transport`: the transport interface, the deduplication caches with the
   gossip target choice, and the frame verdicts `DecodeFrame`,
   `CheckOutbound` and `StoppedEngineAction` for the application adapters.
-- `observe/event`: the event vocabulary and a JSON Lines writer.
+- `observe/event` and `observe/journal`: the event vocabulary with a JSON
+  Lines writer, and the message journal (a store of its own with pruning by
+  height and size).
 - `conformance/stepdriver`: the driver of the steps vectors, which a
-  transport adapter can reuse with its own frame stage.
+  transport adapter can reuse with its own frame stage, and `RunTrace`, which
+  replays a message journal through the core (`cmd/wbft-replay`).
+- `conformance/sim`: a deterministic multi-node simulator with a fake
+  application and a fake transport, crash and disk faults, and a scenario
+  bundle.
 
-The write-ahead log, the private validator, the runner around the core, the
-message journal and the simulator come next; the node follows in W3.
+Nodes run the reference behaviour with two restart-safety rules: the
+write-ahead log replay and the sign rules of the private validator (with
+the core's guard against a second round-0 proposal). Conformance vectors run
+with every optional behaviour off. The node assembly follows in W3.
 
 ## Layout
 
@@ -93,7 +114,7 @@ rejects anything else (`.golangci.yml`, `scripts/check-deps.sh`):
 |---|---|
 | `github.com/ethereum/go-ethereum` v1.17.x (`rlp`, `crypto`, `common` only) | `types`, `codec/rlp`, `codec`, `crypto/keccak`, `crypto/ecdsa` |
 | `github.com/supranational/blst` | `crypto/bls` |
-| `github.com/holiman/uint256` | `validator/source`, `header`, `mempool` |
+| `github.com/holiman/uint256` | `validator/source`, `header`, `mempool`, the simulator's fake application |
 | `github.com/cockroachdb/pebble` | `kv` |
 | `github.com/prometheus/client_golang` | `observe/metrics/prom` |
 | `github.com/BurntSushi/toml` | `node` |
@@ -118,6 +139,9 @@ make build           # go build in both modules
 make test            # go vet and go test in both modules
 make lint            # golangci-lint, coredet, heightlow and the dependency allow-list
 make lint-negative   # proves the lint rules reject violating code
+make sim             # simulation tests (WBFT_SIM_SEEDS seeds per scenario)
+make sim-full        # the scenario bundle with 10000 seeds per scenario
+make faults          # crashes at every fault point (build tag wbft_faults)
 ```
 
 The same steps without make:
@@ -188,6 +212,25 @@ the adapters of the application repositories. The header handlers decide the exe
 verification (uncle hash, gas limit, fork times, base fee) with a stand-in of
 the application hook for the StableNet presets (`partb.go`). The adapter exits with status 0 after `bye`, 1 when
 its input ends without `bye`, and 2 on a protocol error.
+
+## Simulation and journal replay
+
+`conformance/sim` runs N nodes on a manual clock with the real runner,
+private validator, write-ahead log and journal on an in-memory file system
+that keeps only synced data across a crash. The seed determines the run:
+two runs of one scenario write identical event files and journals. Every
+run checks agreement, that no honest node signs two values in one view,
+progress, the header rules of every stored block, and that a write-ahead
+log replay never differs from the original run. Fault points (build tag
+`wbft_faults`) crash a node between two durable steps.
+
+```sh
+WBFT_SIM_SEEDS=100 go test -run TestBundle ./conformance/sim/
+go test -tags wbft_faults -run TestCrashAtFaultPoints ./conformance/sim/
+go test -run TestReplayDeterminism ./conformance/stepdriver/
+# Replay one node journal of a simulator export:
+bin/wbft-replay -journal <dir>/<node> -chain <dir>/chain.rlp
+```
 
 ## Traceability matrix
 

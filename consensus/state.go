@@ -60,6 +60,10 @@ type State struct {
 	extraCommit  map[types.Address]*Verified
 	prior        priorState
 	head         HeadInfo
+
+	// seen maps (view, code, source) of the current and the previous
+	// sequence to the first digest, for EVIDENCE observations only.
+	seen map[seenKey]seenEntry
 }
 
 // roundState is RoundState of A-05 section 3.1.
@@ -72,6 +76,9 @@ type roundState struct {
 	preparedBlock  *types.Block
 	pendingRequest *types.Block
 	preprepareSent types.Round
+	// preprepareSentValid tells a sent round-0 PRE-PREPARE from the initial
+	// value of preprepareSent (OneRound0Proposal).
+	preprepareSentValid bool
 }
 
 func newRoundState(view types.View) *roundState {
@@ -118,10 +125,24 @@ func (s *State) reset() {
 	s.backlog = make(map[types.Address]*backlogQueue)
 	s.extraPrepare = make(map[types.Address]*Verified)
 	s.extraCommit = make(map[types.Address]*Verified)
+	s.seen = make(map[seenKey]seenEntry)
 	s.prior = priorState{}
 	s.roundLive = false
 	s.futureLive = false
 	s.future = nil
+}
+
+// TimerGens returns the generation counters of the three timers.
+func (s *State) TimerGens() [3]uint64 { return s.gen }
+
+// RestoreTimerGens sets the generation counters of a stopped core, so that
+// a core rebuilt from a log continues the generations of the core that
+// wrote it: an expiry the log recorded then keeps its meaning. It does
+// nothing while the core runs.
+func (s *State) RestoreTimerGens(g [3]uint64) {
+	if !s.running {
+		s.gen = g
+	}
 }
 
 // Running reports whether the core has been started and not stopped.
@@ -209,6 +230,7 @@ func (st *step) onBroadcastFailed(v BroadcastFailed) {
 	s := st.s
 	if v.Code == codec.CodePreprepare && s.cur != nil && v.View.Cmp(s.cur.view) == 0 {
 		s.cur.preprepareSent = types.Round{}
+		s.cur.preprepareSentValid = false
 	}
 }
 

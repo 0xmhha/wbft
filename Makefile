@@ -1,7 +1,7 @@
 # Developer shortcuts; CI runs the same commands (.github/workflows).
 export CGO_ENABLED := 1
 
-.PHONY: all build test lint coredet heightlow deps lint-negative tools adapter tracegen
+.PHONY: all build test lint coredet heightlow deps lint-negative tools adapter tracegen sim sim-full faults replay
 
 all: build test lint
 
@@ -44,3 +44,17 @@ adapter:
 
 tracegen:
 	go -C tools build -o ../bin/tracegen ./tracegen
+
+# Simulation: the scenario bundle with WBFT_SIM_SEEDS seeds per scenario
+# (sim-full: 10000), and crashes at every fault point.
+sim:
+	go test -count=1 ./conformance/...
+
+sim-full:
+	WBFT_SIM_SEEDS=10000 go test -count=1 -timeout 0 -run TestBundle -v ./conformance/sim/
+
+faults:
+	go test -count=1 -tags wbft_faults -run TestCrashAtFaultPoints -v ./conformance/sim/
+
+replay:
+	go build -o bin/wbft-replay ./cmd/wbft-replay

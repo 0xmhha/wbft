@@ -2,6 +2,7 @@ package consensus
 
 import (
 	"errors"
+	"github.com/0xmhha/wbft/observe/event"
 	"testing"
 	"time"
 
@@ -450,16 +451,31 @@ func TestRefFutureWaitUncapped(t *testing.T) {
 	h.expect(Process, rowPreprepareAccept, true)
 }
 
-// Nothing reports an equivocation: a second, different round-0 PRE-PREPARE
-// of the proposer is INVALID and produces no other output.
-func TestRefNoEquivocationEvidence(t *testing.T) {
+// A second, different round-0 PRE-PREPARE of the proposer is INVALID and
+// changes nothing; besides its outcome only an EVIDENCE observation of kind
+// round0_preprepare is produced.
+func TestRefSecondRound0PreprepareInvalid(t *testing.T) {
 	h := newHarness(t, 4, 1)
 	h.start()
 	h.deliver(0, h.preprepare(0, view(10, 0), h.proposal(1), nil, nil))
 	h.deliver(0, h.preprepare(0, view(10, 0), h.proposal(2), nil, nil))
 	h.expect(Invalid, rowInvalid, false)
-	if len(h.out) != 1 {
-		t.Fatalf("outputs %v", h.out)
+	var consensusOut []Output
+	var evidence []Event
+	for _, o := range h.out {
+		if e, ok := o.(Event); ok {
+			if e.Record.Kind == event.Evidence {
+				evidence = append(evidence, e)
+			}
+			continue
+		}
+		consensusOut = append(consensusOut, o)
+	}
+	if len(consensusOut) != 1 {
+		t.Fatalf("outputs %v", consensusOut)
+	}
+	if len(evidence) != 1 || evidence[0].Record.Fields["kind"] != "round0_preprepare" {
+		t.Fatalf("evidence %v", evidence)
 	}
 }
 

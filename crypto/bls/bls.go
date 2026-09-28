@@ -201,3 +201,10 @@ func AggregateSignatures(sigs [][]byte) (*Signature, error) {
 	}
 	return &Signature{s: *agg.ToAffine()}, nil
 }
+
+// SetParallelism sets how many goroutines one verification may use; values
+// below 1 mean 1. The default is the number of processors. A process that
+// runs many verifications at once (such as a simulation of many nodes) sets
+// 1 to avoid the scheduling cost; it must be called before any
+// verification starts.
+func SetParallelism(n int) { blst.SetMaxProcs(n) }

@@ -58,6 +58,9 @@ type Timeout struct {
 	View  types.View
 	Round types.Round
 	Gen   uint64
+	// Msg is the deferred PRE-PREPARE of a future-proposal timer, as its
+	// ArmTimer carried it.
+	Msg *Verified
 }
 
 // CommitResult reports the result of importing a committed block. The
@@ -131,6 +134,9 @@ type ArmTimer struct {
 	Duration time.Duration
 	Gen      uint64
 	Digest   types.Hash
+	// Msg is the deferred PRE-PREPARE of a future-proposal timer; the
+	// runner returns it in the Timeout.
+	Msg *Verified
 }
 
 // CancelTimers cancels the armed timers of the given kinds.

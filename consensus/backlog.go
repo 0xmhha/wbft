@@ -99,6 +99,7 @@ func (q *backlogQueue) push(e backlogEntry) {
 func (st *step) addToBacklog(v *Verified) int {
 	s := st.s
 	if v.Source == s.opt.Self {
+		st.backlogEvent(opDrop, v, "own")
 		return rowBacklogDropped
 	}
 	k := keyOf(v.Msg)
@@ -108,15 +109,18 @@ func (st *step) addToBacklog(v *Verified) int {
 		s.backlog[v.Source] = q
 	} else {
 		if q.keys[k] {
+			st.backlogEvent(opDrop, v, "duplicate")
 			return rowBacklogDropped
 		}
 		if len(q.entries) >= s.opt.BacklogLimit {
+			st.backlogEvent(opDrop, v, "full")
 			return rowBacklogDropped
 		}
 	}
 	q.keys[k] = true
 	q.nextSeq++
 	q.push(backlogEntry{m: v, key: k, prio: backlogPriority(v.Msg), seq: q.nextSeq})
+	st.backlogEvent(opPush, v, "")
 	return rowBacklogged
 }
 
@@ -132,6 +136,9 @@ func (st *step) processBacklog() {
 	for _, src := range sortedAddrs(s.backlog) {
 		q := s.backlog[src]
 		if !s.validators.Contains(src) {
+			for _, e := range q.entries {
+				st.backlogEvent(opDrop, e.m, "not_member")
+			}
 			delete(s.backlog, src)
 			continue
 		}
@@ -144,7 +151,10 @@ func (st *step) processBacklog() {
 			q.entries = q.entries[1:]
 			delete(q.keys, e.key)
 			if cls == Process || cls == ExtraSeal {
+				st.backlogEvent(opReplay, e.m, "")
 				st.emit(Schedule{In: Replay{Msg: e.m}})
+			} else {
+				st.backlogEvent(opDrop, e.m, cls.String())
 			}
 		}
 	}
@@ -165,6 +175,7 @@ func (st *step) addExtraSeal(v *Verified) (bool, int) {
 		block = s.cur.preprepare.Msg.Proposal
 	}
 	if block == nil {
+		st.extraSealEvent(opIgnore, v, nil)
 		return true, rowExtraNoTarget
 	}
 	var into map[types.Address]*Verified
@@ -174,14 +185,18 @@ func (st *step) addExtraSeal(v *Verified) (bool, int) {
 	case codec.CodeCommit:
 		into = s.extraCommit
 	default:
+		st.extraSealEvent(opReject, v, block)
 		return false, rowExtraOtherCode
 	}
 	if !checkVote(vs, block, v) {
+		st.extraSealEvent(opReject, v, block)
 		return false, rowExtraInvalid
 	}
 	if storeExtra(into, v) {
+		st.extraSealEvent(opStore, v, block)
 		return true, rowExtraStored
 	}
+	st.extraSealEvent(opIgnore, v, block)
 	return true, rowExtraNotNewer
 }
 

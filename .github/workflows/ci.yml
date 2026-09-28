@@ -31,7 +31,30 @@ jobs:
           cache-dependency-path: "**/go.sum"
       - run: go build ./...
       - run: go vet ./...
-      - run: go test -race ./...
+      # -short keeps the simulation tests to a few seeds under the race
+      # detector; the simulation job runs more.
+      - run: go test -race -short ./...
+
+  simulation:
+    # The deterministic simulator: the scenario bundle with reference
+    # behaviour and the restart-safety rules, replay determinism, disk
+    # faults, floods, and crashes at every fault point (tag wbft_faults).
+    # The full run uses WBFT_SIM_SEEDS=10000 and is run locally.
+    name: simulation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25.x"
+          cache-dependency-path: "**/go.sum"
+      - name: scenario bundle (50 seeds per scenario)
+        shell: bash # -eo pipefail: the test result survives the filter
+        run: WBFT_SIM_SEEDS=50 go test -count=1 -timeout 30m -run TestBundle -v ./conformance/sim/ | grep -v '^=== '
+      - name: other simulation tests and replay determinism
+        run: go test -count=1 -timeout 30m -skip TestBundle ./conformance/...
+      - name: crashes at every fault point
+        run: go test -count=1 -timeout 30m -tags wbft_faults -run TestCrashAtFaultPoints -v ./conformance/sim/
 
   tools:
     name: developer tools
@@ -153,12 +176,18 @@ jobs:
 
   determinism-cross-arch:
     # The binary64 quorum and round-timeout tables and the reference sort
-    # fixtures must give the same results on amd64 and arm64.
-    name: determinism (${{ matrix.runner }})
+    # fixtures must give the same results on amd64 and arm64. Each runner
+    # also writes the message journals of the simulation scenarios; the
+    # next job replays them on the other architecture.
+    name: determinism (${{ matrix.arch }})
     strategy:
       fail-fast: false
       matrix:
-        runner: [ubuntu-latest, ubuntu-24.04-arm]
+        include:
+          - runner: ubuntu-latest
+            arch: amd64
+          - runner: ubuntu-24.04-arm
+            arch: arm64
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
@@ -167,3 +196,39 @@ jobs:
           go-version: "1.25.x"
           cache-dependency-path: "**/go.sum"
       - run: go test -count=1 ./validator/ ./consensus/ ./internal/refsort/ ./types/ ./epoch/
+      - name: replay determinism on this architecture
+        run: go test -count=1 -run TestReplayDeterminism ./conformance/stepdriver/
+      - name: write journals
+        run: WBFT_REPLAY_SEEDS=1 WBFT_JOURNAL_OUT="$PWD/journals" go test -count=1 -run TestJournalExport ./conformance/stepdriver/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: journals-${{ matrix.arch }}
+          path: journals
+
+  journal-replay-cross-arch:
+    # A journal written on one architecture replays with every step
+    # matching on the other.
+    name: replay ${{ matrix.from }} journals on ${{ matrix.arch }}
+    needs: determinism-cross-arch
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            arch: amd64
+            from: arm64
+          - runner: ubuntu-24.04-arm
+            arch: arm64
+            from: amd64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25.x"
+          cache-dependency-path: "**/go.sum"
+      - uses: actions/download-artifact@v4
+        with:
+          name: journals-${{ matrix.from }}
+          path: journals
+      - run: WBFT_JOURNAL_IN="$PWD/journals" go test -count=1 -run TestJournalImport -v ./conformance/stepdriver/
