@@ -154,10 +154,10 @@ messages only on standard output, diagnostics on standard error.
 make adapter
 bin/wbft-vector-adapter -version
 # Run the vectors of the specification with its reference runner:
-python3 <spec-dir>/tools/vectorgen/check_adapter.py <spec-dir>/vectors -- bin/wbft-vector-adapter
+python3 <wbft-spec>/spec/tools/vectorgen/check_adapter.py <wbft-spec>/spec/vectors -- bin/wbft-vector-adapter
 ```
 
-In a conformance run all improvement items and rule flags are off and
+In a conformance run all optional behaviour switches are off and
 `hello.improvements` is empty. The adapter announces in its `hello` the
 handlers it implements: `crypto/*`, `encoding/*`, `validators/*`,
 `timers/round_timeout`, `header/*` and `chain/config_at`. Cases of the
