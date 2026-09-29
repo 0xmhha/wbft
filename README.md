@@ -102,6 +102,18 @@ Milestone **W3a (node and application interface)** is in progress:
   a plugin; the built-in `fifo` orders senders by arrival and each sender by
   nonce. The node starts the pool when the application gives an admission
   hook and refuses an unknown ordering name.
+- `rpc`: the read-only `wbft` namespace (`wbft_nodeInfo`,
+  `wbft_consensusState`, `wbft_peers`) over a backend the node implements,
+  and a JSON-RPC over HTTP handler for applications without an RPC server.
+- `examples/kvstore`: an example application, a replicated key-value store.
+  It implements the application interface (building proposals from the
+  pool, executing them in proposal verification and at finalization,
+  storing blocks, the authority source), announces blocks and lets a node
+  that fell behind fetch them from its peers. `wbft-kvstore init` writes a
+  local network and `wbft-kvstore start` runs one node with an HTTP API;
+  `make devnet` (`scripts/kvstore-devnet.sh`) runs four processes, submits
+  transactions, stops and restarts a node and checks that it catches up.
+  Transactions are not signed: it is a development tool.
 - `p2p/devnet`: a TCP transport for development networks and tests, with a
   consensus channel (through the frame stage) and an application channel.
   Peers are identified by the address they claim; it is not for production
@@ -120,6 +132,7 @@ and the lint rules below enforce the direction.
 | Network | `p2p` | `p2p/transport`, `p2p/devnet` | Transport interface, deduplication and frame verdicts for the application adapters; a development transport |
 | Observation | `observe` | `observe`, `observe/event`, `observe/journal`, `observe/logcat`, `observe/participation` | Event vocabulary, message journal, logging, participation records |
 | Node | `node`, `app`, `mempool`, `rpc`, `storage` | `node`, `app`, `mempool`, `rpc`, `storage/kv` | Node assembly, application boundary, transaction pool, RPC, key-value store |
+| Examples | `examples` | `examples/kvstore`, `examples/kvstore/cmd/wbft-kvstore` | An example application and its command for local networks |
 | Conformance | `conformance` | `conformance/stepdriver`, `conformance/sim` | The step driver for vectors and traces, the deterministic simulator |
 | Commands | `cmd` | `cmd/wbft-vector-adapter`, `cmd/wbft-replay` | Conformance vector adapter, journal replay helper |
 
