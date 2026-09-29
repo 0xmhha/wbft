@@ -78,6 +78,24 @@ func TestReplayRestoresLock(t *testing.T) {
 	}
 }
 
+// A runner without a message journal replays the write-ahead log too.
+func TestReplayWithoutJournal(t *testing.T) {
+	k := newKeys(t, 4)
+	n := newTNode(t, k, 1)
+	n.noJournal = true
+	n.boot()
+	a := block(t, 10, 1, k.addrs[0], codec.BlockHash(n.chain.head))
+	reachPrepared(t, n, a)
+	n.crash()
+	n.boot()
+	if info := n.r.LastReplay(); !info.Replayed || info.Records == 0 {
+		t.Fatalf("replay %+v", info)
+	}
+	if v := n.r.Vars(); v.LockedRound == nil {
+		t.Fatal("lock lost")
+	}
+}
+
 // Without the replay the restarted core has no lock: its lock-less
 // ROUND-CHANGE is refused by privval (it signed a COMMIT of round 0) and
 // reported to the core as a failed broadcast.

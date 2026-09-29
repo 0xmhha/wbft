@@ -323,6 +323,8 @@ type tnode struct {
 	signer *privval.FileSigner
 	log    *wal.Log
 	opts   consensus.Options
+	// noJournal boots the runner without a message journal.
+	noJournal bool
 }
 
 func newTNode(t *testing.T, k *keys, self int) *tnode {
@@ -369,8 +371,12 @@ func (n *tnode) boot() {
 		t.Fatal(err)
 	}
 	n.events = &eventLog{}
-	r, err := New(Config{Core: n.opts, ReplayWAL: true, Manual: true}, Deps{Chain: n.chain, App: n.app, Transport: dd, Net: n.net,
-		Signer: s, WAL: log, Clock: n.clock, Events: n.events, Journal: jw, Rand: rand.New(rand.NewPCG(1, 2)).IntN})
+	d := Deps{Chain: n.chain, App: n.app, Transport: dd, Net: n.net,
+		Signer: s, WAL: log, Clock: n.clock, Events: n.events, Journal: jw, Rand: rand.New(rand.NewPCG(1, 2)).IntN}
+	if n.noJournal {
+		d.Journal = nil
+	}
+	r, err := New(Config{Core: n.opts, ReplayWAL: true, Manual: true}, d)
 	if err != nil {
 		t.Fatal(err)
 	}
