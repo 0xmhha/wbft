@@ -21,8 +21,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # 1.24 is the minimum of go.mod (required by go-ethereum v1.17.0).
-        go: ["1.24.x", "1.25.x"]
+        # go.mod requires Go 1.26.8 (the release line with security fixes
+        # that the toolchain survey D-111 covered).
+        go: ["1.26.x"]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -46,7 +47,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.25.x"
+          go-version: "1.26.x"
           cache-dependency-path: "**/go.sum"
       - name: scenario bundle (50 seeds per scenario)
         shell: bash # -eo pipefail: the test result survives the filter
@@ -66,7 +67,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.25.x"
+          go-version: "1.26.x"
           cache-dependency-path: "**/go.sum"
       - run: go test -count=1 -race ./node/ ./mempool/ ./p2p/... ./rpc/ ./examples/...
       - run: go test -count=1 -tags wbft_faults ./node/
@@ -80,7 +81,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.25.x"
+          go-version: "1.26.x"
           cache-dependency-path: tools/go.sum
       - working-directory: tools
         run: |
@@ -95,7 +96,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.25.x"
+          go-version: "1.26.x"
           cache-dependency-path: "**/go.sum"
       - name: golangci-lint (wbft module)
         uses: golangci/golangci-lint-action@v8
@@ -127,7 +128,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.25.x"
+          go-version: "1.26.x"
           cache-dependency-path: "**/go.sum"
       - uses: golangci/golangci-lint-action@v8
         with:
@@ -142,7 +143,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.25.x"
+          go-version: "1.26.x"
       - run: go build -o bin/wbft-vector-adapter ./cmd/wbft-vector-adapter
       - name: protocol smoke test
         run: |
@@ -228,7 +229,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.25.x"
+          go-version: "1.26.x"
           cache-dependency-path: "**/go.sum"
       - run: go test -count=1 ./chain/validator/ ./consensus/ ./internal/refsort/ ./types/ ./chain/epoch/
       - name: replay determinism on this architecture
@@ -301,7 +302,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.25.x"
+          go-version: "1.26.x"
           cache-dependency-path: "**/go.sum"
       - uses: actions/download-artifact@v4
         with:

@@ -178,7 +178,7 @@ and tested against upstream go-ethereum v1.17.x only (`.github/workflows/ci.yml`
 
 ## Build, test and lint
 
-Requirements: Go 1.24 or newer (the tools module needs Go 1.25), a C
+Requirements: Go 1.26.8 or newer (both modules), a C
 toolchain (cgo is required: BLS12-381 through blst and the secp256k1 of
 go-ethereum; a build without cgo stops with a compile error), and
 golangci-lint v2.

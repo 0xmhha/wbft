@@ -1,6 +1,6 @@
 module github.com/0xmhha/wbft/tools
 
-go 1.25.0
+go 1.26.8
 
 require golang.org/x/tools v0.49.0
 
