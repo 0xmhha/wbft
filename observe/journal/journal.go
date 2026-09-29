@@ -12,9 +12,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/0xmhha/wbft/consensus/wal"
 	"github.com/0xmhha/wbft/internal/fsys"
 	"github.com/0xmhha/wbft/types"
-	"github.com/0xmhha/wbft/wal"
 )
 
 // DupMode selects whether duplicate copies of a message are recorded.

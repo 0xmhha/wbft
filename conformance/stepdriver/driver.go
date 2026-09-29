@@ -7,17 +7,17 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/0xmhha/wbft/chain/header"
+	"github.com/0xmhha/wbft/chain/validator"
 	"github.com/0xmhha/wbft/codec"
 	"github.com/0xmhha/wbft/consensus"
+	"github.com/0xmhha/wbft/consensus/privval"
 	"github.com/0xmhha/wbft/crypto/bls"
 	"github.com/0xmhha/wbft/crypto/ecdsa"
-	"github.com/0xmhha/wbft/header"
 	"github.com/0xmhha/wbft/internal/fsys"
 	"github.com/0xmhha/wbft/observe/event"
-	"github.com/0xmhha/wbft/privval"
-	"github.com/0xmhha/wbft/transport"
+	"github.com/0xmhha/wbft/p2p/transport"
 	"github.com/0xmhha/wbft/types"
-	"github.com/0xmhha/wbft/validator"
 )
 
 // ErrUnsupported is returned for a case that needs a stage the driver was not

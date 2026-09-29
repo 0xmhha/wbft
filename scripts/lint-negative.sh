@@ -62,29 +62,35 @@ expect() {
 
 # consensus imports header, so this import is also a cycle; either failure
 # rejects the branch.
-expect "header imports consensus" lint header/zz_neg.go "header-light-verifier|import cycle not allowed" <<'EOF'
+expect "header imports consensus" lint chain/header/zz_neg.go "header-light-verifier|import cycle not allowed" <<'EOF'
 package header
 
 import _ "github.com/0xmhha/wbft/consensus"
 EOF
 
 # An external test package has no cycle and shows the boundary rule itself.
-expect "header test imports consensus" lint header/zz_neg_test.go "header-light-verifier" <<'EOF'
+expect "header test imports consensus" lint chain/header/zz_neg_test.go "header-light-verifier" <<'EOF'
 package header_test
 
 import _ "github.com/0xmhha/wbft/consensus"
 EOF
 
-expect "pure module imports observe" lint validator/zz_neg.go "pure-layer" <<'EOF'
+expect "pure module imports observe" lint chain/validator/zz_neg.go "pure-layer" <<'EOF'
 package validator
 
 import _ "github.com/0xmhha/wbft/observe"
 EOF
 
+expect "chain rules import the network layer" lint chain/epoch/zz_neg.go "pure-layer" <<'EOF'
+package epoch
+
+import _ "github.com/0xmhha/wbft/p2p/transport"
+EOF
+
 expect "core imports transport" lint consensus/zz_neg.go "core-boundary" <<'EOF'
 package consensus
 
-import _ "github.com/0xmhha/wbft/transport"
+import _ "github.com/0xmhha/wbft/p2p/transport"
 EOF
 
 expect "go-ethereum core/types" lint codec/zz_neg.go "list 'modules'.*core" <<'EOF'
@@ -111,7 +117,7 @@ package codec
 import _ "github.com/ethereum/go-ethereum/p2p"
 EOF
 
-expect "go-ethereum outside its packages" lint validator/zz_neg.go "go-ethereum-placement" <<'EOF'
+expect "go-ethereum outside its packages" lint chain/validator/zz_neg.go "go-ethereum-placement" <<'EOF'
 package validator
 
 import _ "github.com/ethereum/go-ethereum/common"
@@ -129,7 +135,7 @@ package node
 import _ "golang.org/x/sync/errgroup"
 EOF
 
-expect "randomness in a pure module" lint epoch/zz_neg.go "deterministic-imports" <<'EOF'
+expect "randomness in a pure module" lint chain/epoch/zz_neg.go "deterministic-imports" <<'EOF'
 package epoch
 
 import _ "math/rand/v2"
@@ -141,7 +147,7 @@ package consensus
 import _ "sync"
 EOF
 
-expect "refsort outside types and epoch" lint validator/zz_neg.go "refsort-users" <<'EOF'
+expect "refsort outside types and epoch" lint chain/validator/zz_neg.go "refsort-users" <<'EOF'
 package validator
 
 import _ "github.com/0xmhha/wbft/internal/refsort"
@@ -183,7 +189,7 @@ EOF
 expect "core input log imports the write-ahead log" lint consensus/inputlog/zz_neg.go "core-boundary" <<'EOF'
 package inputlog
 
-import _ "github.com/0xmhha/wbft/wal"
+import _ "github.com/0xmhha/wbft/consensus/wal"
 EOF
 
 expect "goroutine in the core input log" coredet consensus/inputlog/zz_neg.go "go statement" <<'EOF'

@@ -4,8 +4,8 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/0xmhha/wbft/chain/validator"
 	"github.com/0xmhha/wbft/codec"
-	"github.com/0xmhha/wbft/validator"
 )
 
 // Errors of header construction and verification. The names follow the

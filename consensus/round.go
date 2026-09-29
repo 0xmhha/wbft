@@ -26,10 +26,10 @@ import (
 	"math"
 	"time"
 
+	"github.com/0xmhha/wbft/chain/validator"
 	"github.com/0xmhha/wbft/codec"
 	"github.com/0xmhha/wbft/observe/event"
 	"github.com/0xmhha/wbft/types"
-	"github.com/0xmhha/wbft/validator"
 )
 
 // Causes of a start_new_round call, for ROUND_ENTER events.

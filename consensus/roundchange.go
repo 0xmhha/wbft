@@ -25,9 +25,9 @@ package consensus
 import (
 	"slices"
 
+	"github.com/0xmhha/wbft/chain/validator"
 	"github.com/0xmhha/wbft/codec"
 	"github.com/0xmhha/wbft/types"
-	"github.com/0xmhha/wbft/validator"
 )
 
 // roundChangeSet is RoundChangeSet of A-05 section 3.1, keyed by the low 64

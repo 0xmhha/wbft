@@ -5,13 +5,13 @@ import (
 	"errors"
 	"time"
 
+	"github.com/0xmhha/wbft/chain/header"
+	"github.com/0xmhha/wbft/chain/validator"
+	"github.com/0xmhha/wbft/chain/validator/source"
 	"github.com/0xmhha/wbft/codec"
 	"github.com/0xmhha/wbft/crypto/ecdsa"
-	"github.com/0xmhha/wbft/header"
 	"github.com/0xmhha/wbft/internal/snetpartb"
 	"github.com/0xmhha/wbft/types"
-	"github.com/0xmhha/wbft/validator"
-	"github.com/0xmhha/wbft/validator/source"
 )
 
 // Handlers of the runner "header" (A-08). A chain fixture carries no state,

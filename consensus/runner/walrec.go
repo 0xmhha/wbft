@@ -4,12 +4,12 @@ import (
 	"fmt"
 	"math/big"
 
+	"github.com/0xmhha/wbft/chain/validator"
 	"github.com/0xmhha/wbft/codec"
 	"github.com/0xmhha/wbft/codec/rlp"
+	"github.com/0xmhha/wbft/consensus/wal"
 	"github.com/0xmhha/wbft/internal/fsys"
 	"github.com/0xmhha/wbft/types"
-	"github.com/0xmhha/wbft/validator"
-	"github.com/0xmhha/wbft/wal"
 )
 
 // walFormat is the format number of the runner's WAL records.

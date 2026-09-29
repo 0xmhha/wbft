@@ -6,10 +6,10 @@ import (
 	"math/big"
 	"time"
 
+	"github.com/0xmhha/wbft/chain/validator"
 	"github.com/0xmhha/wbft/codec"
 	"github.com/0xmhha/wbft/crypto/ecdsa"
 	"github.com/0xmhha/wbft/types"
-	"github.com/0xmhha/wbft/validator"
 )
 
 // LightResult is the verdict of VerifyLight.

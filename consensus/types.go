@@ -3,8 +3,8 @@ package consensus
 import (
 	"time"
 
+	"github.com/0xmhha/wbft/chain/validator"
 	"github.com/0xmhha/wbft/types"
-	"github.com/0xmhha/wbft/validator"
 )
 
 // StateName is the consensus state of the current round.

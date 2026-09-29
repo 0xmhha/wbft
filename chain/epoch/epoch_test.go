@@ -10,11 +10,11 @@ import (
 	"strconv"
 	"testing"
 
+	"github.com/0xmhha/wbft/chain/validator"
 	"github.com/0xmhha/wbft/codec"
 	"github.com/0xmhha/wbft/crypto/ecdsa"
 	"github.com/0xmhha/wbft/crypto/keccak"
 	"github.com/0xmhha/wbft/types"
-	"github.com/0xmhha/wbft/validator"
 )
 
 // A-04 §6.8 "Shuffle vectors".
@@ -68,7 +68,7 @@ func TestSortCandidates(t *testing.T) {
 	if got := SortCandidates(cs); !slices.Equal(got, []int{9, 7, 13, 3, 11, 5, 1, 8, 6, 0, 10, 4, 12, 2, 14}) {
 		t.Errorf("example: %v", got)
 	}
-	b, err := os.ReadFile("../internal/refsort/testdata/reference.json")
+	b, err := os.ReadFile("../../internal/refsort/testdata/reference.json")
 	if err != nil {
 		t.Fatal(err)
 	}

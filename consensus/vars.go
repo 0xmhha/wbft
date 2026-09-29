@@ -4,9 +4,9 @@ import (
 	"bytes"
 	"slices"
 
+	"github.com/0xmhha/wbft/chain/validator"
 	"github.com/0xmhha/wbft/codec"
 	"github.com/0xmhha/wbft/types"
-	"github.com/0xmhha/wbft/validator"
 )
 
 // Vars are the state variables of A-05 section 3.1 after a Step, with every

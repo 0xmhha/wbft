@@ -8,10 +8,10 @@ import (
 	"slices"
 	"time"
 
+	"github.com/0xmhha/wbft/chain/header"
+	"github.com/0xmhha/wbft/chain/validator"
 	"github.com/0xmhha/wbft/codec"
-	"github.com/0xmhha/wbft/header"
 	"github.com/0xmhha/wbft/types"
-	"github.com/0xmhha/wbft/validator"
 )
 
 // headerSource fetches one header by number or hash with the hash the node

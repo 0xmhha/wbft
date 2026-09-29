@@ -5,11 +5,11 @@ import (
 	"encoding/json"
 	"math"
 
+	"github.com/0xmhha/wbft/chain/epoch"
+	"github.com/0xmhha/wbft/chain/validator"
 	"github.com/0xmhha/wbft/codec"
 	"github.com/0xmhha/wbft/consensus"
-	"github.com/0xmhha/wbft/epoch"
 	"github.com/0xmhha/wbft/types"
-	"github.com/0xmhha/wbft/validator"
 )
 
 // Handlers of the runners "validators" (A-04) and "timers" (A-06).

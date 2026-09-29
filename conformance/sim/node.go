@@ -10,15 +10,15 @@ import (
 
 	"github.com/0xmhha/wbft/codec"
 	"github.com/0xmhha/wbft/consensus"
+	"github.com/0xmhha/wbft/consensus/privval"
 	"github.com/0xmhha/wbft/consensus/runner"
+	"github.com/0xmhha/wbft/consensus/wal"
 	"github.com/0xmhha/wbft/internal/faultpoint"
 	"github.com/0xmhha/wbft/internal/fsys"
 	"github.com/0xmhha/wbft/observe/event"
 	"github.com/0xmhha/wbft/observe/journal"
-	"github.com/0xmhha/wbft/privval"
-	"github.com/0xmhha/wbft/transport"
+	"github.com/0xmhha/wbft/p2p/transport"
 	"github.com/0xmhha/wbft/types"
-	"github.com/0xmhha/wbft/wal"
 )
 
 // Directories in a node's file system.

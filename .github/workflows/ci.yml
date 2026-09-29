@@ -213,7 +213,7 @@ jobs:
         with:
           go-version: "1.25.x"
           cache-dependency-path: "**/go.sum"
-      - run: go test -count=1 ./validator/ ./consensus/ ./internal/refsort/ ./types/ ./epoch/
+      - run: go test -count=1 ./chain/validator/ ./consensus/ ./internal/refsort/ ./types/ ./chain/epoch/
       - name: replay determinism on this architecture
         run: go test -count=1 -run TestReplayDeterminism ./conformance/stepdriver/
       - name: write journals

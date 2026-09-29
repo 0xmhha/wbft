@@ -5,15 +5,15 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/0xmhha/wbft/chain/validator"
 	"github.com/0xmhha/wbft/codec"
 	"github.com/0xmhha/wbft/codec/rlp"
 	"github.com/0xmhha/wbft/consensus"
 	"github.com/0xmhha/wbft/consensus/inputlog"
+	"github.com/0xmhha/wbft/consensus/wal"
 	"github.com/0xmhha/wbft/observe/event"
 	"github.com/0xmhha/wbft/observe/journal"
 	"github.com/0xmhha/wbft/types"
-	"github.com/0xmhha/wbft/validator"
-	"github.com/0xmhha/wbft/wal"
 )
 
 // startEngine creates the core, replays the write-ahead log if enabled and

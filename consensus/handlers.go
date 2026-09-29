@@ -27,12 +27,12 @@ import (
 	"errors"
 	"slices"
 
+	"github.com/0xmhha/wbft/chain/header"
+	"github.com/0xmhha/wbft/chain/validator"
 	"github.com/0xmhha/wbft/codec"
 	"github.com/0xmhha/wbft/crypto/bls"
-	"github.com/0xmhha/wbft/header"
 	"github.com/0xmhha/wbft/observe/event"
 	"github.com/0xmhha/wbft/types"
-	"github.com/0xmhha/wbft/validator"
 )
 
 // broadcast emits m unless the node is not a member of the current set, in

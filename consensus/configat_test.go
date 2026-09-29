@@ -5,9 +5,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/0xmhha/wbft/chain/validator"
 	"github.com/0xmhha/wbft/codec"
 	"github.com/0xmhha/wbft/types"
-	"github.com/0xmhha/wbft/validator"
 )
 
 // The core reads the block period for the next block at latest_number + 1

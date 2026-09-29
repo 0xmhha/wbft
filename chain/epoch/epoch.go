@@ -31,11 +31,11 @@ import (
 	"fmt"
 	"math/big"
 
+	"github.com/0xmhha/wbft/chain/validator"
 	"github.com/0xmhha/wbft/codec"
 	"github.com/0xmhha/wbft/crypto/keccak"
 	"github.com/0xmhha/wbft/internal/refsort"
 	"github.com/0xmhha/wbft/types"
-	"github.com/0xmhha/wbft/validator"
 )
 
 // Errors of the next-epoch computation. The texts follow the reference.

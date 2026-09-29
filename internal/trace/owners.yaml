@@ -51,7 +51,7 @@ WBFT-TYPE-020:
   symbols: types.View.Cmp
 
 WBFT-TYPE-021:
-  owner: types, validator
+  owner: types, chain/validator
   symbols: types.EpochInfo, validator.NewSetFromEpochInfo
 
 WBFT-TYPE-022:
@@ -68,15 +68,15 @@ WBFT-PARAM-002:
   symbols: codec.Code, codec.DecodeMessage
 
 WBFT-PARAM-010:
-  owner: types, header
+  owner: types, chain/header
   symbols: types.WBFTDifficulty, header.VerifyHeader
 
 WBFT-PARAM-011:
-  owner: types, header, crypto/bls
+  owner: types, chain/header, crypto/bls
   symbols: types.SealLength, header.CommitHeader, bls.AggregateSignatures
 
 WBFT-PARAM-012:
-  owner: types, header
+  owner: types, chain/header
   symbols: types.ExtraVanity, header.PrepareProposal, header.VerifyHeader
 
 WBFT-PARAM-020:
@@ -117,11 +117,11 @@ WBFT-PARAM-052:
   symbols: types.Config.ConfigAt
 
 WBFT-PARAM-053:
-  owner: types, header, consensus, validator, epoch
+  owner: types, chain/header, consensus, chain/validator, chain/epoch
   symbols: types.Config.ConfigAt, header.PrepareProposal, header.VerifyHeader, step.startNewRound, step.startRoundTimer, validator.ValidatorsAt, epoch.ComputeNextEpochInfo
 
 WBFT-PARAM-054:
-  owner: validator, types
+  owner: chain/validator, types
   symbols: validator.EpochSchedule, types.Config.ConfigAt
 
 WBFT-PARAM-060:
@@ -138,11 +138,11 @@ WBFT-CRYPTO-010:
   symbols: ecdsa.PubkeyToAddress
 
 WBFT-CRYPTO-011:
-  owner: crypto/ecdsa, privval
+  owner: crypto/ecdsa, consensus/privval
   symbols: ecdsa.Sign, privval.FileSigner
 
 WBFT-CRYPTO-017:
-  owner: crypto/ecdsa, privval
+  owner: crypto/ecdsa, consensus/privval
   symbols: ecdsa.Sign, privval.FileSigner
 
 WBFT-CRYPTO-013:
@@ -186,7 +186,7 @@ WBFT-CRYPTO-056:
   symbols: bls.DecodePublicKey, bls.DecodeSignature
 
 WBFT-CRYPTO-025:
-  owner: crypto/bls, privval
+  owner: crypto/bls, consensus/privval
   symbols: bls.SecretKey.Sign
 
 WBFT-CRYPTO-026:
@@ -206,11 +206,11 @@ WBFT-CRYPTO-028:
   symbols: bls.AggregatePublicKeys
 
 WBFT-CRYPTO-030:
-  owner: header
+  owner: chain/header
   symbols: header.VerifyAggregatedSeal
 
 WBFT-CRYPTO-031:
-  owner: header
+  owner: chain/header
   symbols: header.VerifyAggregatedSeal
 
 WBFT-CRYPTO-040:
@@ -238,7 +238,7 @@ WBFT-CRYPTO-050:
   symbols: codec.RandaoData
 
 WBFT-CRYPTO-053:
-  owner: header
+  owner: chain/header
   symbols: header.RandaoMix
 
 WBFT-ENC-001:
@@ -298,7 +298,7 @@ WBFT-ENC-030:
   symbols: codec.EncodeExtra, codec.DecodeExtra
 
 WBFT-ENC-031:
-  owner: header
+  owner: chain/header
   symbols: header.PrepareProposal, startExtra
 
 WBFT-ENC-032:
@@ -330,7 +330,7 @@ WBFT-ENC-051:
   symbols: codec.EncodeExtra, codec.DecodeExtra
 
 WBFT-ENC-060:
-  owner: epoch, codec
+  owner: chain/epoch, codec
   symbols: epoch.GenesisExtra, codec.EncodeExtra
 
 WBFT-ENC-070:
@@ -418,11 +418,11 @@ WBFT-MSG-041:
   symbols: codec.EncodeMessage, codec.DecodeMessage, codec.SigningPayload, codec.DedupKey
 
 WBFT-MSG-050:
-  owner: transport
+  owner: p2p/transport
   symbols: transport.DecodeFrame
 
 WBFT-MSG-051:
-  owner: transport
+  owner: p2p/transport
   symbols: transport.CheckOutbound
 
 WBFT-MSG-060:
@@ -430,137 +430,137 @@ WBFT-MSG-060:
   symbols: codec.EncodeMessage, codec.DecodeMessage, codec.SigningPayload, codec.DedupKey
 
 WBFT-VAL-001:
-  owner: validator
+  owner: chain/validator
   symbols: validator.FValue, validator.QuorumSize
 
 WBFT-VAL-002:
-  owner: validator
+  owner: chain/validator
   symbols: validator.FValue, validator.QuorumSize
 
 WBFT-VAL-003:
-  owner: validator
+  owner: chain/validator
   symbols: validator.FValue, validator.QuorumSize
 
 WBFT-VAL-004:
-  owner: validator
+  owner: chain/validator
   symbols: validator.ValidatorsAt, validator.GoverningEpochInfo
 
 WBFT-VAL-006:
-  owner: validator
+  owner: chain/validator
   symbols: validator.ValidatorsAt, validator.Set
 
 WBFT-VAL-007:
-  owner: validator
+  owner: chain/validator
   symbols: types.EpochInfo.Candidate, validator.NewSetFromEpochInfo
 
 WBFT-VAL-009:
-  owner: validator
+  owner: chain/validator
   symbols: validator.ValidatorsAt, validator.GoverningEpochInfo
 
 WBFT-VAL-010:
-  owner: header, validator
+  owner: chain/header, chain/validator
   symbols: header.ValidatorsForVerifying, validator.ValidatorsAt
 
 WBFT-VAL-011:
-  owner: validator
+  owner: chain/validator
   symbols: validator.ValidatorsAt, validator.GoverningEpochInfo
 
 WBFT-EPOCH-001:
-  owner: validator
+  owner: chain/validator
   symbols: validator.IsEpochBlock, validator.LastEpochBlock
 
 WBFT-EPOCH-002:
-  owner: validator
+  owner: chain/validator
   symbols: validator.IsEpochBlock, validator.LastEpochBlock
 
 WBFT-EPOCH-003:
-  owner: validator
+  owner: chain/validator
   symbols: validator.IsEpochBlock, validator.LastEpochBlock
 
 WBFT-EPOCH-006:
-  owner: header, validator
+  owner: chain/header, chain/validator
   symbols: header.VerifyLight, validator.IsEpochBlock
 
 WBFT-PROP-001:
-  owner: validator
+  owner: chain/validator
   symbols: validator.Set.CalcProposer
 
 WBFT-PROP-002:
-  owner: types, validator
+  owner: types, chain/validator
   symbols: types.ProposerOf
 
 WBFT-PROP-003:
-  owner: validator
+  owner: chain/validator
   symbols: validator.Set.CalcProposer
 
 WBFT-PROP-004:
-  owner: validator
+  owner: chain/validator
   symbols: validator.Set.CalcProposer
 
 WBFT-PROP-005:
-  owner: types, validator
+  owner: types, chain/validator
   symbols: types.ProposerPolicy.IsSticky, validator.Set.CalcProposer
 
 WBFT-PROP-006:
-  owner: validator
+  owner: chain/validator
   symbols: validator.Set.CalcProposer
 
 WBFT-PROP-007:
-  owner: validator
+  owner: chain/validator
   symbols: validator.Set.IsProposer
 
 WBFT-EPOCH-007:
-  owner: application (implementation of validator/source.AuthoritySource)
+  owner: application (implementation of chain/validator/source.AuthoritySource)
   symbols: source.AuthoritySource.CandidatesAfterExecution
   class: external
   reason: the state is read by the application; wbft receives the candidates through CandidatesAfterExecution
 
 WBFT-EPOCH-008:
-  owner: epoch
+  owner: chain/epoch
   symbols: epoch.ComputeNextEpochInfo, epoch.VerifyEpochInfo, epoch.SortCandidates, epoch.Shuffle
 
 WBFT-EPOCH-009:
-  owner: epoch
+  owner: chain/epoch
   symbols: epoch.ComputeNextEpochInfo, epoch.VerifyEpochInfo, epoch.SortCandidates, epoch.Shuffle
 
 WBFT-EPOCH-010:
-  owner: epoch
+  owner: chain/epoch
   symbols: epoch.ComputeNextEpochInfo, epoch.VerifyEpochInfo, epoch.SortCandidates, epoch.Shuffle
 
 WBFT-EPOCH-011:
-  owner: epoch
+  owner: chain/epoch
   symbols: epoch.ComputeNextEpochInfo, epoch.VerifyEpochInfo, epoch.SortCandidates, epoch.Shuffle
 
 WBFT-EPOCH-013:
-  owner: epoch
+  owner: chain/epoch
   symbols: epoch.ComputeNextEpochInfo, epoch.VerifyEpochInfo, epoch.SortCandidates, epoch.Shuffle
 
 WBFT-EPOCH-016:
-  owner: epoch
+  owner: chain/epoch
   symbols: epoch.ComputeNextEpochInfo, epoch.VerifyEpochInfo, epoch.SortCandidates, epoch.Shuffle
 
 WBFT-EPOCH-018:
-  owner: epoch
+  owner: chain/epoch
   symbols: epoch.ComputeNextEpochInfo, epoch.VerifyEpochInfo, epoch.SortCandidates, epoch.Shuffle
 
 WBFT-EPOCH-019:
-  owner: epoch
+  owner: chain/epoch
   symbols: epoch.ComputeNextEpochInfo, epoch.VerifyEpochInfo, epoch.SortCandidates, epoch.Shuffle
 
 WBFT-EPOCH-020:
-  owner: epoch
+  owner: chain/epoch
   symbols: epoch.ComputeNextEpochInfo, epoch.VerifyEpochInfo, epoch.SortCandidates, epoch.Shuffle
 
 WBFT-EPOCH-021:
-  owner: epoch
+  owner: chain/epoch
   symbols: epoch.VerifyEpochInfo
 
 WBFT-EPOCH-023:
-  owner: epoch
+  owner: chain/epoch
   symbols: epoch.InitialEpochInfo, epoch.GenesisExtra
 
 WBFT-EPOCH-024:
-  owner: types, epoch
+  owner: types, chain/epoch
   symbols: types.GenesisInit.Check, epoch.InitialEpochInfo
 
 WBFT-SM-001:
@@ -605,15 +605,15 @@ WBFT-SM-010:
   symbols: onNewHead
 
 WBFT-SM-011:
-  owner: consensus, transport
+  owner: consensus, p2p/transport
   symbols: Output.Relay, transport.Dedup.Gossip
 
 WBFT-SM-012:
-  owner: consensus, transport
+  owner: consensus, p2p/transport
   symbols: Output.Relay, transport.Dedup.Gossip
 
 WBFT-SM-013:
-  owner: consensus, transport
+  owner: consensus, p2p/transport
   symbols: Output.Relay, transport.Dedup.Gossip
 
 WBFT-SM-014:
@@ -733,31 +733,31 @@ WBFT-SM-043:
   symbols: onPrepare, verifySeal
 
 WBFT-SM-044:
-  owner: consensus, header
+  owner: consensus, chain/header
   symbols: onCommit, decide, header.CommitHeader
 
 WBFT-SM-045:
-  owner: consensus, header
+  owner: consensus, chain/header
   symbols: onCommit, decide, header.CommitHeader
 
 WBFT-SM-046:
-  owner: consensus, header
+  owner: consensus, chain/header
   symbols: onCommit, decide, header.CommitHeader
 
 WBFT-SM-047:
-  owner: consensus, header
+  owner: consensus, chain/header
   symbols: onCommit, decide, header.CommitHeader
 
 WBFT-SM-048:
-  owner: consensus, header
+  owner: consensus, chain/header
   symbols: onCommit, decide, header.CommitHeader
 
 WBFT-SM-049:
-  owner: consensus, header
+  owner: consensus, chain/header
   symbols: onCommit, decide, header.CommitHeader
 
 WBFT-SM-050:
-  owner: consensus, header
+  owner: consensus, chain/header
   symbols: onCommit, decide, header.CommitHeader
 
 WBFT-SM-051:
@@ -809,27 +809,27 @@ WBFT-SM-062:
   symbols: broadcastRoundChange, onRoundChange, consensus.IsJustified
 
 WBFT-SM-063:
-  owner: consensus, header
+  owner: consensus, chain/header
   symbols: onExtraSeal, header.PrepareProposal
 
 WBFT-SM-064:
-  owner: consensus, header
+  owner: consensus, chain/header
   symbols: onExtraSeal, header.PrepareProposal
 
 WBFT-SM-065:
-  owner: consensus, header
+  owner: consensus, chain/header
   symbols: onExtraSeal, header.PrepareProposal
 
 WBFT-SM-066:
-  owner: consensus, header
+  owner: consensus, chain/header
   symbols: onExtraSeal, header.PrepareProposal
 
 WBFT-SM-067:
-  owner: consensus, header
+  owner: consensus, chain/header
   symbols: onExtraSeal, header.PrepareProposal
 
 WBFT-SM-068:
-  owner: consensus, header
+  owner: consensus, chain/header
   symbols: onExtraSeal, header.PrepareProposal
 
 WBFT-SM-069:
@@ -880,28 +880,28 @@ WBFT-SM-082:
   owner: consensus/runner
 
 WBFT-SM-083:
-  owner: consensus, privval
+  owner: consensus, consensus/privval
 
 WBFT-SM-084:
-  owner: consensus, privval
+  owner: consensus, consensus/privval
 
 WBFT-SM-085:
-  owner: consensus, privval
+  owner: consensus, consensus/privval
 
 WBFT-SM-086:
-  owner: consensus, privval
+  owner: consensus, consensus/privval
 
 WBFT-SM-087:
-  owner: consensus, privval
+  owner: consensus, consensus/privval
 
 WBFT-SM-088:
-  owner: consensus, privval
+  owner: consensus, consensus/privval
 
 WBFT-SM-089:
-  owner: consensus, privval
+  owner: consensus, consensus/privval
 
 WBFT-SM-090:
-  owner: consensus, privval
+  owner: consensus, consensus/privval
 
 WBFT-SM-091:
   owner: inspector
@@ -1003,19 +1003,19 @@ WBFT-TIMER-033:
   owner: consensus, consensus/runner
 
 WBFT-TIMER-040:
-  owner: consensus, header
+  owner: consensus, chain/header
   symbols: Output.RequestBuild, header.PrepareProposal
 
 WBFT-TIMER-041:
-  owner: consensus, header
+  owner: consensus, chain/header
   symbols: Output.RequestBuild, header.PrepareProposal
 
 WBFT-TIMER-042:
-  owner: consensus, header
+  owner: consensus, chain/header
   symbols: Output.RequestBuild, header.PrepareProposal
 
 WBFT-TIMER-043:
-  owner: consensus, header
+  owner: consensus, chain/header
   symbols: Output.RequestBuild, header.PrepareProposal
 
 WBFT-NET-001:
@@ -1051,89 +1051,89 @@ WBFT-NET-007:
   class: external
 
 WBFT-NET-010:
-  owner: transport, application transport adapter
+  owner: p2p/transport, application transport adapter
   symbols: transport.CheckOutbound
 
 WBFT-NET-011:
-  owner: transport, application transport adapter
+  owner: p2p/transport, application transport adapter
   symbols: transport.CheckOutbound
 
 WBFT-NET-012:
-  owner: transport, application transport adapter
+  owner: p2p/transport, application transport adapter
   symbols: transport.DecodeFrame
 
 WBFT-NET-013:
-  owner: transport, application transport adapter
+  owner: p2p/transport, application transport adapter
   symbols: transport.DecodeFrame
 
 WBFT-NET-020:
-  owner: transport, application transport adapter, consensus/runner
+  owner: p2p/transport, application transport adapter, consensus/runner
   symbols: transport.DecodeFrame, runner.Receiver.Offer
 
 WBFT-NET-021:
-  owner: transport, application transport adapter, consensus/runner
+  owner: p2p/transport, application transport adapter, consensus/runner
   symbols: transport.DecodeFrame
 
 WBFT-NET-022:
-  owner: transport, consensus/runner
+  owner: p2p/transport, consensus/runner
   symbols: transport.Dedup, runner.Receiver.Offer
 
 WBFT-NET-023:
-  owner: transport, consensus/runner
+  owner: p2p/transport, consensus/runner
   symbols: transport.Dedup, runner.Receiver.Offer
 
 WBFT-NET-024:
-  owner: transport, consensus/runner
+  owner: p2p/transport, consensus/runner
   symbols: transport.Dedup, runner.Receiver.Offer
 
 WBFT-NET-025:
   owner: consensus/runner
 
 WBFT-NET-026:
-  owner: transport, consensus/runner
+  owner: p2p/transport, consensus/runner
   symbols: transport.Dedup, runner.Receiver.Offer
 
 WBFT-NET-027:
-  owner: transport, consensus/runner
+  owner: p2p/transport, consensus/runner
   symbols: transport.Dedup, runner.Receiver.Offer
 
 WBFT-NET-028:
-  owner: transport, application transport adapter, consensus/runner
+  owner: p2p/transport, application transport adapter, consensus/runner
   symbols: transport.DecodeFrame
 
 WBFT-NET-030:
-  owner: transport
+  owner: p2p/transport
   symbols: transport.Dedup.Broadcast, transport.Dedup.Gossip
 
 WBFT-NET-031:
-  owner: transport
+  owner: p2p/transport
   symbols: transport.Dedup.Broadcast, transport.Dedup.Gossip
 
 WBFT-NET-032:
-  owner: transport
+  owner: p2p/transport
   symbols: transport.Dedup.Broadcast, transport.Dedup.Gossip
 
 WBFT-NET-033:
   owner: consensus/runner
 
 WBFT-NET-040:
-  owner: transport, consensus
+  owner: p2p/transport, consensus
   symbols: Output.Relay, transport.Dedup.Gossip
 
 WBFT-NET-041:
-  owner: transport, consensus
+  owner: p2p/transport, consensus
   symbols: Output.Relay, transport.Dedup.Gossip
 
 WBFT-NET-042:
-  owner: transport, consensus
+  owner: p2p/transport, consensus
   symbols: Output.Relay, transport.Dedup.Gossip
 
 WBFT-NET-043:
-  owner: transport, consensus
+  owner: p2p/transport, consensus
   symbols: Output.Relay, transport.Dedup.Gossip
 
 WBFT-NET-044:
-  owner: transport, consensus/runner
+  owner: p2p/transport, consensus/runner
   symbols: MSG_OUTCOME
 
 WBFT-NET-050:
@@ -1146,75 +1146,75 @@ WBFT-NET-051:
   class: external
 
 WBFT-HDR-010:
-  owner: header
+  owner: chain/header
   symbols: header.PrepareProposal
 
 WBFT-HDR-011:
-  owner: header
+  owner: chain/header
   symbols: header.PrepareProposal
 
 WBFT-HDR-012:
-  owner: header
+  owner: chain/header
   symbols: header.PrepareProposal
 
 WBFT-HDR-013:
-  owner: header
+  owner: chain/header
   symbols: header.PrepareProposal
 
 WBFT-HDR-014:
-  owner: header
+  owner: chain/header
   symbols: header.PrepareProposal
 
 WBFT-HDR-016:
-  owner: header
+  owner: chain/header
   symbols: header.PrepareProposal
 
 WBFT-HDR-017:
-  owner: header
+  owner: chain/header
   symbols: header.VerifyHeader
 
 WBFT-HDR-018:
-  owner: header
+  owner: chain/header
   symbols: header.PrepareProposal
 
 WBFT-HDR-020:
-  owner: header
+  owner: chain/header
   symbols: header.PrepareProposal
 
 WBFT-HDR-021:
-  owner: header
+  owner: chain/header
   symbols: header.PrepareProposal
 
 WBFT-HDR-030:
-  owner: header
+  owner: chain/header
   symbols: header.PrepareProposal
 
 WBFT-HDR-031:
-  owner: header
+  owner: chain/header
   symbols: header.PrepareProposal
 
 WBFT-HDR-032:
-  owner: header
+  owner: chain/header
   symbols: header.PrepareProposal
 
 WBFT-HDR-033:
-  owner: header
+  owner: chain/header
   symbols: header.PrepareProposal
 
 WBFT-HDR-034:
-  owner: header
+  owner: chain/header
   symbols: header.PrepareProposal
 
 WBFT-HDR-035:
-  owner: consensus, header
+  owner: consensus, chain/header
   symbols: consensus.Snapshot.ExtraSeals, header.MergeSeals
 
 WBFT-HDR-036:
-  owner: header
+  owner: chain/header
   symbols: header.PrepareProposal
 
 WBFT-HDR-040:
-  owner: header
+  owner: chain/header
   symbols: header.PrepareProposal
 
 WBFT-HDR-041:
@@ -1222,139 +1222,139 @@ WBFT-HDR-041:
   symbols: blockHash, codec.BlockHash
 
 WBFT-HDR-042:
-  owner: header
+  owner: chain/header
   symbols: header.PrepareProposal
 
 WBFT-HDR-050:
-  owner: header
+  owner: chain/header
   symbols: header.CommitHeader
 
 WBFT-HDR-051:
-  owner: header
+  owner: chain/header
   symbols: header.CommitHeader
 
 WBFT-HDR-052:
-  owner: header
+  owner: chain/header
   symbols: header.CommitHeader
 
 WBFT-HDR-053:
-  owner: header
+  owner: chain/header
   symbols: header.CommitHeader
 
 WBFT-HDR-060:
-  owner: header
+  owner: chain/header
   symbols: header.VerifyProposal
 
 WBFT-HDR-061:
-  owner: header
+  owner: chain/header
   symbols: header.VerifyProposal
 
 WBFT-HDR-063:
-  owner: header
+  owner: chain/header
   symbols: header.VerifyProposal
 
 WBFT-HDR-070:
-  owner: header
+  owner: chain/header
   symbols: header.VerifyHeader, header.VerifyHeaders, header.ValidatorsForVerifying
 
 WBFT-HDR-071:
-  owner: validator, header
+  owner: chain/validator, chain/header
   symbols: validator.EpochInfoFor, header.ValidatorsForVerifying
 
 WBFT-HDR-080:
-  owner: header
+  owner: chain/header
   symbols: header.VerifyHeader, header.VerifyHeaders, header.ValidatorsForVerifying
 
 WBFT-HDR-081:
-  owner: header
+  owner: chain/header
   symbols: header.VerifyHeader, header.VerifyHeaders, header.ValidatorsForVerifying
 
 WBFT-HDR-082:
-  owner: header
+  owner: chain/header
   symbols: header.VerifyHeader, header.VerifyHeaders, header.ValidatorsForVerifying
 
 WBFT-HDR-083:
-  owner: header
+  owner: chain/header
   symbols: header.VerifyHeader, header.VerifyHeaders, header.ValidatorsForVerifying
 
 WBFT-HDR-084:
-  owner: header
+  owner: chain/header
   symbols: header.VerifyHeader, header.VerifyHeaders, header.ValidatorsForVerifying
 
 WBFT-HDR-085:
-  owner: header
+  owner: chain/header
   symbols: header.VerifyHeader, header.VerifyHeaders, header.ValidatorsForVerifying
 
 WBFT-HDR-086:
-  owner: header
+  owner: chain/header
   symbols: header.VerifyHeader, header.VerifyHeaders, header.ValidatorsForVerifying
 
 WBFT-HDR-088:
-  owner: header
+  owner: chain/header
   symbols: header.VerifyHeader, header.VerifyHeaders, header.ValidatorsForVerifying
 
 WBFT-HDR-089:
-  owner: header
+  owner: chain/header
   symbols: header.VerifyHeader, header.VerifyHeaders, header.ValidatorsForVerifying
 
 WBFT-HDR-090:
-  owner: header
+  owner: chain/header
   symbols: header.VerifyHeader, header.VerifyHeaders, header.ValidatorsForVerifying
 
 WBFT-HDR-091:
-  owner: header
+  owner: chain/header
   symbols: header.VerifyHeader, header.VerifyHeaders, header.ValidatorsForVerifying
 
 WBFT-HDR-100:
-  owner: header
+  owner: chain/header
   symbols: header.VerifyHeader, header.VerifyHeaders, header.ValidatorsForVerifying
 
 WBFT-HDR-101:
-  owner: header
+  owner: chain/header
   symbols: header.VerifyHeader, header.VerifyHeaders, header.ValidatorsForVerifying
 
 WBFT-HDR-102:
-  owner: header
+  owner: chain/header
   symbols: header.VerifyHeader, header.VerifyHeaders, header.ValidatorsForVerifying
 
 WBFT-HDR-103:
-  owner: header
+  owner: chain/header
   symbols: header.VerifyHeader, header.VerifyHeaders, header.ValidatorsForVerifying
 
 WBFT-HDR-111:
-  owner: header
+  owner: chain/header
   symbols: header.VerifyHeader, header.VerifyHeaders, header.ValidatorsForVerifying
 
 WBFT-HDR-120:
-  owner: header
+  owner: chain/header
   symbols: header.VerifyHeader, header.VerifyHeaders, header.ValidatorsForVerifying
 
 WBFT-HDR-121:
-  owner: validator, header
+  owner: chain/validator, chain/header
   symbols: validator.EpochInfoFor, header.ValidatorsForVerifying
 
 WBFT-HDR-130:
-  owner: header, epoch
+  owner: chain/header, chain/epoch
   symbols: header.VerifyLight, epoch.VerifyEpochInfo
 
 WBFT-HDR-131:
-  owner: epoch, header
+  owner: chain/epoch, chain/header
   symbols: epoch.VerifyEpochInfo, header.VerifyLight
 
 WBFT-HDR-132:
-  owner: epoch
+  owner: chain/epoch
   symbols: epoch.VerifyEpochInfo
 
 WBFT-HDR-140:
-  owner: header
+  owner: chain/header
   symbols: header.VerifyLight
 
 WBFT-HDR-141:
-  owner: header
+  owner: chain/header
   symbols: header.VerifyLight
 
 WBFT-HDR-142:
-  owner: header
+  owner: chain/header
   symbols: header.VerifyLight
 
 WBFT-HDR-150:
@@ -1377,22 +1377,22 @@ WBFT-APP-004:
   class: external
 
 WBFT-APP-010:
-  owner: validator/source
+  owner: chain/validator/source
   symbols: source.AuthoritySource.CandidatesAfterExecution
   class: external
 
 WBFT-APP-011:
-  owner: validator/source
+  owner: chain/validator/source
   symbols: source.AuthoritySource.CandidatesAfterExecution
   class: external
 
 WBFT-APP-012:
-  owner: validator/source
+  owner: chain/validator/source
   symbols: source.AuthoritySource.CandidatesAfterExecution
   class: external
 
 WBFT-APP-021:
-  owner: validator/source, header
+  owner: chain/validator/source, chain/header
   symbols: AuthoritySnapshot.GasTip, header.CheckGasTip
 
 WBFT-APP-030:
@@ -1420,15 +1420,15 @@ WBFT-APP-040:
   symbols: Env.ValidatorsAt
 
 WBFT-APP-050:
-  owner: header
+  owner: chain/header
   symbols: header.VerifyProposal
 
 WBFT-APP-051:
-  owner: header
+  owner: chain/header
   symbols: header.VerifyProposal
 
 WBFT-APP-060:
-  owner: header, consensus
+  owner: chain/header, consensus
   symbols: header.CommitHeader, decide
 
 WBFT-APP-070:
@@ -1478,11 +1478,11 @@ WBFT-SEC-002:
   class: deployment
 
 WBFT-SEC-010:
-  owner: validator
+  owner: chain/validator
   symbols: validator.QuorumSize
 
 WBFT-SEC-021:
-  owner: transport
+  owner: p2p/transport
   symbols: transport.Dedup, codec.DedupKey
 
 WBFT-SEC-030:
@@ -1499,7 +1499,7 @@ WBFT-SEC-032:
   class: external
 
 WBFT-SEC-040:
-  owner: privval, observe
+  owner: consensus/privval, observe
 
 WBFT-SEC-041:
   owner: observe
@@ -1525,7 +1525,7 @@ WBFT-SEC-120:
   class: external
 
 WBFT-SEC-130:
-  owner: participation
+  owner: observe/participation
 
 WBFT-VEC-001:
   owner: cmd/wbft-vector-adapter
