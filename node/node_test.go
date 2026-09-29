@@ -8,7 +8,9 @@ import (
 	"time"
 
 	"github.com/0xmhha/wbft/app"
+	"github.com/0xmhha/wbft/crypto/keccak"
 	"github.com/0xmhha/wbft/internal/fsys"
+	"github.com/0xmhha/wbft/mempool"
 	"github.com/0xmhha/wbft/types"
 )
 
@@ -186,5 +188,42 @@ func stop(t *testing.T, n *Node) {
 	t.Helper()
 	if err := n.Stop(); err != nil {
 		t.Error(err)
+	}
+}
+
+// okHook admits every transaction; the first byte is the nonce.
+type okHook struct{}
+
+func (okHook) TxKey(tx []byte) (types.Hash, error) { return keccak.Sum256(tx), nil }
+func (okHook) CheckTx(_ context.Context, req mempool.CheckRequest) mempool.CheckResponse {
+	return mempool.CheckResponse{Code: mempool.CodeOK, Meta: mempool.TxMeta{Nonce: uint64(req.Tx[0])}}
+}
+
+// TestMempool starts the pool with the node, and refuses an unknown
+// ordering policy.
+func TestMempool(t *testing.T) {
+	key := testKey(0)
+	cj, g := testGenesis(t, key)
+	a := newTestApp(cj, g)
+	n, err := New(Config{DataDir: "/data"}, Deps{App: a, Authority: a, Admission: okHook{}, fs: fsys.NewMem()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.cons = n.Consensus()
+	if err := n.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if r, err := n.Mempool().Add(context.Background(), []byte{0}); err != nil || r.Code != mempool.CodeOK {
+		t.Fatalf("add: %v %v", r, err)
+	}
+	stop(t, n)
+
+	n, err = New(Config{DataDir: "/data", Mempool: MempoolConfig{Ordering: "stablenet"}},
+		Deps{App: a, Authority: a, Admission: okHook{}, fs: fsys.NewMem()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := n.Start(context.Background()); !errors.Is(err, ErrStartRefused) {
+		t.Fatalf("unknown ordering: %v", err)
 	}
 }
