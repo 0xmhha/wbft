@@ -152,6 +152,7 @@ dependencies never enter the `wbft` module graph:
 | `tools/lint/heightlow` | Analyzer for the 64-bit truncation sites of heights and rounds: every use of `RefLow64`, `RefLowInt64` or `RefLow32` carries `//wbft:low64 HH-nn` |
 | `tools/tracegen` | Builds the requirement traceability matrix |
 | `tools/headerscan` | Verifies the headers of a running network over JSON-RPC |
+| `tools/chainfetch` | Downloads raw blocks and receipts of block ranges over JSON-RPC, for replay and development |
 | `internal/trace/owners.yaml` | Owner table read by `tracegen`: requirement ID to package and symbols |
 | `internal/trace/wbft-spec.ref` | Commit of wbft-spec that CI checks out |
 | `internal/trace/baseline.tsv` | Committed baseline of the matrix (requirement IDs and vector handlers) that CI compares against |
