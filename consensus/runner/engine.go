@@ -83,9 +83,11 @@ func (r *Runner) startEngine(_ context.Context, head *types.Header) error {
 		r.journalStep(sc, inputlog.KindStart, body, snap)
 	} else {
 		r.running.Store(true)
-		for _, rec := range journalRecs {
-			rec.EngineRun = r.engineRun
-			r.d.Journal.Put(journal.Record{Body: rec})
+		if r.d.Journal != nil {
+			for _, rec := range journalRecs {
+				rec.EngineRun = r.engineRun
+				r.d.Journal.Put(journal.Record{Body: rec})
+			}
 		}
 		r.step = uint64(len(journalRecs))
 		snap := r.core.Snapshot()
