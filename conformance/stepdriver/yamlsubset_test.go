@@ -6,7 +6,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/0xmhha/wbft/transport"
+	"github.com/0xmhha/wbft/p2p/transport"
 )
 
 // transportFrame is transport.DecodeFrame as a FrameDecoder.

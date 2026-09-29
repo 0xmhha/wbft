@@ -23,7 +23,7 @@ The goals are:
 
 Block storage, synchronisation, devp2p, the EVM, governance and transaction
 rules are not part of `wbft`; applications provide them through the
-interfaces of package `app`, `validator/source`, `mempool` and `transport`.
+interfaces of package `app`, `chain/validator/source`, `mempool` and `p2p/transport`.
 
 ## Status
 
@@ -32,10 +32,10 @@ Milestone **W1 (pure modules)** is complete: `crypto/keccak`,
 arbitrary-precision integers, chain configuration and `config_at`),
 `codec/rlp` and `codec` (extra data, headers, blocks, the four consensus
 messages, signing payloads and hashes), `internal/refsort` (the reference
-implementation's sort), `validator` (quorum, proposer selection, epoch
-schedule, validator-set lookup), `epoch` (next-epoch computation, candidate
-order, shuffle), `validator/source` (authority snapshots and their cache) and
-`header` (proposal construction, seal writing and merging, proposal, header,
+implementation's sort), `chain/validator` (quorum, proposer selection, epoch
+schedule, validator-set lookup), `chain/epoch` (next-epoch computation, candidate
+order, shuffle), `chain/validator/source` (authority snapshots and their
+cache) and `chain/header` (proposal construction, seal writing and merging, proposal, header,
 batch and light verification) pass the conformance vectors of their handlers.
 
 Milestone **W2 (consensus core, write-ahead log, private validator, in
@@ -50,9 +50,9 @@ simulation)** covers:
   proposal building.
 - `consensus/inputlog`: the encoding of core inputs, `Env` answers and step
   outputs shared by the write-ahead log and the message journal.
-- `wal`: a segmented append-only log with CRC-framed records, synced
+- `consensus/wal`: a segmented append-only log with CRC-framed records, synced
   appends and repair of a damaged tail.
-- `privval`: the signer on a go-stablenet node key file (the BLS key is
+- `consensus/privval`: the signer on a go-stablenet node key file (the BLS key is
   derived from it), per-kind sign rules that refuse a second value for a
   view across restarts, and the sign floor for a node that takes over a key
   without its sign record.
@@ -60,7 +60,7 @@ simulation)** covers:
   queues with receive-check workers and a slot table, the timer scheduler
   with generations, signing and logging of own messages, the commit
   goroutine, and the replay of the write-ahead log at start.
-- `transport`: the transport interface, the deduplication caches with the
+- `p2p/transport`: the transport interface, the deduplication caches with the
   gossip target choice, and the frame verdicts `DecodeFrame`,
   `CheckOutbound` and `StoppedEngineAction` for the application adapters.
 - `observe/event` and `observe/journal`: the event vocabulary with a JSON
@@ -82,19 +82,26 @@ with every optional behaviour off. The node assembly follows in W3.
 
 ## Layout
 
-Packages are listed from the bottom of the dependency order up. Lower
-packages never import higher ones.
+Directories group packages by layer. Lower layers never import higher ones,
+and the lint rules below enforce the direction.
 
-| Package | Responsibility |
-|---|---|
-| `crypto/keccak`, `internal/refsort`, `types` | Hashing, the reference-compatible sort, basic types and chain configuration |
-| `codec/rlp`, `codec`, `crypto/ecdsa`, `crypto/bls` | Encoding, signing payloads and hashes, secp256k1 and BLS12-381 |
-| `validator`, `epoch`, `validator/source`, `header` | Quorums, validator sets and proposers, epoch computation, authority source interface, header and proposal rules |
-| `observe/event`, `consensus`, `consensus/inputlog` | Event vocabulary, the pure state machine, input encoding for WAL and journal |
-| `wal`, `privval`, `transport`, `mempool`, `app` | Write-ahead log, private validator, transport interface and deduplication, transaction pool, application boundary |
-| `consensus/runner`, `observe`, `observe/journal`, `observe/logcat`, `kv`, `participation`, `rpc` | The runtime around the core, observation, key-value store, participation records, RPC |
-| `node`, `conformance/stepdriver`, `conformance/sim` | Node assembly, the step driver for vectors and traces, the deterministic simulator |
-| `cmd/wbft-vector-adapter`, `cmd/wbft-replay` | Conformance vector adapter, journal replay helper |
+| Layer | Directory | Packages | Responsibility |
+|---|---|---|---|
+| Primitives | `types`, `crypto`, `codec` | `types`, `crypto/keccak`, `crypto/ecdsa`, `crypto/bls`, `codec`, `codec/rlp` | Basic types and chain configuration, hashing, secp256k1 and BLS12-381, encoding, signing payloads and hashes |
+| Chain rules | `chain` | `chain/validator`, `chain/validator/source`, `chain/epoch`, `chain/header` | Quorums, validator sets and proposers, authority source interface, epoch computation, header and proposal rules |
+| Consensus | `consensus` | `consensus`, `consensus/inputlog`, `consensus/wal`, `consensus/privval`, `consensus/runner` | The pure state machine, input encoding for WAL and journal, write-ahead log, private validator, the runtime around the core |
+| Network | `p2p` | `p2p/transport` | Transport interface, deduplication and frame verdicts for the application adapters |
+| Observation | `observe` | `observe`, `observe/event`, `observe/journal`, `observe/logcat`, `observe/participation` | Event vocabulary, message journal, logging, participation records |
+| Node | `node`, `app`, `mempool`, `rpc`, `storage` | `node`, `app`, `mempool`, `rpc`, `storage/kv` | Node assembly, application boundary, transaction pool, RPC, key-value store |
+| Conformance | `conformance` | `conformance/stepdriver`, `conformance/sim` | The step driver for vectors and traces, the deterministic simulator |
+| Commands | `cmd` | `cmd/wbft-vector-adapter`, `cmd/wbft-replay` | Conformance vector adapter, journal replay helper |
+
+`internal` holds helpers that are not part of the API: `internal/refsort`
+(the reference-compatible sort), `internal/fsys` (the file system interface
+with an in-memory implementation), `internal/faultpoint` (fault injection
+under the `wbft_faults` build tag), `internal/snetpartb` (the StableNet
+execution-side header rules used by the vector adapter and `headerscan`) and
+`internal/trace` (traceability data).
 
 Developer tools live in the separate module `tools/` so that their
 dependencies never enter the `wbft` module graph:
@@ -118,8 +125,8 @@ rejects anything else (`.golangci.yml`, `scripts/check-deps.sh`):
 |---|---|
 | `github.com/ethereum/go-ethereum` v1.17.x (`rlp`, `crypto`, `common` only) | `types`, `codec/rlp`, `codec`, `crypto/keccak`, `crypto/ecdsa` |
 | `github.com/supranational/blst` | `crypto/bls` |
-| `github.com/holiman/uint256` | `validator/source`, `header`, `mempool`, the simulator's fake application |
-| `github.com/cockroachdb/pebble` | `kv` |
+| `github.com/holiman/uint256` | `chain/validator/source`, `chain/header`, `mempool`, the simulator's fake application |
+| `github.com/cockroachdb/pebble` | `storage/kv` |
 | `github.com/prometheus/client_golang` | `observe/metrics/prom` |
 | `github.com/BurntSushi/toml` | `node` |
 
@@ -159,14 +166,15 @@ scripts/check-deps.sh
 
 ### Lint rules
 
-- **Boundaries** (depguard): the module allow-list above; `header` does not
-  import `consensus` or `node`; the pure modules do not import `consensus`,
-  `node`, `app` or the observers other than `observe/event`; `consensus` does
-  not import `app`, `transport`, `privval` or `wal`; only `types` and `epoch`
-  use `internal/refsort`.
+- **Boundaries** (depguard): the module allow-list above; `chain/header` does
+  not import `consensus` or `node`; the pure modules do not import `consensus`,
+  `node`, `app`, `p2p`, `storage` or the observers other than
+  `observe/event`; `consensus` does not import `app`, `p2p/transport`,
+  `consensus/privval` or `consensus/wal`; only `types` and `chain/epoch` use
+  `internal/refsort`.
 - **Determinism** of the core (`consensus`, `consensus/inputlog`) and the pure
   modules (`crypto/*`, `internal/refsort`, `types`, `codec`, `codec/rlp`,
-  `validator`, `epoch`, `header`), test files excepted:
+  `chain/validator`, `chain/epoch`, `chain/header`), test files excepted:
   - depguard forbids `math/rand`, `crypto/rand`, `os`, `net`, `syscall` and
     `runtime` (and `sync` in the core);
   - forbidigo forbids clock calls (`time.Now`, timers, `time.Sleep`, ...),

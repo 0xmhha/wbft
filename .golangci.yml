@@ -12,7 +12,7 @@
 # Package groups used below:
 #   core: consensus, consensus/inputlog
 #   pure: crypto/keccak, internal/refsort, types, codec/rlp, codec,
-#         crypto/ecdsa, crypto/bls, validator, epoch, header
+#         crypto/ecdsa, crypto/bls, chain/validator, chain/epoch, chain/header
 #
 # File globs match absolute paths, so each pattern is anchored by the
 # package directory ("**/consensus/*.go" matches consensus/ but not
@@ -99,28 +99,28 @@ linters:
         uint256-placement:
           files:
             - $all
-            - "!**/validator/source/*.go"
+            - "!**/chain/validator/source/*.go"
             - "!**/mempool/*.go"
-            - "!**/header/*.go"
+            - "!**/chain/header/*.go"
             # The simulator's fake application supplies the gas tips of the
             # authority snapshots, as an application does.
             - "!**/conformance/sim/*.go"
           deny:
             - pkg: github.com/holiman/uint256
-              desc: "uint256 is used only by validator/source, header (gas tips of authority snapshots), mempool and the simulator's fake application"
+              desc: "uint256 is used only by chain/validator/source, chain/header (gas tips of authority snapshots), mempool and the simulator's fake application"
         pebble-placement:
           files:
             - $all
-            - "!**/kv/*.go"
+            - "!**/storage/kv/*.go"
           deny:
             - pkg: github.com/cockroachdb/pebble
-              desc: "pebble is used only by kv"
+              desc: "pebble is used only by storage/kv"
 
         # header is a stand-alone light verifier: it never imports the core
         # or the node.
         header-light-verifier:
           files:
-            - "**/header/*.go"
+            - "**/chain/header/*.go"
           deny:
             - pkg: github.com/0xmhha/wbft/consensus
               desc: "header must not import consensus (it is usable without the consensus core)"
@@ -138,9 +138,9 @@ linters:
             - "**/types/*.go"
             - "**/codec/*.go"
             - "**/codec/rlp/*.go"
-            - "**/validator/*.go"
-            - "**/epoch/*.go"
-            - "**/header/*.go"
+            - "**/chain/validator/*.go"
+            - "**/chain/epoch/*.go"
+            - "**/chain/header/*.go"
           deny:
             - pkg: github.com/0xmhha/wbft/consensus
               desc: "pure modules must not import the consensus core"
@@ -156,6 +156,10 @@ linters:
               desc: "pure modules must not import observe/logcat"
             - pkg: github.com/0xmhha/wbft/observe/metrics
               desc: "pure modules must not import observe/metrics"
+            - pkg: github.com/0xmhha/wbft/p2p
+              desc: "pure modules must not import the network layer"
+            - pkg: github.com/0xmhha/wbft/storage
+              desc: "pure modules must not import the storage layer"
 
         # The core talks to the outside only through consensus.Env and its
         # output types.
@@ -166,11 +170,11 @@ linters:
           deny:
             - pkg: github.com/0xmhha/wbft/app
               desc: "the core reaches the application only through consensus.Env"
-            - pkg: github.com/0xmhha/wbft/transport
+            - pkg: github.com/0xmhha/wbft/p2p/transport
               desc: "the core returns messages as outputs; it does not send them"
-            - pkg: github.com/0xmhha/wbft/privval
+            - pkg: github.com/0xmhha/wbft/consensus/privval
               desc: "the core does not sign; the runner calls privval"
-            - pkg: github.com/0xmhha/wbft/wal
+            - pkg: github.com/0xmhha/wbft/consensus/wal
               desc: "the core does not write the WAL; the runner does"
             - pkg: github.com/0xmhha/wbft/consensus/runner
               desc: "the core must not import its runner"
@@ -190,9 +194,9 @@ linters:
             - "**/types/*.go"
             - "**/codec/*.go"
             - "**/codec/rlp/*.go"
-            - "**/validator/*.go"
-            - "**/epoch/*.go"
-            - "**/header/*.go"
+            - "**/chain/validator/*.go"
+            - "**/chain/epoch/*.go"
+            - "**/chain/header/*.go"
             - "!$test"
           deny:
             - pkg: math/rand
@@ -224,7 +228,7 @@ linters:
           files:
             - $all
             - "!**/types/*.go"
-            - "!**/epoch/*.go"
+            - "!**/chain/epoch/*.go"
             - "!**/internal/refsort/*.go"
           deny:
             - pkg: github.com/0xmhha/wbft/internal/refsort
@@ -246,7 +250,7 @@ linters:
     rules:
       # forbidigo applies to the non-test files of the core and pure packages.
       - linters: [forbidigo]
-        path-except: '^(consensus|consensus/inputlog|crypto/keccak|crypto/ecdsa|crypto/bls|internal/refsort|types|codec|codec/rlp|validator|epoch|header)/[^/]+\.go$'
+        path-except: '^(consensus|consensus/inputlog|crypto/keccak|crypto/ecdsa|crypto/bls|internal/refsort|types|codec|codec/rlp|chain/validator|chain/epoch|chain/header)/[^/]+\.go$'
       - linters: [forbidigo]
         path: '_test\.go$'
       # internal/refsort keeps the function bodies of the copied sort

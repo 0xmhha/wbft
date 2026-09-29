@@ -24,9 +24,9 @@
 package consensus
 
 import (
+	"github.com/0xmhha/wbft/chain/validator"
 	"github.com/0xmhha/wbft/codec"
 	"github.com/0xmhha/wbft/types"
-	"github.com/0xmhha/wbft/validator"
 )
 
 // Rows of the message-handling outcome table (A-05 section 16).

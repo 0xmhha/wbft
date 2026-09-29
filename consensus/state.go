@@ -27,9 +27,9 @@ import (
 	"bytes"
 	"slices"
 
+	"github.com/0xmhha/wbft/chain/validator"
 	"github.com/0xmhha/wbft/codec"
 	"github.com/0xmhha/wbft/types"
-	"github.com/0xmhha/wbft/validator"
 )
 
 // State is the consensus state of one node: the Node record of A-05 section

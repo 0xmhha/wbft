@@ -1,5 +1,5 @@
 // Package fsys is the small file-system interface of the packages that keep
-// durable state (wal, privval, observe/journal): open, write, sync, rename
+// durable state (consensus/wal, consensus/privval, observe/journal): open, write, sync, rename
 // and directory sync. OS is the operating-system implementation; Mem is an
 // in-memory implementation that models what survives a crash, for the
 // deterministic simulator and the crash tests.

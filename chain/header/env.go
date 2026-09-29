@@ -3,8 +3,8 @@ package header
 import (
 	"time"
 
+	"github.com/0xmhha/wbft/chain/validator/source"
 	"github.com/0xmhha/wbft/types"
-	"github.com/0xmhha/wbft/validator/source"
 )
 
 // Env is what the header rules read from outside the header. The runner,

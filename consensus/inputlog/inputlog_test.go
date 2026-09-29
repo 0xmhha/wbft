@@ -8,16 +8,16 @@ import (
 	"testing"
 	"time"
 
+	"github.com/0xmhha/wbft/chain/header"
+	"github.com/0xmhha/wbft/chain/validator"
 	"github.com/0xmhha/wbft/codec"
 	"github.com/0xmhha/wbft/codec/rlp"
 	"github.com/0xmhha/wbft/consensus"
 	"github.com/0xmhha/wbft/crypto/bls"
 	"github.com/0xmhha/wbft/crypto/ecdsa"
 	"github.com/0xmhha/wbft/crypto/keccak"
-	"github.com/0xmhha/wbft/header"
 	"github.com/0xmhha/wbft/observe/event"
 	"github.com/0xmhha/wbft/types"
-	"github.com/0xmhha/wbft/validator"
 )
 
 func key(t *testing.T) *ecdsa.PrivateKey {

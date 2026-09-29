@@ -6,13 +6,13 @@ import (
 	"io"
 	"time"
 
+	"github.com/0xmhha/wbft/chain/header"
+	"github.com/0xmhha/wbft/chain/validator"
 	"github.com/0xmhha/wbft/codec"
 	"github.com/0xmhha/wbft/consensus"
 	"github.com/0xmhha/wbft/consensus/inputlog"
-	"github.com/0xmhha/wbft/header"
 	"github.com/0xmhha/wbft/observe/journal"
 	"github.com/0xmhha/wbft/types"
-	"github.com/0xmhha/wbft/validator"
 )
 
 // BlockSource answers Head and ValidatorsAt of a trace replay from

@@ -4,11 +4,11 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/0xmhha/wbft/chain/header"
 	"github.com/0xmhha/wbft/codec"
 	"github.com/0xmhha/wbft/crypto/bls"
 	"github.com/0xmhha/wbft/crypto/ecdsa"
 	"github.com/0xmhha/wbft/crypto/keccak"
-	"github.com/0xmhha/wbft/header"
 	"github.com/0xmhha/wbft/types"
 )
 

@@ -37,7 +37,7 @@ const Directive = "//wbft:unordered"
 const (
 	defaultModule = "github.com/0xmhha/wbft"
 	defaultCore   = "consensus,consensus/inputlog"
-	defaultPure   = "crypto/keccak,internal/refsort,types,codec/rlp,codec,crypto/ecdsa,crypto/bls,validator,epoch,header"
+	defaultPure   = "crypto/keccak,internal/refsort,types,codec/rlp,codec,crypto/ecdsa,crypto/bls,chain/validator,chain/epoch,chain/header"
 	defaultAllow  = "header.VerifyHeaders"
 )
 

@@ -11,7 +11,7 @@ import (
 
 	"github.com/0xmhha/wbft/codec"
 	"github.com/0xmhha/wbft/consensus"
-	"github.com/0xmhha/wbft/privval"
+	"github.com/0xmhha/wbft/consensus/privval"
 )
 
 // The steps vectors run with every optional behaviour off. A node runs the

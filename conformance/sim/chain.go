@@ -6,10 +6,10 @@ import (
 	"fmt"
 	"math/big"
 
+	"github.com/0xmhha/wbft/chain/epoch"
 	"github.com/0xmhha/wbft/codec"
 	"github.com/0xmhha/wbft/codec/rlp"
 	"github.com/0xmhha/wbft/crypto/keccak"
-	"github.com/0xmhha/wbft/epoch"
 	"github.com/0xmhha/wbft/types"
 )
 

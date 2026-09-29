@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/0xmhha/wbft/wal"
+	"github.com/0xmhha/wbft/consensus/wal"
 )
 
 // A write-ahead log cut at any byte or with a damaged record is repaired at
