@@ -78,7 +78,22 @@ write-ahead log replay and the sign rules of the private validator (with
 the core's guard against a second round-0 proposal, and the core's mark on
 a ROUND-CHANGE whose prepared pair the bad-block rule released, which lets
 the private validator sign it). Conformance vectors run
-with every optional behaviour off. The node assembly follows in W3.
+with every optional behaviour off.
+
+Milestone **W3a (node and application interface)** is in progress:
+
+- `app`: the application boundary: the `Application` interface with its
+  optional extensions, the `Consensus` service interface, the request and
+  response types and the error values.
+- `node`: the node assembly. `Start` reads the application's `Info`, parses
+  and checks the chain configuration, opens the write-ahead log and the sign
+  state, sets the sign floor of a taken-over key (`TakeoverGuard`), runs the
+  start-up handshake with the application head (finalizing a decided block
+  again when needed), loads the authority snapshot of the head and starts the
+  core at head + 1 with the restart-safety rules. The node implements the
+  `Consensus` service (proposal fields, epoch information, header
+  verification, head and synchronisation notifications) on top of the header
+  and epoch rules.
 
 ## Layout
 
