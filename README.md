@@ -94,6 +94,10 @@ Milestone **W3a (node and application interface)** is in progress:
   `Consensus` service (proposal fields, epoch information, header
   verification, head and synchronisation notifications) on top of the header
   and epoch rules.
+- `p2p/devnet`: a TCP transport for development networks and tests, with a
+  consensus channel (through the frame stage) and an application channel.
+  Peers are identified by the address they claim; it is not for production
+  networks.
 
 ## Layout
 
@@ -105,7 +109,7 @@ and the lint rules below enforce the direction.
 | Primitives | `types`, `crypto`, `codec` | `types`, `crypto/keccak`, `crypto/ecdsa`, `crypto/bls`, `codec`, `codec/rlp` | Basic types and chain configuration, hashing, secp256k1 and BLS12-381, encoding, signing payloads and hashes |
 | Chain rules | `chain` | `chain/validator`, `chain/validator/source`, `chain/epoch`, `chain/header` | Quorums, validator sets and proposers, authority source interface, epoch computation, header and proposal rules |
 | Consensus | `consensus` | `consensus`, `consensus/inputlog`, `consensus/wal`, `consensus/privval`, `consensus/runner` | The pure state machine, input encoding for WAL and journal, write-ahead log, private validator, the runtime around the core |
-| Network | `p2p` | `p2p/transport` | Transport interface, deduplication and frame verdicts for the application adapters |
+| Network | `p2p` | `p2p/transport`, `p2p/devnet` | Transport interface, deduplication and frame verdicts for the application adapters; a development transport |
 | Observation | `observe` | `observe`, `observe/event`, `observe/journal`, `observe/logcat`, `observe/participation` | Event vocabulary, message journal, logging, participation records |
 | Node | `node`, `app`, `mempool`, `rpc`, `storage` | `node`, `app`, `mempool`, `rpc`, `storage/kv` | Node assembly, application boundary, transaction pool, RPC, key-value store |
 | Conformance | `conformance` | `conformance/stepdriver`, `conformance/sim` | The step driver for vectors and traces, the deterministic simulator |
