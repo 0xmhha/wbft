@@ -94,6 +94,14 @@ Milestone **W3a (node and application interface)** is in progress:
   `Consensus` service (proposal fields, epoch information, header
   verification, head and synchronisation notifications) on top of the header
   and epoch rules.
+- `mempool`: the transaction pool. Validity is decided by the application's
+  admission hook; the pool keeps per-sender nonce lists (executable and
+  waiting), de-duplicates, bounds its size, rechecks after every new head
+  before later admissions, and hands out proposals through an iterator that
+  the builder reports to (skip a transaction or drop a sender). Ordering is
+  a plugin; the built-in `fifo` orders senders by arrival and each sender by
+  nonce. The node starts the pool when the application gives an admission
+  hook and refuses an unknown ordering name.
 - `p2p/devnet`: a TCP transport for development networks and tests, with a
   consensus channel (through the frame stage) and an application channel.
   Peers are identified by the address they claim; it is not for production

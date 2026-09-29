@@ -17,6 +17,7 @@ import (
 	"github.com/0xmhha/wbft/consensus/runner"
 	"github.com/0xmhha/wbft/consensus/wal"
 	"github.com/0xmhha/wbft/internal/fsys"
+	"github.com/0xmhha/wbft/mempool"
 	"github.com/0xmhha/wbft/observe/event"
 	"github.com/0xmhha/wbft/p2p/transport"
 	"github.com/0xmhha/wbft/types"
@@ -53,6 +54,7 @@ type Node struct {
 	wal      *wal.Log
 	ev       *event.Writer
 	r        *runner.Runner
+	pool     *mempool.TxPool
 	view     *chainView
 	floor    *types.Height // the sign floor this start set or kept
 	done     chan struct{} // closed by Stop; ends the node's goroutines
@@ -119,6 +121,17 @@ func (n *Node) SignFloor() (types.Height, bool) {
 		return types.Height{}, false
 	}
 	return n.signer.SignFloor()
+}
+
+// Mempool returns the transaction pool, or nil for a node without an
+// admission hook or before Start.
+func (n *Node) Mempool() mempool.Pool {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	if n.pool == nil {
+		return nil
+	}
+	return n.pool
 }
 
 // Runner returns the consensus runner, or nil for a node without a key or
@@ -253,6 +266,10 @@ func (n *Node) start(ctx context.Context) error {
 		}
 	}
 
+	if err := n.startPool(ctx); err != nil {
+		return err
+	}
+
 	n.emit(event.Record{Kind: event.NodeStart, Fields: n.startFields(act, recov)})
 	if n.signer == nil {
 		return nil
@@ -291,6 +308,40 @@ func (n *Node) start(ctx context.Context) error {
 	if err := r.Start(ctx, head.Number.AddUint64(1)); err != nil {
 		return fmt.Errorf("node: start the consensus core: %w", err)
 	}
+	return nil
+}
+
+// startPool creates and starts the transaction pool.
+func (n *Node) startPool(ctx context.Context) error {
+	if n.d.Admission == nil {
+		return nil
+	}
+	reg, err := mempool.NewRegistry(n.d.Orderings...)
+	if err != nil {
+		return refuse("%v", err)
+	}
+	name := n.cfg.Mempool.Ordering
+	if name == "" {
+		name = mempool.FIFO
+	}
+	policy, err := reg.Get(name)
+	if err != nil {
+		return refuse("%v", err)
+	}
+	limits := n.cfg.Mempool.Limits
+	if limits.Logger == nil {
+		limits.Logger = n.log
+	}
+	pool, err := mempool.New(limits, n.d.Admission, policy, n.d.TxTransport)
+	if err != nil {
+		return err
+	}
+	if err := pool.Start(ctx); err != nil {
+		return err
+	}
+	n.mu.Lock()
+	n.pool = pool
+	n.mu.Unlock()
 	return nil
 }
 
@@ -386,6 +437,9 @@ func (n *Node) close() error {
 		errs = append(errs, r.Close())
 	}
 	n.wg.Wait()
+	if n.pool != nil {
+		n.pool.Stop()
+	}
 	n.cancel()
 	if n.wal != nil {
 		errs = append(errs, n.wal.Close())

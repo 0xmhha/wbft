@@ -11,6 +11,7 @@ import (
 	"github.com/0xmhha/wbft/consensus/runner"
 	"github.com/0xmhha/wbft/internal/faultpoint"
 	"github.com/0xmhha/wbft/internal/fsys"
+	"github.com/0xmhha/wbft/mempool"
 	"github.com/0xmhha/wbft/p2p/transport"
 	"github.com/0xmhha/wbft/types"
 )
@@ -32,6 +33,18 @@ type Config struct {
 	// RunID names this run in the event records; empty derives one from the
 	// start time.
 	RunID string
+	// Mempool configures the transaction pool; used when Deps.Admission is
+	// set.
+	Mempool MempoolConfig
+}
+
+// MempoolConfig configures the transaction pool of a node.
+type MempoolConfig struct {
+	// Ordering names the ordering policy: "fifo" (the default) or one of
+	// Deps.Orderings. An unknown name refuses the start.
+	Ordering string
+	// Limits bound the pool.
+	Limits mempool.Config
 }
 
 // Deps are the collaborators of a Node.
@@ -43,6 +56,12 @@ type Deps struct {
 	Authority source.AuthoritySource
 	// Transport carries consensus messages; nil runs a node without peers.
 	Transport transport.Transport
+	// Admission validates transactions for the pool; nil runs no pool.
+	Admission mempool.AdmissionHook
+	// TxTransport gossips transactions; nil keeps them local.
+	TxTransport mempool.TxTransport
+	// Orderings are ordering policies besides the built-in "fifo".
+	Orderings []mempool.OrderingPolicy
 	// Events receives the event records as JSON Lines; nil drops them.
 	Events io.Writer
 	// Logger logs; nil discards.
