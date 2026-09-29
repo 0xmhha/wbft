@@ -94,6 +94,30 @@ Milestone **W3a (node and application interface)** is in progress:
   `Consensus` service (proposal fields, epoch information, header
   verification, head and synchronisation notifications) on top of the header
   and epoch rules.
+- `mempool`: the transaction pool. Validity is decided by the application's
+  admission hook; the pool keeps per-sender nonce lists (executable and
+  waiting), de-duplicates, bounds its size, rechecks after every new head
+  before later admissions, and hands out proposals through an iterator that
+  the builder reports to (skip a transaction or drop a sender). Ordering is
+  a plugin; the built-in `fifo` orders senders by arrival and each sender by
+  nonce. The node starts the pool when the application gives an admission
+  hook and refuses an unknown ordering name.
+- `rpc`: the read-only `wbft` namespace (`wbft_nodeInfo`,
+  `wbft_consensusState`, `wbft_peers`) over a backend the node implements,
+  and a JSON-RPC over HTTP handler for applications without an RPC server.
+- `examples/kvstore`: an example application, a replicated key-value store.
+  It implements the application interface (building proposals from the
+  pool, executing them in proposal verification and at finalization,
+  storing blocks, the authority source), announces blocks and lets a node
+  that fell behind fetch them from its peers. `wbft-kvstore init` writes a
+  local network and `wbft-kvstore start` runs one node with an HTTP API;
+  `make devnet` (`scripts/kvstore-devnet.sh`) runs four processes, submits
+  transactions, stops and restarts a node and checks that it catches up.
+  Transactions are not signed: it is a development tool.
+- `p2p/devnet`: a TCP transport for development networks and tests, with a
+  consensus channel (through the frame stage) and an application channel.
+  Peers are identified by the address they claim; it is not for production
+  networks.
 
 ## Layout
 
@@ -105,9 +129,10 @@ and the lint rules below enforce the direction.
 | Primitives | `types`, `crypto`, `codec` | `types`, `crypto/keccak`, `crypto/ecdsa`, `crypto/bls`, `codec`, `codec/rlp` | Basic types and chain configuration, hashing, secp256k1 and BLS12-381, encoding, signing payloads and hashes |
 | Chain rules | `chain` | `chain/validator`, `chain/validator/source`, `chain/epoch`, `chain/header` | Quorums, validator sets and proposers, authority source interface, epoch computation, header and proposal rules |
 | Consensus | `consensus` | `consensus`, `consensus/inputlog`, `consensus/wal`, `consensus/privval`, `consensus/runner` | The pure state machine, input encoding for WAL and journal, write-ahead log, private validator, the runtime around the core |
-| Network | `p2p` | `p2p/transport` | Transport interface, deduplication and frame verdicts for the application adapters |
+| Network | `p2p` | `p2p/transport`, `p2p/devnet` | Transport interface, deduplication and frame verdicts for the application adapters; a development transport |
 | Observation | `observe` | `observe`, `observe/event`, `observe/journal`, `observe/logcat`, `observe/participation` | Event vocabulary, message journal, logging, participation records |
 | Node | `node`, `app`, `mempool`, `rpc`, `storage` | `node`, `app`, `mempool`, `rpc`, `storage/kv` | Node assembly, application boundary, transaction pool, RPC, key-value store |
+| Examples | `examples` | `examples/kvstore`, `examples/kvstore/cmd/wbft-kvstore` | An example application and its command for local networks |
 | Conformance | `conformance` | `conformance/stepdriver`, `conformance/sim` | The step driver for vectors and traces, the deterministic simulator |
 | Commands | `cmd` | `cmd/wbft-vector-adapter`, `cmd/wbft-replay` | Conformance vector adapter, journal replay helper |
 
