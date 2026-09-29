@@ -179,7 +179,9 @@ func (n *Node) start(ctx context.Context) error {
 	if !info.SupportsMajor(app.Major) {
 		return refuse("the application supports interface versions %v, not %d", info.AppMajors, app.Major)
 	}
+	n.mu.Lock()
 	n.info = info
+	n.mu.Unlock()
 	head := n.d.App.Head()
 	if head == nil {
 		return refuse("the application has no head")

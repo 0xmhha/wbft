@@ -1,7 +1,7 @@
 # Developer shortcuts; CI runs the same commands (.github/workflows).
 export CGO_ENABLED := 1
 
-.PHONY: all build test lint coredet heightlow deps lint-negative tools adapter tracegen headerscan sim sim-full faults replay
+.PHONY: all build test lint coredet heightlow deps lint-negative tools adapter tracegen headerscan sim sim-full faults replay devnet
 
 all: build test lint
 
@@ -62,3 +62,7 @@ faults:
 
 replay:
 	go build -o bin/wbft-replay ./cmd/wbft-replay
+
+# The kvstore example as a local network of separate processes.
+devnet:
+	scripts/kvstore-devnet.sh 4

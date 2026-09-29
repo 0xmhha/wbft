@@ -56,6 +56,23 @@ jobs:
       - name: crashes at every fault point
         run: go test -count=1 -timeout 30m -tags wbft_faults -run TestCrashAtFaultPoints -v ./conformance/sim/
 
+  node:
+    # The node, the transports and the kvstore example: network tests that
+    # -short skips, the node-level sign floor crashes (tag wbft_faults), and
+    # a local network of separate processes.
+    name: node and example network
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25.x"
+          cache-dependency-path: "**/go.sum"
+      - run: go test -count=1 -race ./node/ ./mempool/ ./p2p/... ./rpc/ ./examples/...
+      - run: go test -count=1 -tags wbft_faults ./node/
+      - name: kvstore devnet (4 processes)
+        run: scripts/kvstore-devnet.sh 4
+
   tools:
     name: developer tools
     runs-on: ubuntu-latest
