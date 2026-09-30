@@ -567,7 +567,8 @@ func TestInboxAllOverflowNoDisconnect(t *testing.T) {
 }
 
 // An application head that moved without a notification is noticed by the
-// periodic head check, reported and handed to the core.
+// periodic head check once two consecutive checks found the core head
+// unmoved, reported and handed to the core.
 func TestHeadCheck(t *testing.T) {
 	k := newKeys(t, 4)
 	n := newTNode(t, k, 1)
@@ -577,9 +578,35 @@ func TestHeadCheck(t *testing.T) {
 	n.chain.head = b.Header
 	n.chain.mu.Unlock()
 	n.advance(HeadCheckPeriod)
+	if h := n.events.kinds(event.Health); len(h) != 0 {
+		t.Fatalf("one check reported %v", h)
+	}
+	n.advance(HeadCheckPeriod)
 	h := n.events.kinds(event.Health)
 	if len(h) == 0 || h[0].Fields["what"] != "head_mismatch" {
 		t.Fatalf("health %v", h)
+	}
+	if v := n.r.Vars(); v.View.Sequence.CmpUint64(11) != 0 {
+		t.Fatalf("core at %s", v.View.Sequence)
+	}
+}
+
+// An application that stored a block and notifies the core shortly after is
+// not reported: the check that caught it between the two is followed by
+// one that finds the notification processed.
+func TestHeadCheckTransient(t *testing.T) {
+	k := newKeys(t, 4)
+	n := newTNode(t, k, 1)
+	n.boot()
+	b := block(t, 10, 1, k.addrs[0], codec.BlockHash(n.chain.head))
+	n.chain.mu.Lock()
+	n.chain.head = b.Header
+	n.chain.mu.Unlock()
+	n.advance(HeadCheckPeriod) // catches the application ahead
+	n.r.NewHead(b.Header)      // the notification arrives
+	n.advance(HeadCheckPeriod)
+	if h := n.events.kinds(event.Health); len(h) != 0 {
+		t.Fatalf("transient gap reported %v", h)
 	}
 	if v := n.r.Vars(); v.View.Sequence.CmpUint64(11) != 0 {
 		t.Fatalf("core at %s", v.View.Sequence)
