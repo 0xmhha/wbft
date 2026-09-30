@@ -176,7 +176,8 @@ func TestSignFloorSkip(t *testing.T) {
 func TestHandshake(t *testing.T) {
 	k := newKeys(t, 1)
 	b := block(t, 11, 0, k.addrs[0], types.Hash{})
-	h10, h11, h12 := types.HeightFromUint64(10), types.HeightFromUint64(11), types.HeightFromUint64(12)
+	h10, h11, h12, h13 := types.HeightFromUint64(10), types.HeightFromUint64(11), types.HeightFromUint64(12), types.HeightFromUint64(13)
+	req := []CommitRequest{{Block: b}}
 	cases := []struct {
 		name string
 		st   WALState
@@ -185,7 +186,14 @@ func TestHandshake(t *testing.T) {
 	}{
 		{"empty", WALState{}, nil, StartNormal},
 		{"normal", WALState{LastEnd: &h10}, &h11, StartNormal},
-		{"commit request", WALState{LastEnd: &h10, Commits: []CommitRequest{{Block: b}}}, &h11, Refinalize},
+		{"commit request", WALState{LastEnd: &h10, Commits: req}, &h11, Refinalize},
+		// The application stored block 11 and rolled back one height after
+		// the core had moved on to 12.
+		{"commit request after its end", WALState{LastEnd: &h11, Commits: req}, &h12, Refinalize},
+		// The log still holds the request of height 11, but the node went
+		// on to later heights: the application is far behind.
+		{"stale request, log ahead", WALState{LastEnd: &h13, Commits: req}, nil, Refuse},
+		{"stale request, sign ahead", WALState{LastEnd: &h11, Commits: req}, &h13, Refuse},
 		{"app rollback", WALState{LastEnd: &h11}, nil, StartAfterRollback},
 		{"log ahead", WALState{LastEnd: &h12}, nil, Refuse},
 		{"sign ahead", WALState{}, &h12, Refuse},

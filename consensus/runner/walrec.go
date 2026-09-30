@@ -171,7 +171,8 @@ type WALState struct {
 	// LastEnd is the height of the last end-of-height record: the highest
 	// height the core left after a new head; nil when there is none.
 	LastEnd *types.Height
-	// Commits are the commit requests after the last run start, in order.
+	// Commits are the commit requests in the log, in order, including those
+	// of heights the core has already left.
 	Commits []CommitRequest
 }
 
@@ -238,13 +239,24 @@ var ErrAppBehind = fmt.Errorf("runner: the application is behind the write-ahead
 // Handshake compares the application head appHead with the log state and
 // the sign height (the highest signed height or the sign floor, nil if
 // none) and returns the action and, for Refinalize, the block.
+//
+// A commit request of height appHead + 1 is refinalized only when the log
+// has not left a later height and nothing was signed beyond appHead + 2:
+// the log keeps the requests of earlier heights, and an application that
+// fell further behind than one height is refused even when the log still
+// holds the request of its next height.
 func Handshake(appHead types.Height, st WALState, signHeight *types.Height) (HandshakeAction, *CommitRequest, error) {
 	next := appHead.AddUint64(1)
+	after := next.AddUint64(1)
 	for i := len(st.Commits) - 1; i >= 0; i-- {
 		c := st.Commits[i]
-		if c.Block.Header.Number.Cmp(next) == 0 {
+		if c.Block.Header.Number.Cmp(next) != 0 {
+			continue
+		}
+		if (st.LastEnd == nil || st.LastEnd.Cmp(next) <= 0) && (signHeight == nil || signHeight.Cmp(after) <= 0) {
 			return Refinalize, &c, nil
 		}
+		break
 	}
 	if st.LastEnd != nil && st.LastEnd.Cmp(next) > 0 || signHeight != nil && signHeight.Cmp(next) > 0 {
 		return Refuse, nil, ErrAppBehind
