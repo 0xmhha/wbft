@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math/big"
+	"sort"
 	"strings"
 
 	"github.com/0xmhha/wbft/internal/refsort"
@@ -356,4 +357,41 @@ func decodeHex0x(s string) ([]byte, error) {
 		return nil, fmt.Errorf("hex string without 0x prefix")
 	}
 	return hex.DecodeString(s[2:])
+}
+
+// ConsensusRulesGroups are the groups of the chain configuration's
+// wbftRules object that wbft owns; the application's modules own the
+// others.
+var ConsensusRulesGroups = []string{"consensusRules", "featureRules"}
+
+// CheckConsensusRules refuses a key in a consensus rules group of a genesis
+// chain configuration. Part 1 implements no chain-level flag, so every key
+// is unknown, and a node must not start with a flag it would ignore: it
+// would judge blocks differently from the nodes that enable it.
+func CheckConsensusRules(raw []byte) error {
+	var cc struct {
+		Rules map[string]json.RawMessage `json:"wbftRules"`
+	}
+	if err := json.Unmarshal(raw, &cc); err != nil {
+		return &ErrConfig{Field: "wbftRules", Reason: err.Error()}
+	}
+	for _, g := range ConsensusRulesGroups {
+		group, ok := cc.Rules[g]
+		if !ok || strings.TrimSpace(string(group)) == "null" {
+			continue
+		}
+		var keys map[string]json.RawMessage
+		if err := json.Unmarshal(group, &keys); err != nil {
+			return &ErrConfig{Field: "wbftRules." + g, Reason: err.Error()}
+		}
+		names := make([]string, 0, len(keys))
+		for k := range keys { //wbft:unordered sorted below
+			names = append(names, k)
+		}
+		sort.Strings(names)
+		if len(names) > 0 {
+			return &ErrConfig{Field: "wbftRules." + g + "." + names[0], Reason: "unknown rule"}
+		}
+	}
+	return nil
 }

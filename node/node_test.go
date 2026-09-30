@@ -160,6 +160,18 @@ func TestStartChecks(t *testing.T) {
 		{"no proposer policy", func(r *app.InfoResponse) {
 			r.ChainConfigJSON = []byte(`{"chainId":8282,"anzeon":{"wbft":{"blockPeriodSeconds":1},"init":{"validators":[]}}}`)
 		}},
+		{"consensus rule", func(r *app.InfoResponse) {
+			var m map[string]any
+			if err := json.Unmarshal(r.ChainConfigJSON, &m); err != nil {
+				t.Fatal(err)
+			}
+			m["wbftRules"] = map[string]any{"consensusRules": map[string]any{"rejectNumberJump": 10}}
+			raw, err := json.Marshal(m)
+			if err != nil {
+				t.Fatal(err)
+			}
+			r.ChainConfigJSON = raw
+		}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
