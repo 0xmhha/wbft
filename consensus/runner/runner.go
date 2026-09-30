@@ -204,6 +204,10 @@ type Runner struct {
 	appQ     []queued
 	headNote *types.Header // coalesced NewHead
 
+	// headSuspect is the core head at a head check that found the
+	// application ahead; only the head check goroutine touches it.
+	headSuspect *types.Header
+
 	timers scheduler
 	inbox  inbox
 
@@ -461,21 +465,32 @@ func (r *Runner) startHousekeeping() {
 func (r *Runner) stopHousekeeping() { r.hkGen.Add(1) }
 
 // checkHead compares the application's head with the head of the last
-// processed notification; when the application is ahead and no
-// notification is waiting, it reports head_mismatch and notifies the core
-// of the application's head.
+// processed notification. An application stores a block before it notifies
+// the core (it hands over the authority snapshot first), so a check can
+// catch it between the two; one sample is not evidence. When the
+// application is ahead, no notification is waiting, and the core head has
+// not moved since the previous check that also found the application
+// ahead, the notification is missing: the check reports head_mismatch and
+// notifies the core of the application's head.
 func (r *Runner) checkHead() {
 	app := r.d.Chain.Head()
 	cur := r.lastHead.Load()
 	if app == nil || cur == nil || app.Number.Cmp(cur.Number) <= 0 {
+		r.headSuspect = nil
 		return
 	}
 	r.appMu.Lock()
 	waiting := r.headNote != nil
 	r.appMu.Unlock()
 	if waiting {
+		r.headSuspect = nil
 		return
 	}
+	if r.headSuspect != cur {
+		r.headSuspect = cur // the core head of this check; decided at the next one
+		return
+	}
+	r.headSuspect = nil
 	r.emit(event.Record{Kind: event.Health, Fields: map[string]any{"what": "head_mismatch",
 		"app_head": app.Number.String(), "core_head": cur.Number.String()}}, nil)
 	r.NewHead(app)
