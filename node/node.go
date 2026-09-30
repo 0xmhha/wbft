@@ -198,6 +198,9 @@ func (n *Node) start(ctx context.Context) error {
 	if err := checkChainConfig(cfg); err != nil {
 		return err
 	}
+	if err := types.CheckConsensusRules(info.ChainConfigJSON); err != nil {
+		return refuse("%v", err)
+	}
 	if info.ChainID != nil && cfg.ChainID != nil && info.ChainID.Cmp(cfg.ChainID) != 0 {
 		return refuse("chain id %v of the application differs from %v of the chain configuration", info.ChainID, cfg.ChainID)
 	}
