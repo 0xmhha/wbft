@@ -48,6 +48,7 @@ var (
 	ErrSealerIndexRange   = errors.New("epoch: sealer index outside the validators of the epoch info")
 	ErrZeroEpochDivisor   = errors.New("epoch: division by zero in the diligence computation")
 	ErrEpochInfoMismatch  = errors.New("WBFT: epoch info mismatch")
+	ErrEpochInfoIsNotNil  = errors.New("epoch info should be nil for non-epoch block")
 	ErrShuffleOutOfBounds = errors.New("input index out of bounds")
 
 	ErrValidatorNotCandidate = errors.New("epoch: validator of the epoch info is not a candidate")
@@ -403,6 +404,21 @@ func ComputeNextEpochInfo(chain types.ChainReader, cfg *types.Config, e *types.H
 		next.BLSPublicKeys = append(next.BLSPublicKeys, append([]byte(nil), key...))
 	}
 	return next, nil
+}
+
+// CheckNoEpochInfo reports a block that is not an epoch block and carries
+// an EpochInfo; the reference rejects it when the block is executed.
+//
+// Spec: WBFT-EPOCH-006, WBFT-HDR-131
+func CheckNoEpochInfo(h *types.Header) error {
+	x, err := codec.DecodeExtra(h)
+	if err != nil {
+		return err
+	}
+	if x.EpochInfo != nil {
+		return ErrEpochInfoIsNotNil
+	}
+	return nil
 }
 
 // VerifyEpochInfo recomputes the EpochInfo of epoch block e and compares it

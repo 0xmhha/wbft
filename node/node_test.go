@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"github.com/0xmhha/wbft/app"
+	"github.com/0xmhha/wbft/chain/epoch"
+	"github.com/0xmhha/wbft/codec"
 	"github.com/0xmhha/wbft/crypto/keccak"
 	"github.com/0xmhha/wbft/internal/fsys"
 	"github.com/0xmhha/wbft/mempool"
@@ -263,5 +265,29 @@ func TestRPC(t *testing.T) {
 	}
 	if e := call("wbft_nope")["error"]; e == nil {
 		t.Fatal("unknown method answered")
+	}
+}
+
+// TestVerifyEpochInfoNonEpoch: a block that is not an epoch block passes
+// without EpochInfo and fails with one.
+func TestVerifyEpochInfoNonEpoch(t *testing.T) {
+	key := testKey(0)
+	cj, g := testGenesis(t, key)
+	a := newTestApp(cj, g)
+	n := startNode(t, a, fsys.NewMem(), key, false, nil)
+	defer stop(t, n)
+	h := g.Header.Copy()
+	h.Number = types.HeightFromUint64(1)
+	if err := codec.SetExtra(h, &types.WBFTExtra{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := n.Consensus().VerifyEpochInfo(context.Background(), h); err != nil {
+		t.Fatalf("non-epoch block without EpochInfo: %v", err)
+	}
+	if err := codec.SetExtra(h, &types.WBFTExtra{EpochInfo: &types.EpochInfo{}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := n.Consensus().VerifyEpochInfo(context.Background(), h); !errors.Is(err, epoch.ErrEpochInfoIsNotNil) {
+		t.Fatalf("non-epoch block with EpochInfo: %v", err)
 	}
 }

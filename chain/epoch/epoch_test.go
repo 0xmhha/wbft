@@ -325,3 +325,20 @@ func TestGenesisExtra(t *testing.T) {
 		t.Error("validator without key accepted")
 	}
 }
+
+// Covers: WBFT-EPOCH-006, WBFT-HDR-131
+func TestCheckNoEpochInfo(t *testing.T) {
+	h := &types.Header{Number: types.HeightFromUint64(3)}
+	if err := codec.SetExtra(h, &types.WBFTExtra{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := CheckNoEpochInfo(h); err != nil {
+		t.Fatalf("no EpochInfo: %v", err)
+	}
+	if err := codec.SetExtra(h, &types.WBFTExtra{EpochInfo: &types.EpochInfo{}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := CheckNoEpochInfo(h); !errors.Is(err, ErrEpochInfoIsNotNil) {
+		t.Fatalf("EpochInfo: %v", err)
+	}
+}
