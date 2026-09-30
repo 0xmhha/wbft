@@ -478,8 +478,8 @@ WBFT-EPOCH-003:
   symbols: validator.IsEpochBlock, validator.LastEpochBlock
 
 WBFT-EPOCH-006:
-  owner: chain/header, chain/validator
-  symbols: header.VerifyLight, validator.IsEpochBlock
+  owner: chain/header, chain/validator, chain/epoch
+  symbols: header.VerifyLight, validator.IsEpochBlock, epoch.CheckNoEpochInfo
 
 WBFT-PROP-001:
   owner: chain/validator
@@ -1339,7 +1339,7 @@ WBFT-HDR-130:
 
 WBFT-HDR-131:
   owner: chain/epoch, chain/header
-  symbols: epoch.VerifyEpochInfo, header.VerifyLight
+  symbols: epoch.VerifyEpochInfo, epoch.CheckNoEpochInfo, header.VerifyLight
 
 WBFT-HDR-132:
   owner: chain/epoch

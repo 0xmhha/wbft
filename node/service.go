@@ -9,6 +9,7 @@ import (
 	"github.com/0xmhha/wbft/app"
 	"github.com/0xmhha/wbft/chain/epoch"
 	"github.com/0xmhha/wbft/chain/header"
+	"github.com/0xmhha/wbft/chain/validator"
 	"github.com/0xmhha/wbft/chain/validator/source"
 	"github.com/0xmhha/wbft/codec"
 	"github.com/0xmhha/wbft/consensus/privval"
@@ -99,12 +100,21 @@ func (s *service) EpochInfo(ctx context.Context, h *types.Header) (*types.EpochI
 	return epoch.ComputeNextEpochInfo(view.a, view.cfg, h, cands)
 }
 
-// VerifyEpochInfo recomputes the EpochInfo of an imported epoch block and
-// compares it with the one the block carries.
+// VerifyEpochInfo checks the EpochInfo of an imported block after its
+// execution: an epoch block's must equal the one recomputed from the
+// candidates in the execution state, and any other block must carry none.
+// The application calls it for every block (app-interface 8.7).
 func (s *service) VerifyEpochInfo(ctx context.Context, h *types.Header) error {
 	view, _, err := s.ready()
 	if err != nil {
 		return err
+	}
+	isEpoch, err := validator.IsEpochBlock(view.cfg, h.Number)
+	if err != nil {
+		return err
+	}
+	if !isEpoch {
+		return epoch.CheckNoEpochInfo(h)
 	}
 	cands, err := s.n.d.Authority.CandidatesAfterExecution(ctx)
 	if err != nil {
