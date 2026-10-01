@@ -225,7 +225,10 @@ func (n *Node) start(ctx context.Context) error {
 		self = n.signer.Address()
 	}
 	if n.d.Events != nil {
-		n.ev = event.NewWriter(n.d.Events, self, runID)
+		ev := event.NewWriter(n.d.Events, self, runID)
+		n.mu.Lock() // AppEvents reads it from other goroutines
+		n.ev = ev
+		n.mu.Unlock()
 	}
 	log, recov, err := wal.Open(n.fs, filepath.Join(n.cfg.DataDir, walDir), wal.Options{KeepHeights: 2})
 	if err != nil {
@@ -465,6 +468,31 @@ func (n *Node) emit(r event.Record) {
 	}
 	if err := n.ev.Write(r, event.Stamp{Wall: n.clock.Now(), Mono: n.clock.Mono()}); err != nil {
 		n.log.Warn("event write failed", "err", err)
+	}
+}
+
+// AppEvents returns the channel through which application modules put
+// their records into the node's event stream (event.AppEmitter). Records
+// emitted before Start, or when the node writes no events, are dropped.
+func (n *Node) AppEvents() event.AppEmitter { return appEmitter{n} }
+
+type appEmitter struct{ n *Node }
+
+func (e appEmitter) Emit(kind event.Kind, fields map[string]any) {
+	n := e.n
+	if event.IsNodeKind(kind) {
+		n.log.Warn("application event refused: the kind is the node's", "kind", string(kind))
+		return
+	}
+	n.mu.Lock()
+	ev := n.ev
+	n.mu.Unlock()
+	if ev == nil {
+		return
+	}
+	r := event.Record{Kind: kind, Src: event.AppSrc, Fields: fields}
+	if err := ev.Write(r, event.Stamp{Wall: n.clock.Now(), Mono: n.clock.Mono()}); err != nil {
+		n.log.Warn("application event write failed", "kind", string(kind), "err", err)
 	}
 }
 
