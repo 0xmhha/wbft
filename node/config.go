@@ -36,6 +36,12 @@ type Config struct {
 	// Mempool configures the transaction pool; used when Deps.Admission is
 	// set.
 	Mempool MempoolConfig
+	// Standalone runs the node in standalone mode, where the authority may
+	// come from a native module of the application. In the default
+	// (embedded) mode the node refuses an authority source marked as native
+	// (source.Native): an embedded chain takes its authority from the state
+	// it shares with the reference implementation.
+	Standalone bool
 }
 
 // MempoolConfig configures the transaction pool of a node.

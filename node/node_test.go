@@ -303,3 +303,26 @@ func TestVerifyEpochInfoNonEpoch(t *testing.T) {
 		t.Fatalf("non-epoch block with EpochInfo: %v", err)
 	}
 }
+
+// nativeAuthority marks the test application's authority as native.
+type nativeAuthority struct{ *testApp }
+
+func (nativeAuthority) NativeAuthority() {}
+
+// TestNativeAuthorityMode refuses a native authority source in embedded
+// mode and accepts it in standalone mode.
+func TestNativeAuthorityMode(t *testing.T) {
+	key := testKey(0)
+	cj, g := testGenesis(t, key)
+	a := newTestApp(cj, g)
+	d := Deps{App: a, Authority: nativeAuthority{a}, fs: fsys.NewMem(), key: key}
+	if _, err := New(Config{DataDir: "/data"}, d); !errors.Is(err, ErrConfig) {
+		t.Fatalf("embedded mode with a native source: %v", err)
+	}
+	if _, err := New(Config{DataDir: "/data", Standalone: true}, d); err != nil {
+		t.Fatalf("standalone mode: %v", err)
+	}
+	if _, err := New(Config{DataDir: "/data"}, Deps{App: a, Authority: a, fs: fsys.NewMem(), key: key}); err != nil {
+		t.Fatalf("embedded mode with a plain source: %v", err)
+	}
+}
