@@ -82,6 +82,9 @@ func New(cfg Config, d Deps) (*Node, error) {
 	if cfg.DataDir == "" {
 		return nil, fmt.Errorf("%w: DataDir is required", ErrConfig)
 	}
+	if _, native := d.Authority.(source.Native); native && !cfg.Standalone {
+		return nil, fmt.Errorf("%w: a native authority source runs only in standalone mode", ErrConfig)
+	}
 	n := &Node{cfg: cfg, d: d, fs: d.fs, clock: d.clock, snaps: source.NewCache(source.DefaultCacheSize),
 		syncWake: make(chan struct{}, 1)}
 	if n.fs == nil {
