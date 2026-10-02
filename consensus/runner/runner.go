@@ -185,6 +185,10 @@ type Runner struct {
 	env       *liveEnv
 	engineRun uint64
 	step      uint64
+	// stepAt is the moment the current step started: every event of the
+	// step carries it, and the timers the step arms run from it
+	// (WBFT-TIMER-010, WBFT-TIMER-012: "measured from the moment").
+	stepAt    event.Stamp
 	internal  []queued
 	lastOwn   map[ownKey][]byte
 	buildDone chan struct{}
@@ -496,12 +500,18 @@ func (r *Runner) checkHead() {
 	r.NewHead(app)
 }
 
-// emit writes an event record; step is the core step it belongs to.
+// emit writes an event record; step is the core step it belongs to. The
+// events of a step carry the moment the step started; the others the
+// moment they are written.
 func (r *Runner) emit(rec event.Record, step *uint64) {
 	if r.d.Events == nil {
 		return
 	}
-	if err := r.d.Events.Write(rec, event.Stamp{Wall: r.d.Clock.Now(), Mono: r.d.Clock.Mono(), Step: step}); err != nil {
+	at := event.Stamp{Wall: r.d.Clock.Now(), Mono: r.d.Clock.Mono(), Step: step}
+	if step != nil {
+		at.Wall, at.Mono = r.stepAt.Wall, r.stepAt.Mono
+	}
+	if err := r.d.Events.Write(rec, at); err != nil {
 		r.log.Warn("event write failed", "kind", rec.Kind, "err", err)
 	}
 }

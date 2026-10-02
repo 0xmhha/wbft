@@ -2,6 +2,7 @@ package runner
 
 import (
 	"sync"
+	"time"
 
 	"github.com/0xmhha/wbft/consensus"
 )
@@ -23,8 +24,10 @@ type timerEntry struct {
 	done bool
 }
 
-// arm arms a timer, cancelling the armed timer of the same kind.
-func (s *scheduler) arm(a consensus.ArmTimer) {
+// arm arms a timer, cancelling the armed timer of the same kind. The
+// timer runs from the monotonic moment from (the start of the step that
+// armed it), so the time spent in the step before arming counts.
+func (s *scheduler) arm(a consensus.ArmTimer, from time.Duration) {
 	e := &timerEntry{arm: a}
 	s.mu.Lock()
 	if old := s.live[a.Kind]; old != nil {
@@ -33,7 +36,7 @@ func (s *scheduler) arm(a consensus.ArmTimer) {
 	}
 	s.live[a.Kind] = e
 	s.mu.Unlock()
-	t := s.r.d.Clock.AfterFunc(a.Duration, func() { s.fire(e) })
+	t := s.r.d.Clock.AfterFunc(max(a.Duration-(s.r.d.Clock.Mono()-from), 0), func() { s.fire(e) })
 	s.mu.Lock()
 	e.t = t
 	s.mu.Unlock()

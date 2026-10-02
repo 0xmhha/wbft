@@ -406,7 +406,7 @@ func (r *Runner) afterReplay(timers [3]*consensus.ArmTimer, snap *consensus.Snap
 	vars := r.core.Vars()
 	for _, t := range timers {
 		if t != nil {
-			r.timers.arm(*t)
+			r.timers.arm(*t, r.d.Clock.Mono())
 			r.emit(event.Record{Kind: event.TimerArm, View: event.ViewOf(t.View), Fields: map[string]any{
 				"timer": t.Kind.String(), "duration_ms": t.Duration.Milliseconds(), "gen": t.Gen, "engine_run": r.engineRun, "rearmed": true}}, nil)
 		}

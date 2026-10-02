@@ -157,6 +157,7 @@ type stepCtx struct {
 func (r *Runner) handle(q queued) {
 	r.step++
 	step := r.step
+	r.stepAt = event.Stamp{Wall: r.d.Clock.Now(), Mono: r.d.Clock.Mono(), Step: &step}
 	if nh, ok := q.in.(consensus.NewHead); ok {
 		if nh.Header == nil {
 			return
@@ -251,9 +252,9 @@ func (r *Runner) execute(sc *stepCtx) {
 			r.internal = append(r.internal, queued{in: o.In, via: viaInternal})
 		case consensus.ArmTimer:
 			r.lastGen[o.Kind] = o.Gen
-			r.timers.arm(o)
+			r.timers.arm(o, r.stepAt.Mono)
 			f := map[string]any{"timer": o.Kind.String(), "duration_ms": o.Duration.Milliseconds(),
-				"deadline_mono_ns": int64(r.d.Clock.Mono() + o.Duration), "gen": o.Gen, "engine_run": r.engineRun}
+				"deadline_mono_ns": int64(r.stepAt.Mono + o.Duration), "gen": o.Gen, "engine_run": r.engineRun}
 			if o.Kind == consensus.RetryTimer {
 				f["target_round"] = o.Round.String()
 			}
