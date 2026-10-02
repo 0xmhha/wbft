@@ -56,8 +56,11 @@ func (h *mHeap) Pop() any {
 // manualClock fires timers only when the test advances it.
 type manualClock struct {
 	now time.Duration
-	seq uint64
-	q   mHeap
+	// tick advances the clock at each Mono call, as time passes while a
+	// step runs; zero keeps it still.
+	tick time.Duration
+	seq  uint64
+	q    mHeap
 }
 
 type mTimer struct{ e *mEvent }
@@ -71,7 +74,7 @@ func (t mTimer) Stop() bool {
 }
 
 func (c *manualClock) Now() time.Time      { return time.Unix(1_700_000_000, 0).Add(c.now) }
-func (c *manualClock) Mono() time.Duration { return c.now }
+func (c *manualClock) Mono() time.Duration { c.now += c.tick; return c.now }
 func (c *manualClock) AfterFunc(d time.Duration, f func()) Timer {
 	c.seq++
 	e := &mEvent{at: c.now + d, seq: c.seq, f: f}
@@ -282,13 +285,14 @@ func (n *fakeNet) own(code codec.Code) [][]byte {
 
 // eventLog keeps the event records.
 type eventLog struct {
-	mu   sync.Mutex
-	recs []event.Record
+	mu     sync.Mutex
+	recs   []event.Record
+	stamps []event.Stamp // of recs, by index
 }
 
-func (l *eventLog) Write(r event.Record, _ event.Stamp) error {
+func (l *eventLog) Write(r event.Record, at event.Stamp) error {
 	l.mu.Lock()
-	l.recs = append(l.recs, r)
+	l.recs, l.stamps = append(l.recs, r), append(l.stamps, at)
 	l.mu.Unlock()
 	return nil
 }
