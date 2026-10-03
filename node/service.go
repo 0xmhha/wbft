@@ -169,8 +169,10 @@ func (s *service) OnNewHead(ev app.NewHead) {
 	if ev.Header == nil || !s.n.running() {
 		return
 	}
+	hash := codec.BlockHash(ev.Header)
+	s.n.paths.put(hash, ev.Path)
 	s.n.emit(event.Record{Kind: event.NewHead, Fields: map[string]any{"number": ev.Header.Number.String(),
-		"hash": "0x" + hex.EncodeToString(codec.BlockHash(ev.Header).Bytes()), "path": ev.Path.String()}})
+		"hash": "0x" + hex.EncodeToString(hash.Bytes()), "path": ev.Path.String()}})
 	if r := s.n.Runner(); r != nil {
 		r.NewHead(ev.Header)
 	}

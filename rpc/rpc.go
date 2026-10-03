@@ -28,6 +28,8 @@ type Backend interface {
 	// Rejections returns the rejected blocks and proposals of the block
 	// numbers from..to.
 	Rejections(from, to *big.Int) ([]rejection.Record, error)
+	// HeaderCopy returns this node's copy of the header with hash, or nil.
+	HeaderCopy(hash types.Hash) (*HeaderCopyResult, error)
 }
 
 // NodeInfo describes the node.
@@ -97,8 +99,8 @@ func APIs(b Backend) []API {
 }
 
 // Service is the wbft namespace: wbft_nodeInfo, wbft_consensusState,
-// wbft_peers, wbft_configAt, wbft_evidence and wbft_rejections. It is
-// read-only.
+// wbft_peers, wbft_configAt, wbft_evidence, wbft_rejections and
+// wbft_headerCopy. It is read-only.
 type Service struct{ b Backend }
 
 // NodeInfo is wbft_nodeInfo.

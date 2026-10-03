@@ -124,3 +124,31 @@ func (s *Service) Rejections(from, to HeightArg) ([]rejection.Record, error) {
 	}
 	return s.b.Rejections(from.v, to.v)
 }
+
+// SealCopy is a seal of a header copy: the indices of the sealers in the
+// validator set of the sealed height, and the aggregate signature.
+type SealCopy struct {
+	Sealers   []uint32 `json:"sealers"`
+	Signature string   `json:"signature"` // 0x-hex
+}
+
+// HeaderCopyResult is wbft_headerCopy: the seal fields of this node's copy
+// of a header and the path the copy came by.
+type HeaderCopyResult struct {
+	Number        string    `json:"number"` // decimal
+	Hash          string    `json:"hash"`
+	Round         uint32    `json:"round"`
+	PreparedSeal  *SealCopy `json:"preparedSeal"`
+	CommittedSeal *SealCopy `json:"committedSeal"`
+	// Path is "sealed_locally" (this node decided it with its quorum),
+	// "imported" (a peer's copy), "synced" (the chain synchronisation), or
+	// "unknown" when the node kept no head notification of the block
+	// (notifications are coalesced; the record is in memory and recent).
+	Path string `json:"path"`
+}
+
+// HeaderCopy is wbft_headerCopy(hash) (R-05). It is nil for a header this
+// node does not hold.
+func (s *Service) HeaderCopy(hash types.Hash) (*HeaderCopyResult, error) {
+	return s.b.HeaderCopy(hash)
+}

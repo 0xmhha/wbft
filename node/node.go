@@ -35,6 +35,9 @@ const (
 	stateFile    = "state"
 )
 
+// headPathsKept is how many recent head paths wbft_headerCopy knows.
+const headPathsKept = 8192
+
 // Node is a consensus node: it runs the consensus core for the application
 // and offers the application the Consensus service.
 type Node struct {
@@ -60,6 +63,7 @@ type Node struct {
 	ev       *event.Writer
 	evid     *evidence.Store
 	rej      *rejection.Store
+	paths    *headPaths // the paths of recent heads (wbft_headerCopy)
 	r        *runner.Runner
 	pool     *mempool.TxPool
 	view     *chainView
@@ -92,7 +96,7 @@ func New(cfg Config, d Deps) (*Node, error) {
 	if _, native := d.Authority.(source.Native); native && !cfg.Standalone {
 		return nil, fmt.Errorf("%w: a native authority source runs only in standalone mode", ErrConfig)
 	}
-	n := &Node{cfg: cfg, d: d, fs: d.fs, clock: d.clock, snaps: source.NewCache(source.DefaultCacheSize),
+	n := &Node{cfg: cfg, d: d, fs: d.fs, clock: d.clock, snaps: source.NewCache(source.DefaultCacheSize), paths: newHeadPaths(headPathsKept),
 		syncWake: make(chan struct{}, 1)}
 	if n.fs == nil {
 		n.fs = fsys.OS{}

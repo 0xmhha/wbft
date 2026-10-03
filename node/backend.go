@@ -63,6 +63,29 @@ func (b backend) Rejections(from, to *big.Int) ([]rejection.Record, error) {
 	return s.Range(from, to)
 }
 
+func (b backend) HeaderCopy(hash types.Hash) (*rpc.HeaderCopyResult, error) {
+	h := b.n.d.App.HeaderByHash(hash)
+	if h == nil {
+		return nil, nil
+	}
+	x, err := codec.DecodeExtra(h)
+	if err != nil {
+		return nil, err
+	}
+	seal := func(s *types.AggregatedSeal) *rpc.SealCopy {
+		if s == nil {
+			return nil
+		}
+		return &rpc.SealCopy{Sealers: s.Sealers.Sealers(), Signature: "0x" + hex.EncodeToString(s.Signature)}
+	}
+	path := "unknown"
+	if p, ok := b.n.paths.get(hash); ok {
+		path = p.String()
+	}
+	return &rpc.HeaderCopyResult{Number: h.Number.String(), Hash: "0x" + hex.EncodeToString(hash.Bytes()), Round: x.Round,
+		PreparedSeal: seal(x.PreparedSeal), CommittedSeal: seal(x.CommittedSeal), Path: path}, nil
+}
+
 func (b backend) ChainConfig() *types.Config {
 	b.n.mu.Lock()
 	defer b.n.mu.Unlock()

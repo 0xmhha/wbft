@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
@@ -407,5 +408,47 @@ func TestRejections(t *testing.T) {
 	if len(r) != 2 || r[0]["number"] != "500" || r[0]["path"] != "preprepare" || r[0]["step"] != "V0b" || r[0]["errorClass"] != "ErrUnknownAncestor" ||
 		r[1]["number"] != "501" || r[1]["path"] != "imported" || r[1]["step"] != "H5" || r[1]["errorClass"] != "ErrInvalidMixDigest" {
 		t.Fatalf("wbft_rejections %+v", r)
+	}
+}
+
+// TestHeaderCopy returns this node's copy of a header it decided: round 0,
+// the committed seal of the single validator (index 0) and the path
+// sealed_locally; a header the node never saw as a head has the path
+// unknown, and one it does not hold is null.
+func TestHeaderCopy(t *testing.T) {
+	key := testKey(0)
+	cj, g := testGenesis(t, key)
+	a := newTestApp(cj, g)
+	n := startNode(t, a, fsys.NewMem(), key, false, nil)
+	defer stop(t, n)
+	a.waitHead(t, 2, 20*time.Second)
+	srv := httptest.NewServer(rpc.Handler(n.APIs()))
+	defer srv.Close()
+	call := func(hash types.Hash) map[string]any {
+		t.Helper()
+		resp, err := http.Post(srv.URL, "application/json",
+			strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"wbft_headerCopy","params":["`+hash.Hex()+`"]}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		var out struct{ Result map[string]any }
+		if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+			t.Fatal(err)
+		}
+		return out.Result
+	}
+	h := a.HeaderByNumber(1)
+	c := call(codec.BlockHash(h))
+	cs, _ := c["committedSeal"].(map[string]any)
+	if c["number"] != "1" || c["path"] != "sealed_locally" || c["round"] != float64(0) || cs == nil ||
+		fmt.Sprint(cs["sealers"]) != "[0]" || len(cs["signature"].(string)) != 2+192 {
+		t.Fatalf("wbft_headerCopy(1) %v", c)
+	}
+	if c := call(codec.BlockHash(g.Header)); c["path"] != "unknown" {
+		t.Fatalf("the genesis copy %v", c)
+	}
+	if c := call(types.Hash{9}); c != nil {
+		t.Fatalf("an unknown header %v", c)
 	}
 }
