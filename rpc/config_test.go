@@ -22,6 +22,7 @@ func (f fakeBackend) ConsensusState() *consensus.Snapshot              { return 
 func (f fakeBackend) Peers() []transport.PeerInfo                      { return nil }
 func (f fakeBackend) ChainConfig() *types.Config                       { return f.cfg }
 func (f fakeBackend) HeaderCopy(types.Hash) (*HeaderCopyResult, error) { return nil, nil }
+func (f fakeBackend) Events(uint64, int) []json.RawMessage             { return nil }
 func (f fakeBackend) Rejections(from, to *big.Int) ([]rejection.Record, error) {
 	return []rejection.Record{{Number: to.String()}}, nil
 }

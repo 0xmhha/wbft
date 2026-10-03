@@ -152,3 +152,17 @@ type HeaderCopyResult struct {
 func (s *Service) HeaderCopy(hash types.Hash) (*HeaderCopyResult, error) {
 	return s.b.HeaderCopy(hash)
 }
+
+// MaxEvents bounds the records of one wbft_events call.
+const MaxEvents = 1000
+
+// Events is wbft_events(fromSeq, limit): the node's recent event records
+// (the same JSON objects as its event stream) whose seq is at least
+// fromSeq, oldest first, at most limit and MaxEvents of them. The node
+// keeps the most recent records only; seq starts again with each run.
+func (s *Service) Events(fromSeq uint64, limit int) ([]json.RawMessage, error) {
+	if limit <= 0 || limit > MaxEvents {
+		limit = MaxEvents
+	}
+	return s.b.Events(fromSeq, limit), nil
+}

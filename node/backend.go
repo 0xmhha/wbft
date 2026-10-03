@@ -2,6 +2,7 @@ package node
 
 import (
 	"encoding/hex"
+	"encoding/json"
 	"math/big"
 	"runtime/debug"
 
@@ -85,6 +86,8 @@ func (b backend) HeaderCopy(hash types.Hash) (*rpc.HeaderCopyResult, error) {
 	return &rpc.HeaderCopyResult{Number: h.Number.String(), Hash: "0x" + hex.EncodeToString(hash.Bytes()), Round: x.Round,
 		PreparedSeal: seal(x.PreparedSeal), CommittedSeal: seal(x.CommittedSeal), Path: path}, nil
 }
+
+func (b backend) Events(from uint64, limit int) []json.RawMessage { return b.n.ring.since(from, limit) }
 
 func (b backend) ChainConfig() *types.Config {
 	b.n.mu.Lock()

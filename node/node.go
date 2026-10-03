@@ -35,8 +35,12 @@ const (
 	stateFile    = "state"
 )
 
-// headPathsKept is how many recent head paths wbft_headerCopy knows.
-const headPathsKept = 8192
+// headPathsKept is how many recent head paths wbft_headerCopy knows, and
+// eventsKept how many recent event records wbft_events serves.
+const (
+	headPathsKept = 8192
+	eventsKept    = 10_000
+)
 
 // Node is a consensus node: it runs the consensus core for the application
 // and offers the application the Consensus service.
@@ -64,6 +68,7 @@ type Node struct {
 	evid     *evidence.Store
 	rej      *rejection.Store
 	paths    *headPaths // the paths of recent heads (wbft_headerCopy)
+	ring     *eventRing // the recent event records (wbft_events)
 	r        *runner.Runner
 	pool     *mempool.TxPool
 	view     *chainView
@@ -96,7 +101,7 @@ func New(cfg Config, d Deps) (*Node, error) {
 	if _, native := d.Authority.(source.Native); native && !cfg.Standalone {
 		return nil, fmt.Errorf("%w: a native authority source runs only in standalone mode", ErrConfig)
 	}
-	n := &Node{cfg: cfg, d: d, fs: d.fs, clock: d.clock, snaps: source.NewCache(source.DefaultCacheSize), paths: newHeadPaths(headPathsKept),
+	n := &Node{cfg: cfg, d: d, fs: d.fs, clock: d.clock, snaps: source.NewCache(source.DefaultCacheSize), paths: newHeadPaths(headPathsKept), ring: newEventRing(eventsKept),
 		syncWake: make(chan struct{}, 1)}
 	if n.fs == nil {
 		n.fs = fsys.OS{}
@@ -243,12 +248,16 @@ func (n *Node) start(ctx context.Context) error {
 	if n.signer != nil {
 		self = n.signer.Address()
 	}
+	// The node always writes its events: to the recent records of
+	// wbft_events and, when configured, to Deps.Events.
+	var out io.Writer = n.ring
 	if n.d.Events != nil {
-		ev := event.NewWriter(n.d.Events, self, runID)
-		n.mu.Lock() // AppEvents reads it from other goroutines
-		n.ev = ev
-		n.mu.Unlock()
+		out = io.MultiWriter(n.d.Events, n.ring)
 	}
+	ev := event.NewWriter(out, self, runID)
+	n.mu.Lock() // AppEvents reads it from other goroutines
+	n.ev = ev
+	n.mu.Unlock()
 	evid, err := evidence.Open(n.fs, filepath.Join(n.cfg.DataDir, evidenceDir), evidence.Options{Now: n.clock.Now})
 	if err != nil {
 		return fmt.Errorf("node: evidence store: %w", err)
