@@ -10,6 +10,7 @@ import (
 
 	"github.com/0xmhha/wbft/consensus"
 	"github.com/0xmhha/wbft/observe/evidence"
+	"github.com/0xmhha/wbft/observe/rejection"
 	"github.com/0xmhha/wbft/p2p/transport"
 	"github.com/0xmhha/wbft/types"
 )
@@ -20,6 +21,9 @@ func (f fakeBackend) NodeInfo() NodeInfo                  { return NodeInfo{} }
 func (f fakeBackend) ConsensusState() *consensus.Snapshot { return nil }
 func (f fakeBackend) Peers() []transport.PeerInfo         { return nil }
 func (f fakeBackend) ChainConfig() *types.Config          { return f.cfg }
+func (f fakeBackend) Rejections(from, to *big.Int) ([]rejection.Record, error) {
+	return []rejection.Record{{Number: to.String()}}, nil
+}
 func (f fakeBackend) Evidence(from, to *big.Int) ([]evidence.Record, error) {
 	return []evidence.Record{{Height: from.String()}}, nil
 }
