@@ -16,6 +16,7 @@ import (
 	"github.com/0xmhha/wbft/crypto/keccak"
 	"github.com/0xmhha/wbft/internal/fsys"
 	"github.com/0xmhha/wbft/mempool"
+	"github.com/0xmhha/wbft/observe/event"
 	"github.com/0xmhha/wbft/rpc"
 	"github.com/0xmhha/wbft/types"
 )
@@ -286,6 +287,27 @@ func TestRPC(t *testing.T) {
 	if s := ev.String(); !strings.Contains(s, `"kind":"NODE_START"`) || !strings.Contains(s, `"mode":"embedded"`) ||
 		!strings.Contains(s, `"improvements":`+want) {
 		t.Fatalf("NODE_START: %s", s[:min(len(s), 600)])
+	}
+	// An EVIDENCE record of the core goes through the node's sink to the
+	// store and the event stream, and wbft_evidence returns it.
+	sink := &evidenceSink{store: n.evid, next: n.ev, log: n.log}
+	if err := sink.Write(event.Record{Kind: event.Evidence, View: &event.View{Seq: "7", Round: "1"}, Fields: map[string]any{
+		"code": uint64(2), "evidence_kind": "equivocation", "source": "0x01", "digest_a": "0xaa", "digest_b": "0xbb",
+		"sig_a": "0x11", "sig_b": "0x22"}}, event.Stamp{Wall: time.Unix(1_700_000_000, 0)}); err != nil {
+		t.Fatal(err)
+	}
+	resp, err := http.Post(srv.URL, "application/json", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"wbft_evidence","params":["5","0x9"]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var evOut struct{ Result []map[string]any }
+	if err := json.NewDecoder(resp.Body).Decode(&evOut); err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if len(evOut.Result) != 1 || evOut.Result[0]["height"] != "7" || evOut.Result[0]["digestB"] != "0xbb" ||
+		evOut.Result[0]["code"] != float64(2) || !strings.Contains(ev.String(), `"kind":"EVIDENCE"`) {
+		t.Fatalf("wbft_evidence %+v", evOut.Result)
 	}
 	if st := call("wbft_consensusState")["result"].(map[string]any); st["running"] != true {
 		t.Fatalf("consensusState %v", st)

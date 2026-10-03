@@ -126,7 +126,8 @@ func (st *step) observe(v *Verified) {
 			"digest_b": hexHash(digest),
 			"sig_a":    hexBytes(old.sig),
 			"sig_b":    hexBytes(m.Signature),
-			"kind":     kind,
+			// not "kind": the writer owns that name (the event kind)
+			"evidence_kind": kind,
 		},
 	}})
 }

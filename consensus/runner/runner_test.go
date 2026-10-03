@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"sync"
 	"testing"
 	"time"
@@ -277,8 +278,13 @@ func TestSlotOverwriteEvidence(t *testing.T) {
 	r.Offer(transportInbound(k, 3, codec.CodePrepare, k.vote(t, 2, codec.CodePrepare, view(10, 0), b), 0))
 	n.r.Pump()
 	ev := n.events.kinds(event.Evidence)
-	if len(ev) != 1 || ev[0].Fields["kind"] != "equivocation" {
+	if len(ev) != 1 || ev[0].Fields["evidence_kind"] != "equivocation" {
 		t.Fatalf("evidence %v", ev)
+	}
+	// The event writer takes the record: its field names are not the
+	// writer's own (an EVIDENCE with a "kind" field was refused).
+	if err := event.NewWriter(io.Discard, k.addrs[1], "run").Write(ev[0], event.Stamp{}); err != nil {
+		t.Fatalf("event writer: %v", err)
 	}
 	// Two round-0 PRE-PREPAREs of the proposer both reach the core, the
 	// first first.

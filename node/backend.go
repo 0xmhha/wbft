@@ -2,10 +2,12 @@ package node
 
 import (
 	"encoding/hex"
+	"math/big"
 	"runtime/debug"
 
 	"github.com/0xmhha/wbft/codec"
 	"github.com/0xmhha/wbft/consensus"
+	"github.com/0xmhha/wbft/observe/evidence"
 	"github.com/0xmhha/wbft/p2p/transport"
 	"github.com/0xmhha/wbft/rpc"
 	"github.com/0xmhha/wbft/types"
@@ -38,6 +40,16 @@ func (b backend) NodeInfo() rpc.NodeInfo {
 		info.SignFloor = f.String()
 	}
 	return info
+}
+
+func (b backend) Evidence(from, to *big.Int) ([]evidence.Record, error) {
+	b.n.mu.Lock()
+	s := b.n.evid
+	b.n.mu.Unlock()
+	if s == nil {
+		return []evidence.Record{}, nil
+	}
+	return s.Range(from, to)
 }
 
 func (b backend) ChainConfig() *types.Config {

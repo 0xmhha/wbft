@@ -7,6 +7,7 @@ import (
 	"math/big"
 	"strings"
 
+	"github.com/0xmhha/wbft/observe/evidence"
 	"github.com/0xmhha/wbft/types"
 )
 
@@ -87,4 +88,20 @@ func (s *Service) ConfigAt(h HeightArg) (*ConfigAtResult, error) {
 		r.Transitions = append(r.Transitions, TransitionResult{Block: t.Block.String(), WBFT: t.WBFT})
 	}
 	return r, nil
+}
+
+// MaxRange bounds the heights of one range call (observe.md 6).
+const MaxRange = 1024
+
+// Evidence is wbft_evidence(from, to): the double-signing evidence the
+// node detected at the heights from..to, at most MaxRange heights.
+func (s *Service) Evidence(from, to HeightArg) ([]evidence.Record, error) {
+	if from.v == nil || to.v == nil {
+		return nil, errors.New("rpc: from and to are required")
+	}
+	span := new(big.Int).Sub(to.v, from.v)
+	if span.Sign() < 0 || span.Cmp(big.NewInt(MaxRange)) >= 0 {
+		return nil, fmt.Errorf("rpc: bad height range %s..%s (at most %d heights)", from.v, to.v, MaxRange)
+	}
+	return s.b.Evidence(from.v, to.v)
 }

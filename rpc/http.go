@@ -53,6 +53,13 @@ func Handler(apis []API) http.Handler {
 			methods[a.Namespace+"_nodeInfo"] = none(func() any { return s.NodeInfo() })
 			methods[a.Namespace+"_consensusState"] = none(func() any { return s.ConsensusState() })
 			methods[a.Namespace+"_peers"] = none(func() any { return s.Peers() })
+			methods[a.Namespace+"_evidence"] = func(params []json.RawMessage) (any, error) {
+				var from, to HeightArg
+				if len(params) != 2 || json.Unmarshal(params[0], &from) != nil || json.Unmarshal(params[1], &to) != nil {
+					return nil, errParams
+				}
+				return s.Evidence(from, to)
+			}
 			methods[a.Namespace+"_configAt"] = func(params []json.RawMessage) (any, error) {
 				var h HeightArg
 				if len(params) != 1 || json.Unmarshal(params[0], &h) != nil {

@@ -293,7 +293,7 @@ func (b *inbox) check(in transport.Inbound) {
 			}
 			r.emit(event.Record{Kind: event.Evidence, View: event.ViewOf(v.Msg.View), Fields: map[string]any{
 				"code": uint64(code), "source": hexAddr(v.Source), "digest_a": hexHash(old.digest), "digest_b": hexHash(digest),
-				"sig_a": "0x" + hex.EncodeToString(old.sig), "sig_b": "0x" + hex.EncodeToString(v.Msg.Signature), "kind": kind}}, nil)
+				"sig_a": "0x" + hex.EncodeToString(old.sig), "sig_b": "0x" + hex.EncodeToString(v.Msg.Signature), "evidence_kind": kind}}, nil)
 		}
 	}
 	r.wake()
