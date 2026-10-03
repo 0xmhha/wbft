@@ -8,6 +8,7 @@ import (
 	"github.com/0xmhha/wbft/consensus"
 	"github.com/0xmhha/wbft/p2p/transport"
 	"github.com/0xmhha/wbft/rpc"
+	"github.com/0xmhha/wbft/types"
 )
 
 // backend implements rpc.Backend for a node.
@@ -37,6 +38,12 @@ func (b backend) NodeInfo() rpc.NodeInfo {
 		info.SignFloor = f.String()
 	}
 	return info
+}
+
+func (b backend) ChainConfig() *types.Config {
+	b.n.mu.Lock()
+	defer b.n.mu.Unlock()
+	return b.n.chainCfg
 }
 
 func (b backend) ConsensusState() *consensus.Snapshot {
