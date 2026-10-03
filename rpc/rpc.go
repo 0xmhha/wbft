@@ -5,6 +5,7 @@ import (
 
 	"github.com/0xmhha/wbft/consensus"
 	"github.com/0xmhha/wbft/observe/evidence"
+	"github.com/0xmhha/wbft/observe/rejection"
 	"github.com/0xmhha/wbft/p2p/transport"
 	"github.com/0xmhha/wbft/types"
 )
@@ -24,6 +25,9 @@ type Backend interface {
 	// Evidence returns the double-signing evidence of the heights
 	// from..to.
 	Evidence(from, to *big.Int) ([]evidence.Record, error)
+	// Rejections returns the rejected blocks and proposals of the block
+	// numbers from..to.
+	Rejections(from, to *big.Int) ([]rejection.Record, error)
 }
 
 // NodeInfo describes the node.
@@ -93,7 +97,8 @@ func APIs(b Backend) []API {
 }
 
 // Service is the wbft namespace: wbft_nodeInfo, wbft_consensusState,
-// wbft_peers, wbft_configAt and wbft_evidence. It is read-only.
+// wbft_peers, wbft_configAt, wbft_evidence and wbft_rejections. It is
+// read-only.
 type Service struct{ b Backend }
 
 // NodeInfo is wbft_nodeInfo.

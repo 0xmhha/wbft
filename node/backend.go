@@ -8,6 +8,7 @@ import (
 	"github.com/0xmhha/wbft/codec"
 	"github.com/0xmhha/wbft/consensus"
 	"github.com/0xmhha/wbft/observe/evidence"
+	"github.com/0xmhha/wbft/observe/rejection"
 	"github.com/0xmhha/wbft/p2p/transport"
 	"github.com/0xmhha/wbft/rpc"
 	"github.com/0xmhha/wbft/types"
@@ -48,6 +49,16 @@ func (b backend) Evidence(from, to *big.Int) ([]evidence.Record, error) {
 	b.n.mu.Unlock()
 	if s == nil {
 		return []evidence.Record{}, nil
+	}
+	return s.Range(from, to)
+}
+
+func (b backend) Rejections(from, to *big.Int) ([]rejection.Record, error) {
+	b.n.mu.Lock()
+	s := b.n.rej
+	b.n.mu.Unlock()
+	if s == nil {
+		return []rejection.Record{}, nil
 	}
 	return s.Range(from, to)
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"math/big"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -365,5 +366,46 @@ func TestNativeAuthorityMode(t *testing.T) {
 	}
 	if _, err := New(Config{DataDir: "/data"}, Deps{App: a, Authority: a, fs: fsys.NewMem(), key: key}); err != nil {
 		t.Fatalf("embedded mode with a plain source: %v", err)
+	}
+}
+
+// TestRejections records the two sources of rejections and serves them
+// through wbft_rejections: a proposal that fails the proposal checks (path
+// preprepare; an unknown parent fails V0b) and an import failure the application reports (its path,
+// step and class). The IMPORT_FAIL event carries the step as failed_step
+// and reaches the event stream.
+func TestRejections(t *testing.T) {
+	key := testKey(0)
+	cj, g := testGenesis(t, key)
+	a := newTestApp(cj, g)
+	ev := &syncBuffer{}
+	n := startNode(t, a, fsys.NewMem(), key, false, ev)
+	defer stop(t, n)
+	a.waitHead(t, 1, 20*time.Second)
+	bad := &types.Block{Header: &types.Header{Number: types.HeightFromUint64(500), Difficulty: big.NewInt(1)}}
+	if _, err := n.view.ValidateProposal(bad); err == nil {
+		t.Fatal("a bad proposal passed")
+	}
+	n.Consensus().OnImportFailed(app.ImportFailure{Number: types.HeightFromUint64(501), Hash: types.Hash{1}, Path: app.Imported,
+		Err: &app.ImportError{Step: "H5", Class: "ErrInvalidMixDigest"}})
+	if s := ev.String(); !strings.Contains(s, `"kind":"IMPORT_FAIL"`) || !strings.Contains(s, `"failed_step":"H5"`) ||
+		!strings.Contains(s, `"error_class":"ErrInvalidMixDigest"`) {
+		t.Fatalf("IMPORT_FAIL not in the event stream")
+	}
+	srv := httptest.NewServer(rpc.Handler(n.APIs()))
+	defer srv.Close()
+	resp, err := http.Post(srv.URL, "application/json", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"wbft_rejections","params":[500,"0x1f5"]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var out struct{ Result []map[string]any }
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	r := out.Result
+	if len(r) != 2 || r[0]["number"] != "500" || r[0]["path"] != "preprepare" || r[0]["step"] != "V0b" || r[0]["errorClass"] != "ErrUnknownAncestor" ||
+		r[1]["number"] != "501" || r[1]["path"] != "imported" || r[1]["step"] != "H5" || r[1]["errorClass"] != "ErrInvalidMixDigest" {
+		t.Fatalf("wbft_rejections %+v", r)
 	}
 }

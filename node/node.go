@@ -20,6 +20,7 @@ import (
 	"github.com/0xmhha/wbft/mempool"
 	"github.com/0xmhha/wbft/observe/event"
 	"github.com/0xmhha/wbft/observe/evidence"
+	"github.com/0xmhha/wbft/observe/rejection"
 	"github.com/0xmhha/wbft/p2p/transport"
 	"github.com/0xmhha/wbft/rpc"
 	"github.com/0xmhha/wbft/types"
@@ -27,10 +28,11 @@ import (
 
 // Directories and files under Config.DataDir.
 const (
-	walDir      = "wal"
-	evidenceDir = "evidence"
-	privvalDir  = "privval"
-	stateFile   = "state"
+	walDir       = "wal"
+	evidenceDir  = "evidence"
+	rejectionDir = "rejections"
+	privvalDir   = "privval"
+	stateFile    = "state"
 )
 
 // Node is a consensus node: it runs the consensus core for the application
@@ -57,6 +59,7 @@ type Node struct {
 	wal      *wal.Log
 	ev       *event.Writer
 	evid     *evidence.Store
+	rej      *rejection.Store
 	r        *runner.Runner
 	pool     *mempool.TxPool
 	view     *chainView
@@ -211,9 +214,14 @@ func (n *Node) start(ctx context.Context) error {
 	if info.ChainID != nil && cfg.ChainID != nil && info.ChainID.Cmp(cfg.ChainID) != 0 {
 		return refuse("chain id %v of the application differs from %v of the chain configuration", info.ChainID, cfg.ChainID)
 	}
+	rej, err := rejection.Open(n.fs, filepath.Join(n.cfg.DataDir, rejectionDir), rejection.Options{})
+	if err != nil {
+		return fmt.Errorf("node: rejection store: %w", err)
+	}
 	n.mu.Lock()
 	n.chainCfg = cfg
-	n.view = &chainView{a: n.d.App, cfg: cfg, snaps: n.snaps, now: n.clock.Now}
+	n.rej = rej
+	n.view = &chainView{a: n.d.App, cfg: cfg, snaps: n.snaps, now: n.clock.Now, rej: rej, log: n.log}
 	n.mu.Unlock()
 
 	runID := n.cfg.RunID

@@ -14,6 +14,7 @@ import (
 	"github.com/0xmhha/wbft/codec"
 	"github.com/0xmhha/wbft/consensus/privval"
 	"github.com/0xmhha/wbft/observe/event"
+	"github.com/0xmhha/wbft/observe/rejection"
 	"github.com/0xmhha/wbft/types"
 )
 
@@ -197,8 +198,20 @@ func (s *service) OnImportFailed(f app.ImportFailure) {
 	}
 	fields := map[string]any{"number": f.Number.String(), "hash": "0x" + hex.EncodeToString(f.Hash.Bytes()),
 		"path": f.Path.String(), "recorded_bad": f.RecordedBad}
+	r := rejection.Record{Number: f.Number.String(), Hash: fields["hash"].(string), Path: f.Path.String(), Time: s.n.clock.Now()}
 	if f.Err != nil {
-		fields["step"], fields["class"] = f.Err.Step, f.Err.Class
+		// "failed_step", not "step": the event writer owns that name (the
+		// core step).
+		fields["failed_step"], fields["error_class"] = f.Err.Step, f.Err.Class
+		r.Step, r.Class = f.Err.Step, f.Err.Class
 	}
 	s.n.emit(event.Record{Kind: event.ImportFail, Fields: fields})
+	s.n.mu.Lock()
+	rej := s.n.rej
+	s.n.mu.Unlock()
+	if rej != nil {
+		if err := rej.Add(r); err != nil {
+			s.n.log.Warn("rejection store write failed", "err", err)
+		}
+	}
 }
