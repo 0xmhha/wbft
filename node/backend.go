@@ -1,6 +1,9 @@
 package node
 
 import (
+	"encoding/hex"
+	"runtime/debug"
+
 	"github.com/0xmhha/wbft/codec"
 	"github.com/0xmhha/wbft/consensus"
 	"github.com/0xmhha/wbft/p2p/transport"
@@ -18,9 +21,13 @@ func (n *Node) APIs() []rpc.API { return rpc.APIs(backend{n}) }
 
 func (b backend) NodeInfo() rpc.NodeInfo {
 	n := b.n
-	info := rpc.NodeInfo{Impl: "wbft", Address: n.Address()}
+	info := rpc.NodeInfo{Impl: "wbft", Address: n.Address(), Mode: n.mode(), Version: moduleVersion(), Build: "cgo",
+		Improvements: n.improvements()}
 	n.mu.Lock()
 	info.Validator = n.signer != nil
+	if n.signer != nil {
+		info.BLSPublicKey = "0x" + hex.EncodeToString(n.signer.BLSPublicKey())
+	}
 	info.ChainID, info.GenesisHash = n.info.ChainID, n.info.GenesisHash
 	n.mu.Unlock()
 	if h := n.d.App.Head(); h != nil {
@@ -44,4 +51,32 @@ func (b backend) Peers() []transport.PeerInfo {
 		return nil
 	}
 	return b.n.d.Transport.Peers()
+}
+
+// moduleVersion is the version of the wbft module in the running binary:
+// its module version as a dependency, or the VCS revision when wbft is the
+// main module ("unknown" without build information).
+func moduleVersion() string {
+	bi, ok := debug.ReadBuildInfo()
+	if !ok {
+		return "unknown"
+	}
+	const path = "github.com/0xmhha/wbft"
+	for _, d := range bi.Deps {
+		if d.Path == path {
+			if d.Replace != nil {
+				return d.Replace.Version
+			}
+			return d.Version
+		}
+	}
+	if bi.Main.Path == path {
+		for _, s := range bi.Settings {
+			if s.Key == "vcs.revision" {
+				return s.Value
+			}
+		}
+		return bi.Main.Version
+	}
+	return "unknown"
 }

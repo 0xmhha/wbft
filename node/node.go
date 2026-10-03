@@ -20,6 +20,7 @@ import (
 	"github.com/0xmhha/wbft/mempool"
 	"github.com/0xmhha/wbft/observe/event"
 	"github.com/0xmhha/wbft/p2p/transport"
+	"github.com/0xmhha/wbft/rpc"
 	"github.com/0xmhha/wbft/types"
 )
 
@@ -402,8 +403,33 @@ func (n *Node) openSigner(head *types.Header) error {
 	return nil
 }
 
+// mode is the node's mode as NODE_START and wbft_nodeInfo report it.
+func (n *Node) mode() string {
+	if n.cfg.Standalone {
+		return "standalone"
+	}
+	return "embedded"
+}
+
+// improvements lists the enabled improvements with their source: the core's
+// restart-safety rules (the default of every profile) and the execution
+// layer's.
+func (n *Node) improvements() []rpc.Improvement {
+	out := []rpc.Improvement{}
+	for _, name := range consensus.RestartSafety.Names() {
+		out = append(out, rpc.Improvement{Name: name, Source: "profile"})
+	}
+	n.mu.Lock()
+	app := n.info.AppImprovements
+	n.mu.Unlock()
+	for _, name := range app {
+		out = append(out, rpc.Improvement{Name: name, Source: "app"})
+	}
+	return out
+}
+
 func (n *Node) startFields(act runner.HandshakeAction, recov wal.Recovery) map[string]any {
-	f := map[string]any{"impl": "wbft", "mode": "standalone", "handshake": handshakeName(act),
+	f := map[string]any{"impl": "wbft", "mode": n.mode(), "handshake": handshakeName(act), "improvements": n.improvements(),
 		"wal_recovery": map[string]any{"records": recov.Records, "torn_bytes": recov.TornBytes, "corrupted": len(recov.Corrupted)}}
 	if n.floor != nil {
 		f["sign_floor"] = map[string]any{"height": n.floor.String()}

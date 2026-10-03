@@ -1,6 +1,7 @@
 package consensus
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/0xmhha/wbft/chain/validator"
@@ -153,6 +154,32 @@ const (
 // RestartSafety is the set of the restart-safety rules of the core. Nodes
 // run with it; conformance vectors run with the empty set.
 var RestartSafety = ImprovementSet(0).With(OneRound0Proposal).With(BadBlockReleaseMark)
+
+// improvementNames are the names a node reports for its improvements
+// (NODE_START, wbft_nodeInfo).
+var improvementNames = [...]string{
+	OneRound0Proposal:   "one_round0_proposal",
+	BadBlockReleaseMark: "bad_block_release_mark",
+}
+
+// String returns the improvement's name.
+func (i Improvement) String() string {
+	if int(i) < len(improvementNames) {
+		return improvementNames[i]
+	}
+	return fmt.Sprintf("improvement(%d)", int(i))
+}
+
+// Names returns the names of the improvements in the set, in their order.
+func (s ImprovementSet) Names() []string {
+	out := []string{}
+	for i := range Improvement(len(improvementNames)) {
+		if s.Has(i) {
+			out = append(out, i.String())
+		}
+	}
+	return out
+}
 
 // ImprovementSet is a set of optional behaviours, fixed when the core starts.
 type ImprovementSet uint64
