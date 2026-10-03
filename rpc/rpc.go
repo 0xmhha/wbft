@@ -17,6 +17,9 @@ type Backend interface {
 	ConsensusState() *consensus.Snapshot
 	// Peers returns the attached peers, or nil without a transport.
 	Peers() []transport.PeerInfo
+	// ChainConfig returns the chain's consensus configuration, or nil
+	// before the node started.
+	ChainConfig() *types.Config
 }
 
 // NodeInfo describes the node.
@@ -85,8 +88,8 @@ func APIs(b Backend) []API {
 	return []API{{Namespace: "wbft", Service: &Service{b: b}}}
 }
 
-// Service is the wbft namespace: wbft_nodeInfo, wbft_consensusState and
-// wbft_peers. It is read-only.
+// Service is the wbft namespace: wbft_nodeInfo, wbft_consensusState,
+// wbft_peers and wbft_configAt. It is read-only.
 type Service struct{ b Backend }
 
 // NodeInfo is wbft_nodeInfo.

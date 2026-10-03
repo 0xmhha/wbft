@@ -2,6 +2,7 @@ package rpc
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 )
@@ -10,10 +11,17 @@ import (
 const maxRequest = 1 << 20
 
 type request struct {
-	JSONRPC string          `json:"jsonrpc"`
-	ID      json.RawMessage `json:"id"`
-	Method  string          `json:"method"`
+	JSONRPC string            `json:"jsonrpc"`
+	ID      json.RawMessage   `json:"id"`
+	Method  string            `json:"method"`
+	Params  []json.RawMessage `json:"params"`
 }
+
+// method answers a request from its parameters.
+type method func(params []json.RawMessage) (any, error)
+
+// errParams reports parameters a method cannot take.
+var errParams = errors.New("invalid params")
 
 type response struct {
 	JSONRPC string          `json:"jsonrpc"`
@@ -29,14 +37,29 @@ type rpcError struct {
 
 // Handler serves the services of apis as JSON-RPC 2.0 over HTTP POST, for
 // applications without an RPC server of their own. It serves the methods of
-// the wbft namespace, which take no parameters.
+// the wbft namespace.
 func Handler(apis []API) http.Handler {
-	methods := map[string]func() any{}
+	methods := map[string]method{}
+	none := func(f func() any) method {
+		return func(params []json.RawMessage) (any, error) {
+			if len(params) != 0 {
+				return nil, errParams
+			}
+			return f(), nil
+		}
+	}
 	for _, a := range apis {
 		if s, ok := a.Service.(*Service); ok {
-			methods[a.Namespace+"_nodeInfo"] = func() any { return s.NodeInfo() }
-			methods[a.Namespace+"_consensusState"] = func() any { return s.ConsensusState() }
-			methods[a.Namespace+"_peers"] = func() any { return s.Peers() }
+			methods[a.Namespace+"_nodeInfo"] = none(func() any { return s.NodeInfo() })
+			methods[a.Namespace+"_consensusState"] = none(func() any { return s.ConsensusState() })
+			methods[a.Namespace+"_peers"] = none(func() any { return s.Peers() })
+			methods[a.Namespace+"_configAt"] = func(params []json.RawMessage) (any, error) {
+				var h HeightArg
+				if len(params) != 1 || json.Unmarshal(params[0], &h) != nil {
+					return nil, errParams
+				}
+				return s.ConfigAt(h)
+			}
 		}
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -53,7 +76,16 @@ func Handler(apis []API) http.Handler {
 		case methods[req.Method] == nil:
 			resp.ID, resp.Error = req.ID, &rpcError{Code: -32601, Message: "method not found: " + req.Method}
 		default:
-			resp.ID, resp.Result = req.ID, methods[req.Method]()
+			resp.ID = req.ID
+			res, err := methods[req.Method](req.Params)
+			switch {
+			case errors.Is(err, errParams):
+				resp.Error = &rpcError{Code: -32602, Message: err.Error()}
+			case err != nil:
+				resp.Error = &rpcError{Code: -32000, Message: err.Error()}
+			default:
+				resp.Result = res
+			}
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(resp)
