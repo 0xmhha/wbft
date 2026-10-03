@@ -5,6 +5,8 @@ import (
 	"errors"
 	"io"
 	"net/http"
+
+	"github.com/0xmhha/wbft/types"
 )
 
 // maxRequest bounds the body of a request.
@@ -64,6 +66,13 @@ func Handler(apis []API) http.Handler {
 			}
 			methods[a.Namespace+"_evidence"] = ranged(func(from, to HeightArg) (any, error) { return s.Evidence(from, to) })
 			methods[a.Namespace+"_rejections"] = ranged(func(from, to HeightArg) (any, error) { return s.Rejections(from, to) })
+			methods[a.Namespace+"_headerCopy"] = func(params []json.RawMessage) (any, error) {
+				var h types.Hash
+				if len(params) != 1 || json.Unmarshal(params[0], &h) != nil {
+					return nil, errParams
+				}
+				return s.HeaderCopy(h)
+			}
 			methods[a.Namespace+"_configAt"] = func(params []json.RawMessage) (any, error) {
 				var h HeightArg
 				if len(params) != 1 || json.Unmarshal(params[0], &h) != nil {

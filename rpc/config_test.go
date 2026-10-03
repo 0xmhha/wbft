@@ -17,10 +17,11 @@ import (
 
 type fakeBackend struct{ cfg *types.Config }
 
-func (f fakeBackend) NodeInfo() NodeInfo                  { return NodeInfo{} }
-func (f fakeBackend) ConsensusState() *consensus.Snapshot { return nil }
-func (f fakeBackend) Peers() []transport.PeerInfo         { return nil }
-func (f fakeBackend) ChainConfig() *types.Config          { return f.cfg }
+func (f fakeBackend) NodeInfo() NodeInfo                               { return NodeInfo{} }
+func (f fakeBackend) ConsensusState() *consensus.Snapshot              { return nil }
+func (f fakeBackend) Peers() []transport.PeerInfo                      { return nil }
+func (f fakeBackend) ChainConfig() *types.Config                       { return f.cfg }
+func (f fakeBackend) HeaderCopy(types.Hash) (*HeaderCopyResult, error) { return nil, nil }
 func (f fakeBackend) Rejections(from, to *big.Int) ([]rejection.Record, error) {
 	return []rejection.Record{{Number: to.String()}}, nil
 }
