@@ -118,8 +118,8 @@ type InfoResponse struct {
 	// ChainConfigJSON is the chain configuration (the chain-level settings
 	// of the consensus layer), as JSON.
 	ChainConfigJSON []byte
-	// AppImprovements lists the IDs of the improvements the execution layer
-	// enabled.
+	// AppImprovements lists the names of the improvements the execution
+	// layer enabled; the node reports them with source "app".
 	AppImprovements []string
 	// Head is the application's canonical head.
 	Head *types.Header

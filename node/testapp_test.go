@@ -75,6 +75,7 @@ func testGenesis(t *testing.T, keys ...[]byte) ([]byte, *types.Block) {
 // with the gas tip of the genesis for every block.
 type testApp struct {
 	cfgJSON []byte
+	appImps []string // Info.AppImprovements
 	genesis *types.Block
 	cons    app.Consensus // set before the node starts
 
@@ -135,7 +136,7 @@ func (a *testApp) HasBlock(hash types.Hash, idx uint64) bool { return a.Header(h
 
 func (a *testApp) Info(context.Context) (app.InfoResponse, error) {
 	return app.InfoResponse{AppMajors: []uint32{app.Major}, ChainID: big.NewInt(testChainID),
-		GenesisHash: codec.BlockHash(a.genesis.Header), ChainConfigJSON: a.cfgJSON, Head: a.Head()}, nil
+		GenesisHash: codec.BlockHash(a.genesis.Header), ChainConfigJSON: a.cfgJSON, AppImprovements: a.appImps, Head: a.Head()}, nil
 }
 
 func (a *testApp) IsBadBlock(types.Hash) bool { return false }

@@ -28,6 +28,26 @@ type NodeInfo struct {
 	GenesisHash types.Hash    `json:"genesisHash"`
 	Head        HeadInfo      `json:"head"`
 	SignFloor   string        `json:"signFloor,omitempty"`
+	// Mode is "embedded" or "standalone".
+	Mode string `json:"mode"`
+	// BLSPublicKey is the validator's BLS public key (0x-hex), empty on a
+	// node that does not sign.
+	BLSPublicKey string `json:"blsPublicKey,omitempty"`
+	// Version is the version of the wbft module the node runs, Build its
+	// build ("cgo").
+	Version string `json:"version"`
+	Build   string `json:"build"`
+	// Improvements are the enabled improvements, each with where it was
+	// turned on.
+	Improvements []Improvement `json:"improvements"`
+}
+
+// Improvement is an enabled improvement: its name and where it was turned
+// on ("profile": the default of the node's profile; "app": the execution
+// layer's).
+type Improvement struct {
+	Name   string `json:"name"`
+	Source string `json:"source"`
 }
 
 // HeadInfo is the application head.

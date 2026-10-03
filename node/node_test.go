@@ -251,7 +251,9 @@ func TestRPC(t *testing.T) {
 	key := testKey(0)
 	cj, g := testGenesis(t, key)
 	a := newTestApp(cj, g)
-	n := startNode(t, a, fsys.NewMem(), key, false, nil)
+	a.appImps = []string{"app_rule"}
+	ev := &syncBuffer{}
+	n := startNode(t, a, fsys.NewMem(), key, false, ev)
 	defer stop(t, n)
 	a.waitHead(t, 1, 20*time.Second)
 	srv := httptest.NewServer(rpc.Handler(n.APIs()))
@@ -271,6 +273,19 @@ func TestRPC(t *testing.T) {
 	info := call("wbft_nodeInfo")["result"].(map[string]any)
 	if info["impl"] != "wbft" || info["validator"] != true || info["address"] != strings.ToLower(n.Address().Hex()) {
 		t.Fatalf("nodeInfo %v", info)
+	}
+	// The mode, the BLS key (48 bytes), the build and the improvements with
+	// their source: the core's restart-safety rules, then the app's.
+	imps, _ := json.Marshal(info["improvements"])
+	want := `[{"name":"one_round0_proposal","source":"profile"},{"name":"bad_block_release_mark","source":"profile"},` +
+		`{"name":"app_rule","source":"app"}]`
+	if info["mode"] != "embedded" || len(info["blsPublicKey"].(string)) != 2+96 || info["build"] != "cgo" ||
+		info["version"] == "" || string(imps) != want {
+		t.Fatalf("nodeInfo %v", info)
+	}
+	if s := ev.String(); !strings.Contains(s, `"kind":"NODE_START"`) || !strings.Contains(s, `"mode":"embedded"`) ||
+		!strings.Contains(s, `"improvements":`+want) {
+		t.Fatalf("NODE_START: %s", s[:min(len(s), 600)])
 	}
 	if st := call("wbft_consensusState")["result"].(map[string]any); st["running"] != true {
 		t.Fatalf("consensusState %v", st)
@@ -319,8 +334,12 @@ func TestNativeAuthorityMode(t *testing.T) {
 	if _, err := New(Config{DataDir: "/data"}, d); !errors.Is(err, ErrConfig) {
 		t.Fatalf("embedded mode with a native source: %v", err)
 	}
-	if _, err := New(Config{DataDir: "/data", Standalone: true}, d); err != nil {
+	sn, err := New(Config{DataDir: "/data", Standalone: true}, d)
+	if err != nil {
 		t.Fatalf("standalone mode: %v", err)
+	}
+	if m := (backend{sn}).NodeInfo().Mode; m != "standalone" {
+		t.Fatalf("nodeInfo mode %q", m)
 	}
 	if _, err := New(Config{DataDir: "/data"}, Deps{App: a, Authority: a, fs: fsys.NewMem(), key: key}); err != nil {
 		t.Fatalf("embedded mode with a plain source: %v", err)
