@@ -414,7 +414,8 @@ func TestRejections(t *testing.T) {
 // TestHeaderCopy returns this node's copy of a header it decided: round 0,
 // the committed seal of the single validator (index 0) and the path
 // sealed_locally; a header the node never saw as a head has the path
-// unknown, and one it does not hold is null.
+// unknown, and one it does not hold is null. The node also serves its
+// recent events without an event file (wbft_events).
 func TestHeaderCopy(t *testing.T) {
 	key := testKey(0)
 	cj, g := testGenesis(t, key)
@@ -450,5 +451,20 @@ func TestHeaderCopy(t *testing.T) {
 	}
 	if c := call(types.Hash{9}); c != nil {
 		t.Fatalf("an unknown header %v", c)
+	}
+	// This node writes no event file; wbft_events still serves its
+	// records, NODE_START first.
+	resp, err := http.Post(srv.URL, "application/json", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"wbft_events","params":[0,3]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var evs struct{ Result []map[string]any }
+	if err := json.NewDecoder(resp.Body).Decode(&evs); err != nil {
+		t.Fatal(err)
+	}
+	if len(evs.Result) != 3 || evs.Result[0]["kind"] != "NODE_START" || evs.Result[0]["seq"] != float64(0) ||
+		evs.Result[2]["seq"] != float64(2) {
+		t.Fatalf("wbft_events %v", evs.Result)
 	}
 }

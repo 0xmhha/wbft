@@ -66,6 +66,15 @@ func Handler(apis []API) http.Handler {
 			}
 			methods[a.Namespace+"_evidence"] = ranged(func(from, to HeightArg) (any, error) { return s.Evidence(from, to) })
 			methods[a.Namespace+"_rejections"] = ranged(func(from, to HeightArg) (any, error) { return s.Rejections(from, to) })
+			methods[a.Namespace+"_events"] = func(params []json.RawMessage) (any, error) {
+				var from uint64
+				limit := 0
+				if len(params) < 1 || len(params) > 2 || json.Unmarshal(params[0], &from) != nil ||
+					len(params) == 2 && json.Unmarshal(params[1], &limit) != nil {
+					return nil, errParams
+				}
+				return s.Events(from, limit)
+			}
 			methods[a.Namespace+"_headerCopy"] = func(params []json.RawMessage) (any, error) {
 				var h types.Hash
 				if len(params) != 1 || json.Unmarshal(params[0], &h) != nil {

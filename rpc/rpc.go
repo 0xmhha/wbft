@@ -1,6 +1,7 @@
 package rpc
 
 import (
+	"encoding/json"
 	"math/big"
 
 	"github.com/0xmhha/wbft/consensus"
@@ -30,6 +31,9 @@ type Backend interface {
 	Rejections(from, to *big.Int) ([]rejection.Record, error)
 	// HeaderCopy returns this node's copy of the header with hash, or nil.
 	HeaderCopy(hash types.Hash) (*HeaderCopyResult, error)
+	// Events returns at most limit recent event records whose seq is at
+	// least from.
+	Events(from uint64, limit int) []json.RawMessage
 }
 
 // NodeInfo describes the node.
@@ -99,8 +103,8 @@ func APIs(b Backend) []API {
 }
 
 // Service is the wbft namespace: wbft_nodeInfo, wbft_consensusState,
-// wbft_peers, wbft_configAt, wbft_evidence, wbft_rejections and
-// wbft_headerCopy. It is read-only.
+// wbft_peers, wbft_configAt, wbft_evidence, wbft_rejections,
+// wbft_headerCopy and wbft_events. It is read-only.
 type Service struct{ b Backend }
 
 // NodeInfo is wbft_nodeInfo.
