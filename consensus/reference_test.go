@@ -474,7 +474,7 @@ func TestRefSecondRound0PreprepareInvalid(t *testing.T) {
 	if len(consensusOut) != 1 {
 		t.Fatalf("outputs %v", consensusOut)
 	}
-	if len(evidence) != 1 || evidence[0].Record.Fields["kind"] != "round0_preprepare" {
+	if len(evidence) != 1 || evidence[0].Record.Fields["evidence_kind"] != "round0_preprepare" {
 		t.Fatalf("evidence %v", evidence)
 	}
 }

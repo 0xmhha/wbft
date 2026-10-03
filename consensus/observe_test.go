@@ -1,11 +1,13 @@
 package consensus
 
 import (
+	"io"
 	"testing"
 	"time"
 
 	"github.com/0xmhha/wbft/codec"
 	"github.com/0xmhha/wbft/observe/event"
+	"github.com/0xmhha/wbft/types"
 )
 
 func eventsOf(outs []Output, kind event.Kind) []event.Record {
@@ -74,8 +76,11 @@ func TestEvidenceEquivocation(t *testing.T) {
 	}
 	h.deliver(2, h.prepare(2, view(10, 0), h.proposal(9)))
 	ev := eventsOf(h.out, event.Evidence)
-	if len(ev) != 1 || ev[0].Fields["kind"] != "equivocation" || ev[0].Fields["code"] != uint64(codec.CodePrepare) {
+	if len(ev) != 1 || ev[0].Fields["evidence_kind"] != "equivocation" || ev[0].Fields["code"] != uint64(codec.CodePrepare) {
 		t.Fatalf("evidence %v", ev)
+	}
+	if err := event.NewWriter(io.Discard, types.Address{}, "run").Write(ev[0], event.Stamp{}); err != nil {
+		t.Fatalf("event writer: %v", err) // a "kind" field was refused
 	}
 	h.expect(Process, rowPrepareInvalid, false)
 	// The same message again is no evidence.

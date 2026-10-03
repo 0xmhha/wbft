@@ -19,6 +19,7 @@ import (
 	"github.com/0xmhha/wbft/internal/fsys"
 	"github.com/0xmhha/wbft/mempool"
 	"github.com/0xmhha/wbft/observe/event"
+	"github.com/0xmhha/wbft/observe/evidence"
 	"github.com/0xmhha/wbft/p2p/transport"
 	"github.com/0xmhha/wbft/rpc"
 	"github.com/0xmhha/wbft/types"
@@ -26,9 +27,10 @@ import (
 
 // Directories and files under Config.DataDir.
 const (
-	walDir     = "wal"
-	privvalDir = "privval"
-	stateFile  = "state"
+	walDir      = "wal"
+	evidenceDir = "evidence"
+	privvalDir  = "privval"
+	stateFile   = "state"
 )
 
 // Node is a consensus node: it runs the consensus core for the application
@@ -54,6 +56,7 @@ type Node struct {
 	signer   *privval.FileSigner
 	wal      *wal.Log
 	ev       *event.Writer
+	evid     *evidence.Store
 	r        *runner.Runner
 	pool     *mempool.TxPool
 	view     *chainView
@@ -234,6 +237,13 @@ func (n *Node) start(ctx context.Context) error {
 		n.ev = ev
 		n.mu.Unlock()
 	}
+	evid, err := evidence.Open(n.fs, filepath.Join(n.cfg.DataDir, evidenceDir), evidence.Options{Now: n.clock.Now})
+	if err != nil {
+		return fmt.Errorf("node: evidence store: %w", err)
+	}
+	n.mu.Lock()
+	n.evid = evid
+	n.mu.Unlock()
 	log, recov, err := wal.Open(n.fs, filepath.Join(n.cfg.DataDir, walDir), wal.Options{KeepHeights: 2})
 	if err != nil {
 		return fmt.Errorf("node: write-ahead log: %w", err)
@@ -294,9 +304,11 @@ func (n *Node) start(ctx context.Context) error {
 			return err
 		}
 	}
-	var sink runner.EventSink
+	// The sink keeps the evidence records in the store, with or without an
+	// event stream.
+	sink := &evidenceSink{store: evid, log: n.log}
 	if n.ev != nil {
-		sink = n.ev
+		sink.next = n.ev
 	}
 	r, err := runner.New(runner.Config{Core: consensus.Options{Config: cfg, Self: self, Improvements: consensus.RestartSafety}, ReplayWAL: true},
 		runner.Deps{Chain: n.view, App: &appDriver{a: n.d.App, ctx: n.ctx}, Transport: dedup, Net: n.d.Transport,
@@ -583,4 +595,28 @@ func (n *Node) syncLoop() {
 			}
 		}
 	}
+}
+
+// evidenceSink stores the EVIDENCE records of the core (wbft_evidence) and
+// passes every record on to the event stream, if any.
+type evidenceSink struct {
+	store *evidence.Store
+	next  runner.EventSink
+	log   *slog.Logger
+}
+
+func (s *evidenceSink) Write(r event.Record, at event.Stamp) error {
+	if r.Kind == event.Evidence && r.View != nil {
+		str := func(k string) string { v, _ := r.Fields[k].(string); return v }
+		code, _ := r.Fields["code"].(uint64)
+		if err := s.store.Add(evidence.Record{Height: r.View.Seq, Round: r.View.Round, Code: code, Kind: str("evidence_kind"),
+			Source: str("source"), DigestA: str("digest_a"), DigestB: str("digest_b"), SigA: str("sig_a"), SigB: str("sig_b"),
+			Time: at.Wall}); err != nil {
+			s.log.Warn("evidence store write failed", "err", err)
+		}
+	}
+	if s.next == nil {
+		return nil
+	}
+	return s.next.Write(r, at)
 }

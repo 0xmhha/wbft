@@ -4,6 +4,7 @@ import (
 	"math/big"
 
 	"github.com/0xmhha/wbft/consensus"
+	"github.com/0xmhha/wbft/observe/evidence"
 	"github.com/0xmhha/wbft/p2p/transport"
 	"github.com/0xmhha/wbft/types"
 )
@@ -20,6 +21,9 @@ type Backend interface {
 	// ChainConfig returns the chain's consensus configuration, or nil
 	// before the node started.
 	ChainConfig() *types.Config
+	// Evidence returns the double-signing evidence of the heights
+	// from..to.
+	Evidence(from, to *big.Int) ([]evidence.Record, error)
 }
 
 // NodeInfo describes the node.
@@ -89,7 +93,7 @@ func APIs(b Backend) []API {
 }
 
 // Service is the wbft namespace: wbft_nodeInfo, wbft_consensusState,
-// wbft_peers and wbft_configAt. It is read-only.
+// wbft_peers, wbft_configAt and wbft_evidence. It is read-only.
 type Service struct{ b Backend }
 
 // NodeInfo is wbft_nodeInfo.
