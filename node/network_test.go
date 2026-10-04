@@ -115,8 +115,8 @@ func TestFourValidators(t *testing.T) {
 
 // checkFrameJournal checks the msg and peer records of a node's journal:
 // every peer was attached with its own index, the stopped peer was closed,
-// messages were received and written, and every msg record carries the
-// dedup key of its payload.
+// messages were received and written with a cause, and every msg record
+// carries the dedup key of its payload.
 func checkFrameJournal(t *testing.T, mem *fsys.Mem, peers []types.Address, stopped types.Address) {
 	t.Helper()
 	recs, err := journal.ReadAll(mem, "/data/journal")
@@ -142,6 +142,14 @@ func checkFrameJournal(t *testing.T, mem *fsys.Mem, peers []types.Address, stopp
 				t.Fatalf("msg record %+v", b)
 			}
 			count[b.Dir+" "+b.Offer+b.Write]++
+			if b.Dir == journal.Out {
+				if b.Cause == "" {
+					t.Fatalf("sent msg record without a cause: %+v", b)
+				}
+				count["cause "+string(b.Cause)]++
+			}
+		case *journal.SuppressedRec:
+			count["suppressed "+string(b.Cause)]++
 		}
 	}
 	for _, p := range peers {
@@ -152,7 +160,8 @@ func checkFrameJournal(t *testing.T, mem *fsys.Mem, peers []types.Address, stopp
 	if !closed {
 		t.Fatal("no closed record of the stopped peer")
 	}
-	for _, k := range []string{"in queued", "out ok"} {
+	t.Logf("node 0 journal: %v", count)
+	for _, k := range []string{"in queued", "out ok", "cause broadcast"} {
 		if count[k] == 0 {
 			t.Fatalf("no %q msg records: %v", k, count)
 		}

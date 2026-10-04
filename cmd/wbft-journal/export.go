@@ -13,6 +13,7 @@ import (
 
 	"github.com/0xmhha/wbft/consensus/wal"
 	"github.com/0xmhha/wbft/internal/fsys"
+	"github.com/0xmhha/wbft/observe/event"
 	"github.com/0xmhha/wbft/observe/journal"
 	"github.com/0xmhha/wbft/p2p/transport"
 	"github.com/0xmhha/wbft/types"
@@ -24,9 +25,10 @@ import (
 //	<out>/frames-<run>.jsonl
 //	<out>/payloads/<ab>/<sha256>
 //
-// The journal does not hold the engine state at receipt, the hits of the
-// two dedup caches or (yet) the send cause, so frame records carry none of
-// these. A frame the node kept without its payload (too large) has its size,
+// The journal does not hold the engine state at receipt or the hits of the
+// two dedup caches, so frame records carry neither. A relay's relay_of is
+// the last received frame with the same dedup key, since a relay sends the
+// received bytes unchanged. A frame the node kept without its payload (too large) has its size,
 // no payload_sha256 and a zero dedup_key. A conn record carries the times of
 // the record before it, since peer
 // records have no times of their own. An outcome the core journaled before
@@ -82,17 +84,18 @@ type r01Writer struct {
 
 	from, to *types.Height
 
-	file  fsys.File
-	run   *exportRun
-	node  types.Address
-	head  *types.Height // the head of the last step
-	wall  int64
-	mono  time.Duration
-	peers map[uint32]*journal.PeerRec
-	on    map[uint32]bool // attached peers (segment headers repeat them)
-	last  map[linkKey]uint64
-	wait  []*pendingOutcome // in journal order
-	saved map[string]bool
+	file   fsys.File
+	run    *exportRun
+	node   types.Address
+	head   *types.Height // the head of the last step
+	wall   int64
+	mono   time.Duration
+	peers  map[uint32]*journal.PeerRec
+	on     map[uint32]bool // attached peers (segment headers repeat them)
+	last   map[linkKey]uint64
+	lastIn map[types.Hash]uint64 // the last received frame of a message, from any peer
+	wait   []*pendingOutcome     // in journal order
+	saved  map[string]bool
 }
 
 func exportR01(fs fsys.FS, dir, out, fromArg, toArg string) (*exportResult, error) {
@@ -201,7 +204,7 @@ func (w *r01Writer) openRun(s *journal.SegmentRec) error {
 	}
 	w.file, w.node, w.head = f, s.Self, nil
 	w.peers, w.on = map[uint32]*journal.PeerRec{}, map[uint32]bool{}
-	w.last, w.wait = map[linkKey]uint64{}, nil
+	w.last, w.wait, w.lastIn = map[linkKey]uint64{}, nil, map[types.Hash]uint64{}
 	w.run = &exportRun{Run: s.Run, File: name}
 	w.res.Runs = append(w.res.Runs, w.run)
 	return nil
@@ -352,12 +355,19 @@ func (w *r01Writer) msg(seq uint64, b *journal.MsgRec) error {
 		if b.Cause != "" {
 			r["cause"] = b.Cause
 		}
-		if b.RelayOf != 0 {
+		switch {
+		case b.RelayOf != 0:
 			r["relay_of"] = b.RelayOf
+		case b.Cause == event.CauseRelay && w.lastIn[b.DedupKey] != 0:
+			// A relay sends the received bytes unchanged: the same key.
+			r["relay_of"] = w.lastIn[b.DedupKey]
 		}
 	}
 	if err := w.write(r); err != nil {
 		return err
+	}
+	if b.Dir == journal.In && b.DedupKey != (types.Hash{}) {
+		w.lastIn[b.DedupKey] = seq
 	}
 	if p := w.peers[b.PeerIdx]; b.Dir == journal.In && p != nil {
 		k := linkKey{peer: p.Addr, key: b.DedupKey}

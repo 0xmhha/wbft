@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/0xmhha/wbft/codec"
+	"github.com/0xmhha/wbft/observe/event"
 	"github.com/0xmhha/wbft/observe/journal"
 	"github.com/0xmhha/wbft/p2p/transport"
 	"github.com/0xmhha/wbft/types"
@@ -70,5 +71,35 @@ func TestFrameRecorder(t *testing.T) {
 		if got != want[i] {
 			t.Fatalf("record %d: %q, want %q", i, got, want[i])
 		}
+	}
+}
+
+// TestFrameRecorderCauses: the cause of a send reaches the msg record of
+// each write the transport reports and of each send it did not attempt; a
+// write without a known cause has none; a suppressed send becomes a
+// suppressed record.
+func TestFrameRecorderCauses(t *testing.T) {
+	jw := &memJournal{}
+	rec := newFrameRecorder(jw, fixedClock{}, 0)
+	p1, p2, p3 := types.Address{1}, types.Address{2}, types.Address{3}
+	payload := []byte{0xc1, 0x09}
+	tr := recordedTransport{Transport: resultTransport{res: []transport.SendResult{transport.Queued, transport.NotAttached}}, rec: rec}
+	tr.SendCause([]types.Address{p1, p2}, 0x14, payload, event.CauseRelay)
+	rec.Wrote(p1, 0x14, payload, transport.WriteOK)
+	rec.Wrote(p1, 0x14, payload, transport.WriteOK) // a second write of the same bytes: cause already used
+	tr.Suppressed(p3, 0x14, payload, event.CauseRetry, transport.SuppressRecentCache)
+
+	var got []string
+	for _, r := range jw.recs {
+		switch b := r.Body.(type) {
+		case *journal.MsgRec:
+			got = append(got, fmt.Sprintf("msg %d %s %q", b.PeerIdx, b.Write, b.Cause))
+		case *journal.SuppressedRec:
+			got = append(got, fmt.Sprintf("suppressed %d %s %s %v", b.PeerIdx, b.Cause, b.Reason, b.DedupKey == codec.DedupKey(payload)))
+		}
+	}
+	want := []string{`msg 1 not_attached "relay"`, `msg 2 ok "relay"`, `msg 2 ok ""`, "suppressed 3 retry peer_recent_cache true"}
+	if fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("records %q, want %q", got, want)
 	}
 }

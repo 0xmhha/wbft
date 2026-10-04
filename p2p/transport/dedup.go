@@ -140,8 +140,8 @@ func (d *Dedup) Broadcast(vs *validator.Set, code uint64, payload []byte, cause 
 //
 // Spec: WBFT-NET-031, WBFT-NET-032, WBFT-SM-011
 func (d *Dedup) Gossip(vs *validator.Set, code uint64, payload []byte, cause event.SendCause) []types.Address {
-	_ = cause
 	key := codec.DedupKey(payload)
+	var suppressed []types.Address
 	d.mu.Lock()
 	d.known.Add(key, struct{}{})
 	var targets []types.Address
@@ -158,6 +158,7 @@ func (d *Dedup) Gossip(vs *validator.Set, code uint64, payload []byte, cause eve
 			m, ok := d.recent.Get(a)
 			if ok {
 				if _, seen := m.Get(key); seen {
+					suppressed = append(suppressed, a)
 					continue
 				}
 			} else {
@@ -169,12 +170,22 @@ func (d *Dedup) Gossip(vs *validator.Set, code uint64, payload []byte, cause eve
 		}
 	}
 	d.mu.Unlock()
-	if len(targets) > 0 {
-		out := code
-		if code < CodeFirst || code > CodeLast {
-			out = CodeLegacy
+	out := code
+	if code < CodeFirst || code > CodeLast {
+		out = CodeLegacy
+	}
+	cs, _ := d.t.(CauseSender)
+	if cs != nil {
+		for _, a := range suppressed {
+			cs.Suppressed(a, out, payload, cause, SuppressRecentCache)
 		}
-		d.t.Send(targets, out, payload)
+	}
+	if len(targets) > 0 {
+		if cs != nil {
+			cs.SendCause(targets, out, payload, cause)
+		} else {
+			d.t.Send(targets, out, payload)
+		}
 	}
 	return targets
 }

@@ -6,6 +6,7 @@ import (
 
 	"github.com/0xmhha/wbft/codec"
 	"github.com/0xmhha/wbft/consensus/runner"
+	"github.com/0xmhha/wbft/observe/event"
 	"github.com/0xmhha/wbft/observe/journal"
 	"github.com/0xmhha/wbft/p2p/transport"
 	"github.com/0xmhha/wbft/types"
@@ -21,7 +22,20 @@ type frameRecorder struct {
 
 	mu    sync.Mutex
 	index map[types.Address]uint32
+	// causes holds the cause of a send until the transport reports the
+	// write; it is cleared when it grows past maxPendingCauses (writes
+	// that never come, on a closed connection).
+	causes map[sendKey]event.SendCause
 }
+
+// sendKey is one message to one peer.
+type sendKey struct {
+	peer types.Address
+	key  types.Hash
+}
+
+// maxPendingCauses bounds the causes kept for writes not yet reported.
+const maxPendingCauses = 1 << 14
 
 var _ transport.FrameObserver = (*frameRecorder)(nil)
 
@@ -34,7 +48,7 @@ type stampClock interface {
 var _ stampClock = runner.Clock(nil)
 
 func newFrameRecorder(jw journal.Writer, clock stampClock, offset uint64) *frameRecorder {
-	return &frameRecorder{jw: jw, clock: clock, offset: offset, index: map[types.Address]uint32{}}
+	return &frameRecorder{jw: jw, clock: clock, offset: offset, index: map[types.Address]uint32{}, causes: map[sendKey]event.SendCause{}}
 }
 
 func (f *frameRecorder) peerIdx(peer types.Address) uint32 {
@@ -67,7 +81,25 @@ func (f *frameRecorder) Received(peer types.Address, code uint64, size int, payl
 func (f *frameRecorder) Wrote(peer types.Address, code uint64, payload []byte, write string) {
 	m := f.msg(journal.Out, peer, code, payload)
 	m.Write = write
+	k := sendKey{peer, m.DedupKey}
+	f.mu.Lock()
+	m.Cause = f.causes[k]
+	delete(f.causes, k)
+	f.mu.Unlock()
 	f.jw.Put(journal.Record{Body: m})
+}
+
+// expect keeps the cause of a send to peers until their writes are
+// reported.
+func (f *frameRecorder) expect(peers []types.Address, key types.Hash, cause event.SendCause) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if len(f.causes) > maxPendingCauses {
+		clear(f.causes)
+	}
+	for _, p := range peers {
+		f.causes[sendKey{p, key}] = cause
+	}
 }
 
 // Attached implements transport.FrameObserver.
@@ -82,13 +114,25 @@ func (f *frameRecorder) Closed(peer types.Address, reason string) {
 
 // recordedTransport records the sends a transport does not attempt: a peer
 // without a stream is written as not_attached, and a full send queue as an
-// error. The transport reports the writes it attempts itself.
+// error. The transport reports the writes it attempts itself. It keeps the
+// cause Dedup gives (transport.CauseSender) for those writes, and records
+// the sends Dedup left out as suppressed.
 type recordedTransport struct {
 	transport.Transport
 	rec *frameRecorder
 }
 
+var _ transport.CauseSender = recordedTransport{}
+
 func (t recordedTransport) Send(peers []types.Address, code uint64, payload []byte) []transport.SendResult {
+	return t.SendCause(peers, code, payload, "")
+}
+
+// SendCause implements transport.CauseSender.
+func (t recordedTransport) SendCause(peers []types.Address, code uint64, payload []byte, cause event.SendCause) []transport.SendResult {
+	if cause != "" {
+		t.rec.expect(peers, codec.DedupKey(payload), cause)
+	}
 	res := t.Transport.Send(peers, code, payload)
 	for i, r := range res {
 		switch r {
@@ -99,4 +143,10 @@ func (t recordedTransport) Send(peers []types.Address, code uint64, payload []by
 		}
 	}
 	return res
+}
+
+// Suppressed implements transport.CauseSender.
+func (t recordedTransport) Suppressed(peer types.Address, _ uint64, payload []byte, cause event.SendCause, reason string) {
+	t.rec.jw.Put(journal.Record{Body: &journal.SuppressedRec{PeerIdx: t.rec.peerIdx(peer), DedupKey: codec.DedupKey(payload),
+		Cause: cause, Reason: reason}})
 }
