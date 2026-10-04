@@ -321,10 +321,24 @@ func (n *Node) start(ctx context.Context) error {
 		return nil
 	}
 
-	// 6. Consensus core.
+	// 6. Consensus core. With a journal, the transport's frames and peer
+	// streams are recorded too.
+	core := consensus.Options{Config: cfg, Self: self, Improvements: consensus.RestartSafety}
+	jw, err := n.openJournal(core, runID)
+	if err != nil {
+		return err
+	}
 	var dedup *transport.Dedup
 	if n.d.Transport != nil {
-		if dedup, err = transport.NewDedup(n.d.Transport, transport.DedupOptions{Self: self}); err != nil {
+		out := n.d.Transport
+		if jw != nil {
+			rec := newFrameRecorder(jw, n.clock, n.wireOffset())
+			if o, ok := n.d.Transport.(transport.Observed); ok {
+				o.SetFrameObserver(rec)
+			}
+			out = recordedTransport{Transport: n.d.Transport, rec: rec}
+		}
+		if dedup, err = transport.NewDedup(out, transport.DedupOptions{Self: self}); err != nil {
 			return err
 		}
 	}
@@ -333,11 +347,6 @@ func (n *Node) start(ctx context.Context) error {
 	sink := &evidenceSink{store: evid, log: n.log}
 	if n.ev != nil {
 		sink.next = n.ev
-	}
-	core := consensus.Options{Config: cfg, Self: self, Improvements: consensus.RestartSafety}
-	jw, err := n.openJournal(core, runID)
-	if err != nil {
-		return err
 	}
 	deps := runner.Deps{Chain: n.view, App: &appDriver{a: n.d.App, ctx: n.ctx}, Transport: dedup, Net: n.d.Transport,
 		Signer: n.signer, WAL: log, Clock: n.clock, Events: sink, Synchronising: n.synchronising,
@@ -567,6 +576,9 @@ func (n *Node) close() error {
 		errs = append(errs, n.wal.Close())
 	}
 	// The core has stopped: no record follows.
+	if o, ok := n.d.Transport.(transport.Observed); ok && n.journal != nil {
+		o.SetFrameObserver(nil)
+	}
 	if n.journal != nil {
 		errs = append(errs, n.journal.Close())
 	}

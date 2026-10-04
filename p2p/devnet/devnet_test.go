@@ -2,6 +2,9 @@ package devnet
 
 import (
 	"bytes"
+	"fmt"
+	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -174,5 +177,98 @@ func TestHandshake(t *testing.T) {
 			t.Fatalf("%+v attached", c)
 		}
 		_ = a.Close()
+	}
+}
+
+// obs records what a transport reports to its frame observer.
+type obs struct {
+	mu  sync.Mutex
+	got []string
+}
+
+func (o *obs) add(s string) {
+	o.mu.Lock()
+	o.got = append(o.got, s)
+	o.mu.Unlock()
+}
+
+func (o *obs) Received(peer types.Address, code uint64, payload []byte, offer string) {
+	o.add(fmt.Sprintf("in %x %#x %q %s", peer[:1], code, payload, offer))
+}
+
+func (o *obs) Wrote(peer types.Address, code uint64, payload []byte, write string) {
+	o.add(fmt.Sprintf("out %x %#x %q %s", peer[:1], code, payload, write))
+}
+
+func (o *obs) Attached(peer types.Address, remote string) {
+	o.add(fmt.Sprintf("attached %x %t", peer[:1], remote != ""))
+}
+
+func (o *obs) Closed(peer types.Address, reason string) {
+	o.add(fmt.Sprintf("closed %x %s", peer[:1], reason))
+}
+
+// wait returns the reports once all of want are among them.
+func (o *obs) wait(t *testing.T, want ...string) []string {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		o.mu.Lock()
+		got := append([]string(nil), o.got...)
+		o.mu.Unlock()
+		missing := ""
+		for _, w := range want {
+			if !slices.Contains(got, w) {
+				missing = w
+				break
+			}
+		}
+		if missing == "" {
+			return got
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("no report %q in %q", missing, got)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// TestFrameObserver: the transport reports every consensus frame it reads
+// with what it did with it, every consensus frame it writes, and the peer
+// streams; application frames are not reported.
+func TestFrameObserver(t *testing.T) {
+	a, b, _, rb := pair(t)
+	oa, ob := &obs{}, &obs{}
+	a.SetFrameObserver(oa)
+	b.SetFrameObserver(ob)
+	bAddr := types.Address{2}
+
+	a.Send([]types.Address{bAddr}, transport.CodeFirst, []byte("pre-prepare"))
+	rb.wait(t, 1)
+	ob.wait(t, `in 01 0x12 "pre-prepare" queued`)
+	oa.wait(t, `out 02 0x12 "pre-prepare" ok`)
+
+	// A frame the frame stage drops, an application frame, and one that
+	// closes the connection; the dialing side attaches again.
+	a.Send([]types.Address{bAddr}, 0x01, []byte("status"))
+	a.SendApp([]types.Address{bAddr}, 7, []byte("block"))
+	a.Send([]types.Address{bAddr}, transport.CodeFirst, nil)
+	ob.wait(t, `in 01 0x1 "status" frame_ignore`, `in 01 0x12 "" frame_disconnect`, "closed 01 read", "attached 01 true")
+	got := oa.wait(t, "closed 02 read", "attached 02 true")
+	for _, s := range append(got, ob.got...) {
+		if strings.Contains(s, "block") {
+			t.Fatalf("application frame reported: %q", s)
+		}
+	}
+
+	// Without an observer nothing is reported.
+	b.SetFrameObserver(nil)
+	n := len(ob.wait(t))
+	for a.Send([]types.Address{bAddr}, transport.CodeLast, []byte("rc"))[0] != transport.Queued {
+		time.Sleep(10 * time.Millisecond)
+	}
+	rb.wait(t, 2)
+	if m := len(ob.wait(t)); m != n {
+		t.Fatalf("%d reports after the observer was removed", m-n)
 	}
 }

@@ -80,6 +80,7 @@ type Transport struct {
 	ln     net.Listener
 	peers  map[types.Address]*conn
 	recv   transport.Receiver
+	obs    transport.FrameObserver
 	app    AppHandler
 	closed bool
 
@@ -88,7 +89,10 @@ type Transport struct {
 	wg     sync.WaitGroup
 }
 
-var _ transport.Transport = (*Transport)(nil)
+var (
+	_ transport.Transport = (*Transport)(nil)
+	_ transport.Observed  = (*Transport)(nil)
+)
 
 // conn is the connection of one peer.
 type conn struct {
@@ -208,6 +212,20 @@ func (t *Transport) SetReceiver(r transport.Receiver) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.recv = r
+}
+
+// SetFrameObserver implements transport.Observed.
+func (t *Transport) SetFrameObserver(o transport.FrameObserver) {
+	t.mu.Lock()
+	t.obs = o
+	t.mu.Unlock()
+}
+
+// observer returns the frame observer, or nil.
+func (t *Transport) observer() transport.FrameObserver {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.obs
 }
 
 // SetAppHandler installs the receiver of the application channel.
@@ -384,6 +402,9 @@ func (t *Transport) run(peer types.Address, nc net.Conn) {
 	if old != nil {
 		t.drop(old, "replaced")
 	}
+	if o := t.observer(); o != nil {
+		o.Attached(peer, nc.RemoteAddr().String())
+	}
 	t.event(transport.PeerEvent{Addr: peer, Attached: true})
 	done := make(chan struct{})
 	go func() {
@@ -415,6 +436,9 @@ func (t *Transport) drop(c *conn, reason string) {
 		}
 		t.mu.Unlock()
 		if removed {
+			if o := t.observer(); o != nil {
+				o.Closed(c.peer, reason)
+			}
 			t.log.Debug("peer disconnected", "peer", c.peer, "reason", reason)
 			t.event(transport.PeerEvent{Addr: c.peer, Attached: false})
 		}
@@ -432,11 +456,18 @@ func (t *Transport) writeLoop(c *conn) {
 			hdr[0] = f.ch
 			n := 1 + binary.PutUvarint(hdr[1:], f.code)
 			n += binary.PutUvarint(hdr[n:], uint64(len(f.payload)))
-			if _, err := w.Write(hdr[:n]); err != nil {
-				t.drop(c, "write")
-				return
+			_, err := w.Write(hdr[:n])
+			if err == nil {
+				_, err = w.Write(f.payload)
 			}
-			if _, err := w.Write(f.payload); err != nil {
+			if o := t.observer(); o != nil && f.ch == chanConsensus {
+				res := transport.WriteOK
+				if err != nil {
+					res = transport.WriteError
+				}
+				o.Wrote(c.peer, f.code, f.payload, res)
+			}
+			if err != nil {
 				t.drop(c, "write")
 				return
 			}
@@ -490,19 +521,29 @@ func (t *Transport) readLoop(c *conn) {
 // deliver passes a consensus frame through the frame stage to the receiver;
 // it reports false when the connection must be closed.
 func (t *Transport) deliver(peer types.Address, code uint64, payload []byte) bool {
+	t.mu.Lock()
+	r, o := t.recv, t.obs
+	t.mu.Unlock()
 	data, dc, act, reason := transport.DecodeFrame(code, payload)
 	switch act {
 	case transport.FrameDisconnect:
 		t.log.Debug("frame closes the connection", "peer", peer, "reason", reason)
+		if o != nil {
+			o.Received(peer, code, payload, transport.OfferFrameDisconnect)
+		}
 		return false
 	case transport.FrameDrop:
+		if o != nil {
+			o.Received(peer, code, payload, transport.OfferFrameIgnore)
+		}
 		return true
 	}
-	t.mu.Lock()
-	r := t.recv
-	t.mu.Unlock()
-	if r != nil {
-		r.Offer(transport.Inbound{Peer: peer, Code: dc, Payload: data, RecvMono: time.Since(t.start)})
+	offer := transport.OfferQueued
+	if r != nil && !r.Offer(transport.Inbound{Peer: peer, Code: dc, Payload: data, RecvMono: time.Since(t.start)}) {
+		offer = transport.OfferQueueFull
+	}
+	if o != nil {
+		o.Received(peer, code, payload, offer)
 	}
 	return true
 }
