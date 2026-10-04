@@ -89,6 +89,8 @@ func (b backend) HeaderCopy(hash types.Hash) (*rpc.HeaderCopyResult, error) {
 
 func (b backend) Events(from uint64, limit int) []json.RawMessage { return b.n.ring.since(from, limit) }
 
+func (b backend) Chain() types.ChainReader { return b.n.d.App }
+
 func (b backend) ChainConfig() *types.Config {
 	b.n.mu.Lock()
 	defer b.n.mu.Unlock()

@@ -51,6 +51,9 @@ func Handler(apis []API) http.Handler {
 		}
 	}
 	for _, a := range apis {
+		if s, ok := a.Service.(*IstanbulService); ok {
+			istanbulMethods(a.Namespace, s, methods)
+		}
 		if s, ok := a.Service.(*Service); ok {
 			methods[a.Namespace+"_nodeInfo"] = none(func() any { return s.NodeInfo() })
 			methods[a.Namespace+"_consensusState"] = none(func() any { return s.ConsensusState() })
@@ -119,4 +122,88 @@ func Handler(apis []API) http.Handler {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(resp)
 	})
+}
+
+// istanbulMethods serves the istanbul namespace over the handler: optional
+// block numbers may be left out or null, as go-ethereum reads them.
+func istanbulMethods(ns string, s *IstanbulService, methods map[string]method) {
+	optional := func(params []json.RawMessage, i int) (*BlockNumber, error) {
+		if i >= len(params) || string(params[i]) == "null" {
+			return nil, nil
+		}
+		var n BlockNumber
+		if err := json.Unmarshal(params[i], &n); err != nil {
+			return nil, errParams
+		}
+		return &n, nil
+	}
+	hash := func(params []json.RawMessage) (types.Hash, error) {
+		var h types.Hash
+		if len(params) != 1 || json.Unmarshal(params[0], &h) != nil {
+			return h, errParams
+		}
+		return h, nil
+	}
+	upTo := func(n int, f func(params []json.RawMessage) (any, error)) method {
+		return func(params []json.RawMessage) (any, error) {
+			if len(params) > n {
+				return nil, errParams
+			}
+			return f(params)
+		}
+	}
+	methods[ns+"_nodeAddress"] = upTo(0, func([]json.RawMessage) (any, error) { return s.NodeAddress(), nil })
+	methods[ns+"_getCommitSignersFromBlock"] = upTo(1, func(p []json.RawMessage) (any, error) {
+		n, err := optional(p, 0)
+		if err != nil {
+			return nil, err
+		}
+		return s.GetCommitSignersFromBlock(n)
+	})
+	methods[ns+"_getCommitSignersFromBlockByHash"] = func(p []json.RawMessage) (any, error) {
+		h, err := hash(p)
+		if err != nil {
+			return nil, err
+		}
+		return s.GetCommitSignersFromBlockByHash(h)
+	}
+	methods[ns+"_getValidators"] = upTo(1, func(p []json.RawMessage) (any, error) {
+		n, err := optional(p, 0)
+		if err != nil {
+			return nil, err
+		}
+		return s.GetValidators(n)
+	})
+	methods[ns+"_getValidatorsAtHash"] = func(p []json.RawMessage) (any, error) {
+		h, err := hash(p)
+		if err != nil {
+			return nil, err
+		}
+		return s.GetValidatorsAtHash(h)
+	}
+	methods[ns+"_isValidator"] = upTo(1, func(p []json.RawMessage) (any, error) {
+		n, err := optional(p, 0)
+		if err != nil {
+			return nil, err
+		}
+		return s.IsValidator(n)
+	})
+	methods[ns+"_status"] = upTo(2, func(p []json.RawMessage) (any, error) {
+		start, err := optional(p, 0)
+		if err != nil {
+			return nil, err
+		}
+		end, err := optional(p, 1)
+		if err != nil {
+			return nil, err
+		}
+		return s.Status(start, end)
+	})
+	methods[ns+"_getWbftExtraInfo"] = func(p []json.RawMessage) (any, error) {
+		var n BlockNumber
+		if len(p) != 1 || json.Unmarshal(p[0], &n) != nil {
+			return nil, errParams
+		}
+		return s.GetWbftExtraInfo(n)
+	}
 }

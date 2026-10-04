@@ -34,6 +34,8 @@ type Backend interface {
 	// Events returns at most limit recent event records whose seq is at
 	// least from.
 	Events(from uint64, limit int) []json.RawMessage
+	// Chain reads the application's chain (the istanbul namespace).
+	Chain() types.ChainReader
 }
 
 // NodeInfo describes the node.
@@ -97,9 +99,10 @@ type API struct {
 	Service   any
 }
 
-// APIs returns the wbft namespace for the backend.
+// APIs returns the wbft namespace and the compatible istanbul namespace for
+// the backend.
 func APIs(b Backend) []API {
-	return []API{{Namespace: "wbft", Service: &Service{b: b}}}
+	return []API{{Namespace: "wbft", Service: &Service{b: b}}, {Namespace: "istanbul", Service: &IstanbulService{b: b}}}
 }
 
 // Service is the wbft namespace: wbft_nodeInfo, wbft_consensusState,
