@@ -23,6 +23,7 @@ func (f fakeBackend) Peers() []transport.PeerInfo                      { return 
 func (f fakeBackend) ChainConfig() *types.Config                       { return f.cfg }
 func (f fakeBackend) HeaderCopy(types.Hash) (*HeaderCopyResult, error) { return nil, nil }
 func (f fakeBackend) Events(uint64, int) []json.RawMessage             { return nil }
+func (f fakeBackend) Chain() types.ChainReader                         { return nil }
 func (f fakeBackend) Rejections(from, to *big.Int) ([]rejection.Record, error) {
 	return []rejection.Record{{Number: to.String()}}, nil
 }
@@ -98,4 +99,24 @@ func callRaw(t *testing.T, url, params string) string {
 		t.Fatal(err)
 	}
 	return string(out.Result)
+}
+
+// TestBlockNumber reads block numbers as go-ethereum's rpc.BlockNumber does:
+// the five tags, a QUANTITY, and its error texts otherwise.
+func TestBlockNumber(t *testing.T) {
+	for in, want := range map[string]BlockNumber{`"earliest"`: 0, `"latest"`: -2, `"pending"`: -1, `"finalized"`: -3,
+		`"safe"`: -4, `"0x0"`: 0, `"0x1f"`: 31, `"0X10"`: 16} {
+		var n BlockNumber
+		if err := json.Unmarshal([]byte(in), &n); err != nil || n != want {
+			t.Errorf("%s: %d %v", in, n, err)
+		}
+	}
+	for in, msg := range map[string]string{`""`: "empty hex string", `"5"`: "hex string without 0x prefix", `5`: "hex string without 0x prefix",
+		`"0x"`: `hex string "0x"`, `"0x01"`: "hex number with leading zero digits", `"0xg"`: "invalid hex string",
+		`"0x10000000000000000"`: "hex number > 64 bits", `"0x8000000000000000"`: "block number larger than int64"} {
+		var n BlockNumber
+		if err := json.Unmarshal([]byte(in), &n); err == nil || err.Error() != msg {
+			t.Errorf("%s: %v, want %q", in, err, msg)
+		}
+	}
 }
