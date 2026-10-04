@@ -1,0 +1,193 @@
+package main
+
+import (
+	"bufio"
+	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/0xmhha/wbft/codec"
+	"github.com/0xmhha/wbft/consensus/wal"
+	"github.com/0xmhha/wbft/internal/fsys"
+	"github.com/0xmhha/wbft/observe/event"
+	"github.com/0xmhha/wbft/observe/journal"
+	"github.com/0xmhha/wbft/types"
+)
+
+var (
+	nodeA = types.Address{0xaa}
+	peerB = types.Address{0xbb}
+)
+
+// frameJournal writes one run with a peer stream, received and sent
+// frames, outcomes before and after their frames, and a step that moves the
+// head to 5 before the last frame.
+func frameJournal(t *testing.T, fs fsys.FS) (p1, p2 []byte) {
+	t.Helper()
+	jw, err := journal.Open(journal.Options{FS: fs, Dir: "/j", SegmentBytes: 400, Synchronous: true},
+		journal.Identity{Self: nodeA, Run: "run/1", Mode: "standalone"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	p1, p2 = []byte{0xc1, 0x01}, []byte{0xc1, 0x02}
+	msg := func(dir string, p []byte, offer, write string) {
+		jw.Put(journal.Record{Body: &journal.MsgRec{Dir: dir, PeerIdx: 1, Mono: 7 * time.Second, WallNs: 1_700_000_000_123_456_789,
+			Code: 0x12, WireCode: 0x22, Payload: p, DedupKey: codec.DedupKey(p), Offer: offer, Write: write}})
+	}
+	outcome := func(p []byte, class event.OutcomeClass) {
+		jw.Put(journal.Record{Body: &journal.OutcomeRec{Code: 0x12, Peer: peerB, DedupKey: codec.DedupKey(p), Outcome: class,
+			Check: "PROCESS", Row: 3, Via: "direct"}})
+	}
+	jw.Put(journal.Record{Body: &journal.StepRec{EngineRun: 1, Step: 1, InputKind: "start", HeadNumber: types.HeightFromUint64(0)}})
+	jw.Put(journal.Record{Body: &journal.PeerRec{PeerIdx: 1, Addr: peerB, NodeID: []byte{1, 2}, Remote: "10.0.0.2:1", Event: "attached"}})
+	msg(journal.In, p1, "queued", "")
+	outcome(p1, event.Accept) // after its frame
+	outcome(p2, event.Ignore) // before its frame
+	msg(journal.In, p2, "queued", "")
+	msg(journal.In, []byte{1}, "frame_ignore", "")
+	msg(journal.Out, p1, "", "ok")
+	msg(journal.Out, p2, "", "not_attached")
+	outcome([]byte{9}, event.Accept) // no frame at all
+	jw.Put(journal.Record{Body: &journal.OutcomeRec{Code: 0x13, Peer: nodeA, DedupKey: codec.DedupKey([]byte{8}), Outcome: event.Accept,
+		Check: "PROCESS", Row: 3, Via: "self"}})
+	jw.Put(journal.Record{Body: &journal.StepRec{EngineRun: 1, Step: 2, InputKind: "timer", HeadNumber: types.HeightFromUint64(5)}})
+	msg(journal.In, p1, "frame_disconnect", "")
+	jw.Put(journal.Record{Body: &journal.PeerRec{PeerIdx: 1, Addr: peerB, Event: "closed", Reason: "frame rejected"}})
+	if err := jw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return p1, p2
+}
+
+func readFrames(t *testing.T, fs *fsys.Mem, name string) []map[string]any {
+	t.Helper()
+	b, err := fs.ReadFile(name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out []map[string]any
+	sc := bufio.NewScanner(bytes.NewReader(b))
+	for sc.Scan() {
+		var r map[string]any
+		if err := json.Unmarshal(sc.Bytes(), &r); err != nil {
+			t.Fatalf("%s: %v", sc.Text(), err)
+		}
+		out = append(out, r)
+	}
+	return out
+}
+
+func sum(p []byte) string { s := sha256.Sum256(p); return hex.EncodeToString(s[:]) }
+
+// TestExportR01 checks the records of the frame dump: the common fields,
+// frames in and out with their outcomes and write errors, outcomes linked
+// to their frames in either journal order, conn records without the
+// repeats of segment headers, and the content-addressed payloads.
+func TestExportR01(t *testing.T) {
+	fs := fsys.NewMem()
+	p1, p2 := frameJournal(t, fs)
+	if segs, err := wal.Segments(fs, "/j"); err != nil || len(segs) < 2 {
+		t.Fatalf("want a journal of several segments: %d %v", len(segs), err)
+	}
+	var res exportResult
+	runJSON(t, fs, 0, &res, "export", "--dir", "/j", "--out", "/out", "--format", "r01")
+	if len(res.Runs) != 1 || res.Runs[0].File != "frames-run_1.jsonl" || res.Payloads != 3 || res.Unlinked != 1 {
+		t.Fatalf("result %+v %+v", res, res.Runs)
+	}
+	recs := readFrames(t, fs, "/out/frames-run_1.jsonl")
+	var got []string
+	seqOf := map[string]float64{}
+	for _, r := range recs {
+		if r["v"] != float64(1) || r["node"] != hexAddr(nodeA) || r["run"] != "run/1" || r["t_wall"] != "2023-11-14T22:13:20.123456789Z" && r["type"] != "conn" {
+			t.Fatalf("common fields %v", r)
+		}
+		line := r["type"].(string)
+		switch line {
+		case "frame":
+			line += " " + r["dir"].(string) + " " + r["payload_sha256"].(string)[:4]
+			if r["dir"] == "in" {
+				line += " " + r["outcome"].(string)
+				seqOf[r["payload_sha256"].(string)[:4]] = r["seq"].(float64)
+			} else if e, ok := r["write_error"]; ok {
+				line += " " + e.(string)
+			}
+			if r["peer"] != hexAddr(peerB) || r["peer_id"] != "0102" || r["code"] != "0x12" || r["wire_code"] != float64(0x22) {
+				t.Fatalf("frame %v", r)
+			}
+		case "outcome":
+			line += " " + r["outcome"].(string)
+			if of, ok := r["of"].(float64); ok {
+				for k, s := range seqOf {
+					if s == of {
+						line += " of " + k
+					}
+				}
+			} else {
+				line += " of null"
+			}
+			if r["check"] != "PROCESS" || (r["via"] != "direct" && r["via"] != "self") || r["row"] != float64(3) || r["error_class"] != nil {
+				t.Fatalf("outcome %v", r)
+			}
+		case "conn":
+			line += " " + r["event"].(string)
+		}
+		got = append(got, line)
+	}
+	s1, s2, s3 := sum(p1)[:4], sum(p2)[:4], sum([]byte{1})[:4]
+	want := []string{
+		"conn istanbul_attached",
+		"frame in " + s1 + " PENDING",
+		"outcome ACCEPT of " + s1,
+		"frame in " + s2 + " PENDING",
+		"outcome IGNORE of " + s2,
+		"frame in " + s3 + " DROP_SILENT",
+		"frame out " + s1,
+		"frame out " + s2 + " not_attached",
+		"outcome ACCEPT of null", // the node's own message, written at once
+		"frame in " + s1 + " DISCONNECT",
+		"conn closed",
+		"outcome ACCEPT of null",
+	}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("records\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	}
+	for _, p := range [][]byte{p1, p2} {
+		s := sum(p)
+		if b, err := fs.ReadFile("/out/payloads/" + s[:2] + "/" + s); err != nil || !bytes.Equal(b, p) {
+			t.Fatalf("payload %s: %x %v", s, b, err)
+		}
+	}
+
+	// The frame file of a run is not overwritten.
+	runJSON(t, fs, 2, nil, "export", "--dir", "/j", "--out", "/out", "--format", "r01")
+}
+
+// TestExportRange keeps the records whose height (head + 1) is in range.
+func TestExportRange(t *testing.T) {
+	fs := fsys.NewMem()
+	frameJournal(t, fs)
+	var res exportResult
+	runJSON(t, fs, 0, &res, "export", "--dir", "/j", "--out", "/out", "--format", "r01", "--from", "6", "--to", "6")
+	recs := readFrames(t, fs, "/out/frames-run_1.jsonl")
+	if len(recs) != 2 || recs[0]["outcome"] != "DISCONNECT" || recs[1]["event"] != "closed" {
+		t.Fatalf("records %v", recs)
+	}
+	runJSON(t, fs, 0, &res, "export", "--dir", "/j", "--out", "/out2", "--format", "r01", "--to", "1")
+	if recs := readFrames(t, fs, "/out2/frames-run_1.jsonl"); len(recs) != 10 {
+		t.Fatalf("%d records up to height 1", len(recs))
+	}
+}
+
+// TestExportUsage refuses the bundle format (not available yet), a missing
+// --out and a bad height.
+func TestExportUsage(t *testing.T) {
+	fs := fsys.NewMem()
+	frameJournal(t, fs)
+	runJSON(t, fs, 2, nil, "export", "--dir", "/j", "--out", "/out")
+	runJSON(t, fs, 2, nil, "export", "--dir", "/j", "--format", "r01")
+	runJSON(t, fs, 2, nil, "export", "--dir", "/j", "--out", "/out", "--format", "r01", "--from", "x")
+}

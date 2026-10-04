@@ -5,6 +5,10 @@
 //	wbft-journal stat   --dir DIR
 //	wbft-journal verify --dir DIR
 //	wbft-journal prune  --dir DIR [--keep-heights N] [--max-bytes S] [--head H]
+//	wbft-journal export --dir DIR --out OUT --format r01 [--from H1] [--to H2]
+//
+// export --format r01 writes the R-01 frame dump that wbft-inspector reads
+// (export.go); the bundle format for the analyzer is not available yet.
 //
 // Every command prints one JSON object. verify exits with 1 when it finds a
 // problem; every command exits with 2 on a usage or I/O error.
@@ -31,7 +35,7 @@ func main() {
 	os.Exit(run(os.Args[1:], fsys.OS{}, os.Stdout, os.Stderr))
 }
 
-const usage = "usage: wbft-journal stat|verify|prune --dir DIR [flags]"
+const usage = "usage: wbft-journal stat|verify|prune|export --dir DIR [flags]"
 
 func run(args []string, fs fsys.FS, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
@@ -44,6 +48,10 @@ func run(args []string, fs fsys.FS, stdout, stderr io.Writer) int {
 	keep := set.Uint64("keep-heights", journal.DefaultOptions("").KeepHeights, "prune: keep the segments that hold heights >= head - N (0: no height rule)")
 	maxBytes := set.Int64("max-bytes", journal.DefaultOptions("").MaxBytes, "prune: then remove the oldest segments while the total is above S bytes (0: no size rule)")
 	head := set.String("head", "", "prune: the head height (decimal); default: the highest head in the index files")
+	out := set.String("out", "", "export: output directory (its frame files must not exist)")
+	format := set.String("format", "bundle", "export: r01 (the frame dump); bundle is not available yet")
+	from := set.String("from", "", "export: first height (decimal) of the records")
+	to := set.String("to", "", "export: last height (decimal) of the records")
 	if err := set.Parse(args[1:]); err != nil {
 		return 2
 	}
@@ -51,21 +59,30 @@ func run(args []string, fs fsys.FS, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, usage)
 		return 2
 	}
-	var out any
+	var res any
 	code := 0
 	var err error
 	switch args[0] {
 	case "stat":
-		out, err = stat(fs, *dir)
+		res, err = stat(fs, *dir)
 	case "verify":
 		var v *verifyResult
 		v, err = verify(fs, *dir)
 		if v != nil && len(v.Problems) > 0 {
 			code = 1
 		}
-		out = v
+		res = v
 	case "prune":
-		out, err = prune(fs, *dir, *keep, *maxBytes, *head)
+		res, err = prune(fs, *dir, *keep, *maxBytes, *head)
+	case "export":
+		switch {
+		case *out == "":
+			err = errors.New("export: --out is required")
+		case *format != "r01":
+			err = fmt.Errorf("export: format %q is not available (use --format r01)", *format)
+		default:
+			res, err = exportR01(fs, *dir, *out, *from, *to)
+		}
 	default:
 		fmt.Fprintln(stderr, usage)
 		return 2
@@ -76,7 +93,7 @@ func run(args []string, fs fsys.FS, stdout, stderr io.Writer) int {
 	}
 	enc := json.NewEncoder(stdout)
 	enc.SetIndent("", "  ")
-	if err := enc.Encode(out); err != nil {
+	if err := enc.Encode(res); err != nil {
 		fmt.Fprintln(stderr, "wbft-journal:", err)
 		return 2
 	}
