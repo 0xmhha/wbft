@@ -272,3 +272,30 @@ func TestMsgSize(t *testing.T) {
 		t.Fatalf("old record %+v", got)
 	}
 }
+
+// TestMsgEngine keeps the engine state of a msg record and still reads a
+// record written before records had one.
+func TestMsgEngine(t *testing.T) {
+	body, err := encodeBody(Record{Body: &MsgRec{Dir: In, Code: 0x12, Payload: []byte{1}, Engine: "syncing", Offer: "queued"}}, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := decodeBody(KindMsg, body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Body.(*MsgRec).Engine != "syncing" {
+		t.Fatalf("decoded %+v", r.Body)
+	}
+	old, err := rlp.Encode(&msgRLPNoEngine{Format: Format, JSeq: 4, Dir: In, Code: 0x13, Size: 20 << 20, Offer: "frame_disconnect"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err = decodeBody(KindMsg, old)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := r.Body.(*MsgRec); got.Engine != "" || got.Size != 20<<20 || r.JSeq != 4 {
+		t.Fatalf("record without engine %+v", got)
+	}
+}

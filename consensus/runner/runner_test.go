@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"sync"
 	"testing"
@@ -323,6 +324,16 @@ func TestStoppedEngine(t *testing.T) {
 	n.r.Receiver().Offer(transportInbound(k, 0, codec.CodePrepare, []byte{0xc0}, 0))
 	if len(n.net.discon) != 1 {
 		t.Fatal("disconnect while synchronising")
+	}
+	// Both messages leave an outcome: DISCONNECT, then DROP_SILENT.
+	var got []string
+	for _, e := range n.events.kinds(event.MsgOutcome) {
+		if e.Fields["reason"] == "engine_stopped" {
+			got = append(got, fmt.Sprint(e.Fields["outcome"], " ", e.Fields["check"]))
+		}
+	}
+	if want := []string{"DISCONNECT prefilter", "DROP_SILENT prefilter"}; fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("outcomes %q, want %q", got, want)
 	}
 	// A restart of the engine in the same process replays the log.
 	if err := n.r.Start(context.Background(), types.HeightFromUint64(10)); err != nil {

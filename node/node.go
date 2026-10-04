@@ -333,6 +333,7 @@ func (n *Node) start(ctx context.Context) error {
 		out := n.d.Transport
 		if jw != nil {
 			rec := newFrameRecorder(jw, n.clock, n.wireOffset())
+			rec.engine = n.engineState
 			if o, ok := n.d.Transport.(transport.Observed); ok {
 				o.SetFrameObserver(rec)
 			}
@@ -405,6 +406,19 @@ func (n *Node) openJournal(core consensus.Options, runID string) (*journal.FileW
 	n.journal = jw
 	n.mu.Unlock()
 	return jw, nil
+}
+
+// engineState is the state of the consensus engine as the frame dump
+// records it: running, syncing (stopped while the application
+// synchronises) or stopped.
+func (n *Node) engineState() string {
+	if r := n.Runner(); r != nil && r.Running() {
+		return "running"
+	}
+	if n.synchronising() {
+		return "syncing"
+	}
+	return "stopped"
 }
 
 // wireOffset is the offset of the istanbul codes on the wire: 0x10 in

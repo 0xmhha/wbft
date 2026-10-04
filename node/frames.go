@@ -18,7 +18,8 @@ import (
 type frameRecorder struct {
 	jw     journal.Writer
 	clock  stampClock
-	offset uint64 // wire code offset (Identity.WireOffset)
+	offset uint64        // wire code offset (Identity.WireOffset)
+	engine func() string // engine state for received frames; nil: unknown
 
 	mu    sync.Mutex
 	index map[types.Address]uint32
@@ -71,6 +72,9 @@ func (f *frameRecorder) msg(dir string, peer types.Address, code uint64, payload
 func (f *frameRecorder) Received(peer types.Address, code uint64, size int, payload []byte, offer string) {
 	m := f.msg(journal.In, peer, code, payload)
 	m.Offer = offer
+	if f.engine != nil {
+		m.Engine = f.engine()
+	}
 	if size > len(payload) { // the payload was not kept: its key is unknown
 		m.Size, m.DedupKey = uint64(size), types.Hash{}
 	}
