@@ -182,12 +182,12 @@ func TestExportRange(t *testing.T) {
 	}
 }
 
-// TestExportUsage refuses the bundle format (not available yet), a missing
-// --out and a bad height.
+// TestExportUsage refuses an unknown format, a missing --out and a bad
+// height.
 func TestExportUsage(t *testing.T) {
 	fs := fsys.NewMem()
 	frameJournal(t, fs)
-	runJSON(t, fs, 2, nil, "export", "--dir", "/j", "--out", "/out")
+	runJSON(t, fs, 2, nil, "export", "--dir", "/j", "--out", "/out", "--format", "zip")
 	runJSON(t, fs, 2, nil, "export", "--dir", "/j", "--format", "r01")
 	runJSON(t, fs, 2, nil, "export", "--dir", "/j", "--out", "/out", "--format", "r01", "--from", "x")
 }
@@ -267,4 +267,25 @@ func TestExportRelayOf(t *testing.T) {
 	if sup["type"] != "send_suppressed" || sup["cause"] != "relay" || sup["reason"] != "peer_recent_cache" || sup["peer"] != hexAddr(peerB) {
 		t.Fatalf("suppressed %v", sup)
 	}
+}
+
+// TestExportBundle writes a bundle file with its manifest and does not
+// overwrite an existing file.
+func TestExportBundle(t *testing.T) {
+	fs := fsys.NewMem()
+	writeJournal(t, fs)
+	var res bundleResult
+	runJSON(t, fs, 0, &res, "export", "--dir", "/j", "--out", "/b.tar", "--from", "15", "--to", "16")
+	if res.Format != "bundle" || res.Manifest == nil || len(res.Manifest.Files) == 0 || res.Manifest.Heights.Warmup != 2 {
+		t.Fatalf("result %+v", res)
+	}
+	b, err := fs.ReadFile("/b.tar")
+	if err != nil {
+		t.Fatal(err)
+	}
+	m, err := journal.ReadBundle(bytes.NewReader(b), fs, "/x")
+	if err != nil || len(m.Files) != len(res.Manifest.Files) {
+		t.Fatalf("read back %+v: %v", m, err)
+	}
+	runJSON(t, fs, 2, nil, "export", "--dir", "/j", "--out", "/b.tar")
 }
