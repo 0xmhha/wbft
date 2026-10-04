@@ -225,3 +225,42 @@ func TestExportSizes(t *testing.T) {
 		t.Fatalf("empty payload file %x %v", b, err)
 	}
 }
+
+// TestExportRelayOf links a relay to the received frame with the same
+// bytes, from whichever peer, and leaves other causes without relay_of;
+// suppressed sends keep their cause and reason.
+func TestExportRelayOf(t *testing.T) {
+	fs := fsys.NewMem()
+	jw, err := journal.Open(journal.Options{FS: fs, Dir: "/j", Synchronous: true}, journal.Identity{Self: nodeA, Run: "r"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := []byte{0xc1, 0x0a}
+	k := codec.DedupKey(p)
+	jw.Put(journal.Record{Body: &journal.PeerRec{PeerIdx: 1, Addr: peerB, Event: "attached"}})
+	jw.Put(journal.Record{Body: &journal.PeerRec{PeerIdx: 2, Addr: types.Address{0xcc}, Event: "attached"}})
+	jw.Put(journal.Record{Body: &journal.MsgRec{Dir: journal.In, PeerIdx: 1, Code: 0x13, WireCode: 0x13, Payload: p, DedupKey: k, Offer: "queued"}})
+	jw.Put(journal.Record{Body: &journal.MsgRec{Dir: journal.Out, PeerIdx: 2, Code: 0x13, WireCode: 0x13, Payload: p, DedupKey: k, Write: "ok",
+		Cause: event.CauseRelay}})
+	jw.Put(journal.Record{Body: &journal.MsgRec{Dir: journal.Out, PeerIdx: 2, Code: 0x13, WireCode: 0x13, Payload: p, DedupKey: k, Write: "ok",
+		Cause: event.CauseBroadcast}})
+	jw.Put(journal.Record{Body: &journal.SuppressedRec{PeerIdx: 1, DedupKey: k, Cause: event.CauseRelay, Reason: "peer_recent_cache"}})
+	if err := jw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	runJSON(t, fs, 0, nil, "export", "--dir", "/j", "--out", "/out", "--format", "r01")
+	recs := readFrames(t, fs, "/out/frames-r.jsonl")
+	if len(recs) != 6 {
+		t.Fatalf("records %v", recs)
+	}
+	in, relay, own, sup := recs[2], recs[3], recs[4], recs[5]
+	if relay["cause"] != "relay" || relay["relay_of"] != in["seq"] {
+		t.Fatalf("relay %v of %v", relay, in)
+	}
+	if own["cause"] != "broadcast" || own["relay_of"] != nil {
+		t.Fatalf("own send %v", own)
+	}
+	if sup["type"] != "send_suppressed" || sup["cause"] != "relay" || sup["reason"] != "peer_recent_cache" || sup["peer"] != hexAddr(peerB) {
+		t.Fatalf("suppressed %v", sup)
+	}
+}

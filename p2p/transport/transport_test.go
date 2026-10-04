@@ -299,3 +299,42 @@ func TestLRU(t *testing.T) {
 		t.Fatal("remove")
 	}
 }
+
+// causeTransport is a fakeTransport that records causes and suppressed
+// sends (CauseSender).
+type causeTransport struct {
+	fakeTransport
+	log []string
+}
+
+func (c *causeTransport) SendCause(peers []types.Address, code uint64, payload []byte, cause event.SendCause) []SendResult {
+	c.log = append(c.log, fmt.Sprintf("send %v %#x %s", peers, code, cause))
+	return c.Send(peers, code, payload)
+}
+
+func (c *causeTransport) Suppressed(peer types.Address, code uint64, _ []byte, cause event.SendCause, reason string) {
+	c.log = append(c.log, fmt.Sprintf("suppressed %v %#x %s %s", peer, code, cause, reason))
+}
+
+// TestGossipCauses: with a CauseSender, Gossip passes the cause of the
+// send and reports each peer it leaves out because the peer's recent cache
+// holds the message.
+func TestGossipCauses(t *testing.T) {
+	self, v1, v2 := addr(0), addr(1), addr(2)
+	tr := &causeTransport{fakeTransport: fakeTransport{peers: []types.Address{v1, v2}}}
+	d := newDedup(t, tr, self)
+	vs := set(t, self, v1, v2)
+	payload := []byte{0xc1, 0x05}
+	d.SeenInbound(v2, 0x15, payload)
+	d.Gossip(vs, 0x15, payload, event.CauseRetry)
+	want := []string{
+		fmt.Sprintf("suppressed %v 0x15 retry peer_recent_cache", v2),
+		fmt.Sprintf("send %v 0x15 retry", []types.Address{v1}),
+	}
+	if fmt.Sprint(tr.log) != fmt.Sprint(want) {
+		t.Fatalf("log %q, want %q", tr.log, want)
+	}
+	if len(tr.sends) != 1 {
+		t.Fatalf("sends %+v", tr.sends)
+	}
+}

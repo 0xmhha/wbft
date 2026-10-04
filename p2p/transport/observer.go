@@ -1,6 +1,9 @@
 package transport
 
-import "github.com/0xmhha/wbft/types"
+import (
+	"github.com/0xmhha/wbft/observe/event"
+	"github.com/0xmhha/wbft/types"
+)
 
 // FrameObserver receives the consensus frames an adapter carries and the
 // lives of its peer streams, for the message journal (observe.md 3 and
@@ -44,3 +47,18 @@ const (
 	WriteError       = "error"
 	WriteNotAttached = "not_attached" // the peer had no stream; nothing was written
 )
+
+// CauseSender is implemented by a transport that records why a message is
+// sent (the journal's msg.cause, R-01 frame.cause) and to which peers it was
+// not sent. Dedup uses it instead of Send when the transport has it.
+type CauseSender interface {
+	// SendCause is Send with the cause of the send.
+	SendCause(peers []types.Address, code uint64, payload []byte, cause event.SendCause) []SendResult
+	// Suppressed reports a send to peer that was left out because the
+	// peer's recent cache holds the message (reason SuppressRecentCache).
+	Suppressed(peer types.Address, code uint64, payload []byte, cause event.SendCause, reason string)
+}
+
+// SuppressRecentCache is the reason of a send left out because the peer's
+// recent cache holds the message (R-01 send_suppressed.reason).
+const SuppressRecentCache = "peer_recent_cache"
