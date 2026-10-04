@@ -19,7 +19,8 @@ import (
 // Config configures a Node.
 type Config struct {
 	// DataDir holds the durable state of the node: the write-ahead log in
-	// wal/ and the sign state in privval/state.
+	// wal/, the sign state in privval/state and the message journal in
+	// journal/.
 	DataDir string
 	// KeyFile is the node key in the go-stablenet nodekey format (64 hex
 	// characters). Empty runs a node that never signs: it verifies headers
@@ -42,6 +43,21 @@ type Config struct {
 	// (source.Native): an embedded chain takes its authority from the state
 	// it shares with the reference implementation.
 	Standalone bool
+	// Journal configures the message journal of a validator.
+	Journal JournalConfig
+}
+
+// JournalConfig configures the message journal (package observe/journal):
+// the steps of the consensus core and the outcomes of received messages, in
+// DataDir/journal, for analysis and replay. A validator keeps it unless
+// Disabled is set (journal.DefaultEnabled); a node without a key runs no
+// core and keeps none.
+type JournalConfig struct {
+	Disabled bool
+	// KeepHeights and MaxBytes bound the journal; zero takes the defaults
+	// of journal.DefaultOptions (100000 heights, 8 GiB).
+	KeepHeights uint64
+	MaxBytes    int64
 }
 
 // MempoolConfig configures the transaction pool of a node.
