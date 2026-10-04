@@ -117,7 +117,10 @@ type MsgRec struct {
 	Payload  []byte // not copied; the caller must not reuse the slice
 	// Size is the length of the payload on the wire; it is kept when the
 	// payload is not (a frame too large to keep). 0 means len(Payload).
-	Size     uint64
+	Size uint64
+	// Engine is the state of the consensus engine when a received frame
+	// was recorded: running, stopped or syncing; empty when unknown.
+	Engine   string
 	DedupKey types.Hash
 	Offer    string          // In only: queued, queue_full, frame_ignore, frame_disconnect
 	Cause    event.SendCause // Out only
@@ -240,6 +243,27 @@ type msgRLP struct {
 	RelayOf  uint64
 	Write    string
 	Size     uint64
+	Engine   string
+}
+
+// msgRLPNoEngine is a msg record written before records carried the engine
+// state; it still decodes.
+type msgRLPNoEngine struct {
+	Format   uint64
+	JSeq     uint64
+	Dir      string
+	PeerIdx  uint64
+	Mono     uint64
+	WallNs   uint64
+	Code     uint64
+	WireCode uint64
+	Payload  []byte
+	DedupKey types.Hash
+	Offer    string
+	Cause    string
+	RelayOf  uint64
+	Write    string
+	Size     uint64
 }
 
 // msgRLPNoSize is a msg record written before records carried the payload
@@ -342,7 +366,7 @@ func encodeBody(r Record, jseq uint64) ([]byte, error) {
 	case *MsgRec:
 		return rlp.Encode(&msgRLP{Format: Format, JSeq: jseq, Dir: b.Dir, PeerIdx: uint64(b.PeerIdx), Mono: uint64(int64(b.Mono)),
 			WallNs: uint64(b.WallNs), Code: b.Code, WireCode: b.WireCode, Payload: bytesOrEmpty(b.Payload), DedupKey: b.DedupKey,
-			Offer: b.Offer, Cause: string(b.Cause), RelayOf: b.RelayOf, Write: b.Write, Size: b.Size})
+			Offer: b.Offer, Cause: string(b.Cause), RelayOf: b.RelayOf, Write: b.Write, Size: b.Size, Engine: b.Engine})
 	case *OutcomeRec:
 		return rlp.Encode(&outcomeRLP{Format: Format, JSeq: jseq, Of: b.Of, Code: b.Code, Peer: b.Peer, DedupKey: b.DedupKey,
 			Outcome: string(b.Outcome), Check: b.Check, Row: uint64(b.Row + 1), Reason: b.Reason, ErrorClass: b.ErrorClass,
@@ -413,18 +437,26 @@ func decodeBody(k Kind, body []byte) (Record, error) {
 	case KindMsg:
 		var w msgRLP
 		if err := rlp.DecodeStrict(body, &w); err != nil {
-			var old msgRLPNoSize
-			if rlp.DecodeStrict(body, &old) != nil {
+			var noEngine msgRLPNoEngine
+			var noSize msgRLPNoSize
+			switch {
+			case rlp.DecodeStrict(body, &noEngine) == nil:
+				w = msgRLP{Format: noEngine.Format, JSeq: noEngine.JSeq, Dir: noEngine.Dir, PeerIdx: noEngine.PeerIdx, Mono: noEngine.Mono,
+					WallNs: noEngine.WallNs, Code: noEngine.Code, WireCode: noEngine.WireCode, Payload: noEngine.Payload,
+					DedupKey: noEngine.DedupKey, Offer: noEngine.Offer, Cause: noEngine.Cause, RelayOf: noEngine.RelayOf,
+					Write: noEngine.Write, Size: noEngine.Size}
+			case rlp.DecodeStrict(body, &noSize) == nil:
+				w = noSize.withSize()
+			default:
 				return fail(err)
 			}
-			w = old.withSize()
 		}
 		if err := check(w.Format); err != nil {
 			return fail(err)
 		}
 		return Record{Kind: k, JSeq: w.JSeq, Body: &MsgRec{Dir: w.Dir, PeerIdx: uint32(w.PeerIdx), Mono: time.Duration(int64(w.Mono)),
 			WallNs: int64(w.WallNs), Code: w.Code, WireCode: w.WireCode, Payload: w.Payload, DedupKey: w.DedupKey, Offer: w.Offer,
-			Cause: event.SendCause(w.Cause), RelayOf: w.RelayOf, Write: w.Write, Size: w.Size}}, nil
+			Cause: event.SendCause(w.Cause), RelayOf: w.RelayOf, Write: w.Write, Size: w.Size, Engine: w.Engine}}, nil
 	case KindOutcome:
 		var w outcomeRLP
 		if err := rlp.DecodeStrict(body, &w); err != nil {

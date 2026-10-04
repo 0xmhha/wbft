@@ -5,7 +5,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/0xmhha/wbft/app"
 	"github.com/0xmhha/wbft/codec"
+	"github.com/0xmhha/wbft/internal/fsys"
 	"github.com/0xmhha/wbft/observe/event"
 	"github.com/0xmhha/wbft/observe/journal"
 	"github.com/0xmhha/wbft/p2p/transport"
@@ -102,4 +104,50 @@ func TestFrameRecorderCauses(t *testing.T) {
 	if fmt.Sprint(got) != fmt.Sprint(want) {
 		t.Fatalf("records %q, want %q", got, want)
 	}
+}
+
+// TestFrameRecorderEngine records the engine state with each received
+// frame.
+func TestFrameRecorderEngine(t *testing.T) {
+	jw := &memJournal{}
+	rec := newFrameRecorder(jw, fixedClock{}, 0)
+	state := "syncing"
+	rec.engine = func() string { return state }
+	rec.Received(types.Address{1}, 0x12, 1, []byte{1}, transport.OfferQueued)
+	state = "running"
+	rec.Received(types.Address{1}, 0x13, 1, []byte{2}, transport.OfferQueued)
+	rec.Wrote(types.Address{1}, 0x13, []byte{2}, transport.WriteOK)
+	var got []string
+	for _, r := range jw.recs {
+		m := r.Body.(*journal.MsgRec)
+		got = append(got, m.Dir+":"+m.Engine)
+	}
+	if want := []string{"in:syncing", "in:running", "out:"}; fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("engine states %q, want %q", got, want)
+	}
+}
+
+// TestEngineState follows the runner and the application's
+// synchronisation.
+func TestEngineState(t *testing.T) {
+	key := testKey(0)
+	cj, g := testGenesis(t, key)
+	a := newTestApp(cj, g)
+	n := startNode(t, a, fsys.NewMem(), key, false, nil)
+	if s := n.engineState(); s != "running" {
+		t.Fatalf("started node: %s", s)
+	}
+	if err := n.Runner().Stop(); err != nil {
+		t.Fatal(err)
+	}
+	if s := n.engineState(); s != "stopped" {
+		t.Fatalf("stopped engine: %s", s)
+	}
+	n.syncMu.Lock()
+	n.syncLatest = &app.SyncState{Syncing: true}
+	n.syncMu.Unlock()
+	if s := n.engineState(); s != "syncing" {
+		t.Fatalf("stopped engine while synchronising: %s", s)
+	}
+	stop(t, n)
 }

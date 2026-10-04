@@ -239,7 +239,8 @@ func TestExportRelayOf(t *testing.T) {
 	k := codec.DedupKey(p)
 	jw.Put(journal.Record{Body: &journal.PeerRec{PeerIdx: 1, Addr: peerB, Event: "attached"}})
 	jw.Put(journal.Record{Body: &journal.PeerRec{PeerIdx: 2, Addr: types.Address{0xcc}, Event: "attached"}})
-	jw.Put(journal.Record{Body: &journal.MsgRec{Dir: journal.In, PeerIdx: 1, Code: 0x13, WireCode: 0x13, Payload: p, DedupKey: k, Offer: "queued"}})
+	jw.Put(journal.Record{Body: &journal.MsgRec{Dir: journal.In, PeerIdx: 1, Code: 0x13, WireCode: 0x13, Payload: p, DedupKey: k, Offer: "queued",
+		Engine: "running"}})
 	jw.Put(journal.Record{Body: &journal.MsgRec{Dir: journal.Out, PeerIdx: 2, Code: 0x13, WireCode: 0x13, Payload: p, DedupKey: k, Write: "ok",
 		Cause: event.CauseRelay}})
 	jw.Put(journal.Record{Body: &journal.MsgRec{Dir: journal.Out, PeerIdx: 2, Code: 0x13, WireCode: 0x13, Payload: p, DedupKey: k, Write: "ok",
@@ -254,6 +255,9 @@ func TestExportRelayOf(t *testing.T) {
 		t.Fatalf("records %v", recs)
 	}
 	in, relay, own, sup := recs[2], recs[3], recs[4], recs[5]
+	if in["engine"] != "running" || relay["engine"] != nil {
+		t.Fatalf("engine state: in %v, out %v", in["engine"], relay["engine"])
+	}
 	if relay["cause"] != "relay" || relay["relay_of"] != in["seq"] {
 		t.Fatalf("relay %v of %v", relay, in)
 	}
