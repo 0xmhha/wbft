@@ -90,7 +90,9 @@ Milestone **W3a (node and application interface)** is in progress:
   state, sets the sign floor of a taken-over key (`TakeoverGuard`), runs the
   start-up handshake with the application head (finalizing a decided block
   again when needed), loads the authority snapshot of the head and starts the
-  core at head + 1 with the restart-safety rules. The node implements the
+  core at head + 1 with the restart-safety rules. A validator keeps a
+  message journal in `<data dir>/journal` unless `Config.Journal.Disabled`
+  is set; `cmd/wbft-replay` replays it. The node implements the
   `Consensus` service (proposal fields, epoch information, header
   verification, head and synchronisation notifications) on top of the header
   and epoch rules.

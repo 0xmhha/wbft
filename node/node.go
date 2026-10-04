@@ -20,6 +20,7 @@ import (
 	"github.com/0xmhha/wbft/mempool"
 	"github.com/0xmhha/wbft/observe/event"
 	"github.com/0xmhha/wbft/observe/evidence"
+	"github.com/0xmhha/wbft/observe/journal"
 	"github.com/0xmhha/wbft/observe/rejection"
 	"github.com/0xmhha/wbft/p2p/transport"
 	"github.com/0xmhha/wbft/rpc"
@@ -29,6 +30,7 @@ import (
 // Directories and files under Config.DataDir.
 const (
 	walDir       = "wal"
+	journalDir   = "journal"
 	evidenceDir  = "evidence"
 	rejectionDir = "rejections"
 	privvalDir   = "privval"
@@ -64,6 +66,7 @@ type Node struct {
 	info     app.InfoResponse
 	signer   *privval.FileSigner
 	wal      *wal.Log
+	journal  *journal.FileWriter // nil without a journal
 	ev       *event.Writer
 	evid     *evidence.Store
 	rej      *rejection.Store
@@ -331,10 +334,18 @@ func (n *Node) start(ctx context.Context) error {
 	if n.ev != nil {
 		sink.next = n.ev
 	}
-	r, err := runner.New(runner.Config{Core: consensus.Options{Config: cfg, Self: self, Improvements: consensus.RestartSafety}, ReplayWAL: true},
-		runner.Deps{Chain: n.view, App: &appDriver{a: n.d.App, ctx: n.ctx}, Transport: dedup, Net: n.d.Transport,
-			Signer: n.signer, WAL: log, Clock: n.clock, Events: sink, Synchronising: n.synchronising,
-			Faults: n.d.faults, Logger: n.log})
+	core := consensus.Options{Config: cfg, Self: self, Improvements: consensus.RestartSafety}
+	jw, err := n.openJournal(core, runID)
+	if err != nil {
+		return err
+	}
+	deps := runner.Deps{Chain: n.view, App: &appDriver{a: n.d.App, ctx: n.ctx}, Transport: dedup, Net: n.d.Transport,
+		Signer: n.signer, WAL: log, Clock: n.clock, Events: sink, Synchronising: n.synchronising,
+		Faults: n.d.faults, Logger: n.log}
+	if jw != nil {
+		deps.Journal = jw
+	}
+	r, err := runner.New(runner.Config{Core: core, ReplayWAL: true}, deps)
 	if err != nil {
 		return err
 	}
@@ -354,6 +365,47 @@ func (n *Node) start(ctx context.Context) error {
 		return fmt.Errorf("node: start the consensus core: %w", err)
 	}
 	return nil
+}
+
+// openJournal opens the message journal of a validator unless it is
+// disabled. Its segment records carry what rebuilds the core for replay.
+func (n *Node) openJournal(core consensus.Options, runID string) (*journal.FileWriter, error) {
+	if n.cfg.Journal.Disabled {
+		return nil, nil
+	}
+	opt := journal.DefaultOptions(filepath.Join(n.cfg.DataDir, journalDir))
+	opt.FS = n.fs
+	if n.cfg.Journal.KeepHeights != 0 {
+		opt.KeepHeights = n.cfg.Journal.KeepHeights
+	}
+	if n.cfg.Journal.MaxBytes != 0 {
+		opt.MaxBytes = n.cfg.Journal.MaxBytes
+	}
+	n.mu.Lock()
+	info := n.info
+	n.mu.Unlock()
+	id := journal.Identity{Self: core.Self, BLSPublicKey: n.signer.BLSPublicKey(), Run: runID, Commit: moduleVersion(),
+		ChainID: info.ChainID, GenesisHash: info.GenesisHash, Mode: n.mode(), WireOffset: n.wireOffset(),
+		Core: journal.CoreOptions{ChainConfig: info.ChainConfigJSON, Self: core.Self, Improvements: uint64(core.Improvements),
+			BacklogLimit: uint64(core.BacklogLimit)}}
+	jw, err := journal.Open(opt, id)
+	if err != nil {
+		return nil, fmt.Errorf("node: message journal: %w", err)
+	}
+	n.mu.Lock()
+	n.journal = jw
+	n.mu.Unlock()
+	return jw, nil
+}
+
+// wireOffset is the offset of the istanbul codes on the wire: 0x10 in
+// standalone mode, where the codes follow the devp2p base protocol, and 0 in
+// embedded mode (observe.md 2.3).
+func (n *Node) wireOffset() uint64 {
+	if n.cfg.Standalone {
+		return 0x10
+	}
+	return 0
 }
 
 // startPool creates and starts the transaction pool.
@@ -513,6 +565,10 @@ func (n *Node) close() error {
 	n.cancel()
 	if n.wal != nil {
 		errs = append(errs, n.wal.Close())
+	}
+	// The core has stopped: no record follows.
+	if n.journal != nil {
+		errs = append(errs, n.journal.Close())
 	}
 	return errors.Join(errs...)
 }
