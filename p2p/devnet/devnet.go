@@ -529,12 +529,12 @@ func (t *Transport) deliver(peer types.Address, code uint64, payload []byte) boo
 	case transport.FrameDisconnect:
 		t.log.Debug("frame closes the connection", "peer", peer, "reason", reason)
 		if o != nil {
-			o.Received(peer, code, payload, transport.OfferFrameDisconnect)
+			o.Received(peer, code, len(payload), payload, transport.OfferFrameDisconnect)
 		}
 		return false
 	case transport.FrameDrop:
 		if o != nil {
-			o.Received(peer, code, payload, transport.OfferFrameIgnore)
+			o.Received(peer, code, len(payload), payload, transport.OfferFrameIgnore)
 		}
 		return true
 	}
@@ -543,7 +543,7 @@ func (t *Transport) deliver(peer types.Address, code uint64, payload []byte) boo
 		offer = transport.OfferQueueFull
 	}
 	if o != nil {
-		o.Received(peer, code, payload, offer)
+		o.Received(peer, code, len(payload), payload, offer)
 	}
 	return true
 }

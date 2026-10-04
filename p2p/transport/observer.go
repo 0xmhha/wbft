@@ -8,10 +8,12 @@ import "github.com/0xmhha/wbft/types"
 // not block and must not keep payload beyond the call unless the adapter
 // never reuses it.
 type FrameObserver interface {
-	// Received reports a consensus frame read from peer, with its wire
-	// payload (before the frame stage unwraps it) and what the adapter did
-	// with it: one of the Offer values.
-	Received(peer types.Address, code uint64, payload []byte, offer string)
+	// Received reports a consensus frame read from peer, with the length
+	// of its payload on the wire, the payload (before the frame stage
+	// unwraps it; nil when the adapter did not read it, for a frame over
+	// the size limit) and what the adapter did with it: one of the Offer
+	// values.
+	Received(peer types.Address, code uint64, size int, payload []byte, offer string)
 	// Wrote reports a consensus frame the adapter tried to write to peer:
 	// WriteOK or WriteError.
 	Wrote(peer types.Address, code uint64, payload []byte, write string)

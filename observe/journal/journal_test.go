@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/0xmhha/wbft/codec/rlp"
 	"github.com/0xmhha/wbft/consensus/wal"
 	"github.com/0xmhha/wbft/internal/fsys"
 	"github.com/0xmhha/wbft/observe/event"
@@ -240,5 +241,34 @@ func TestTornTail(t *testing.T) {
 func TestDupFirstUnsupported(t *testing.T) {
 	if _, err := Open(Options{FS: fsys.NewMem(), Dir: "/j", Duplicates: DupFirst}, ident()); err != ErrUnsupported {
 		t.Fatal(err)
+	}
+}
+
+// TestMsgSize keeps the size of a msg record whose payload was not kept,
+// and still reads a msg record written before records had a size.
+func TestMsgSize(t *testing.T) {
+	m := &MsgRec{Dir: In, PeerIdx: 2, Code: 0x12, WireCode: 0x12, Size: 20 << 20, Offer: "frame_disconnect"}
+	body, err := encodeBody(Record{Body: m}, 7)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := decodeBody(KindMsg, body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := r.Body.(*MsgRec); got.Size != 20<<20 || len(got.Payload) != 0 || r.JSeq != 7 {
+		t.Fatalf("decoded %+v", got)
+	}
+	old, err := rlp.Encode(&msgRLPNoSize{Format: Format, JSeq: 8, Dir: Out, PeerIdx: 1, Code: 0x13, WireCode: 0x13, Payload: []byte{1, 2},
+		Write: "ok"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err = decodeBody(KindMsg, old)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := r.Body.(*MsgRec); got.Size != 0 || !bytes.Equal(got.Payload, []byte{1, 2}) || got.Write != "ok" || r.JSeq != 8 {
+		t.Fatalf("old record %+v", got)
 	}
 }

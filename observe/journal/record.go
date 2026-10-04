@@ -115,6 +115,9 @@ type MsgRec struct {
 	Code     uint64
 	WireCode uint64
 	Payload  []byte // not copied; the caller must not reuse the slice
+	// Size is the length of the payload on the wire; it is kept when the
+	// payload is not (a frame too large to keep). 0 means len(Payload).
+	Size     uint64
 	DedupKey types.Hash
 	Offer    string          // In only: queued, queue_full, frame_ignore, frame_disconnect
 	Cause    event.SendCause // Out only
@@ -236,6 +239,26 @@ type msgRLP struct {
 	Cause    string
 	RelayOf  uint64
 	Write    string
+	Size     uint64
+}
+
+// msgRLPNoSize is a msg record written before records carried the payload
+// size; it still decodes.
+type msgRLPNoSize struct {
+	Format   uint64
+	JSeq     uint64
+	Dir      string
+	PeerIdx  uint64
+	Mono     uint64
+	WallNs   uint64
+	Code     uint64
+	WireCode uint64
+	Payload  []byte
+	DedupKey types.Hash
+	Offer    string
+	Cause    string
+	RelayOf  uint64
+	Write    string
 }
 
 type outcomeRLP struct {
@@ -319,7 +342,7 @@ func encodeBody(r Record, jseq uint64) ([]byte, error) {
 	case *MsgRec:
 		return rlp.Encode(&msgRLP{Format: Format, JSeq: jseq, Dir: b.Dir, PeerIdx: uint64(b.PeerIdx), Mono: uint64(int64(b.Mono)),
 			WallNs: uint64(b.WallNs), Code: b.Code, WireCode: b.WireCode, Payload: bytesOrEmpty(b.Payload), DedupKey: b.DedupKey,
-			Offer: b.Offer, Cause: string(b.Cause), RelayOf: b.RelayOf, Write: b.Write})
+			Offer: b.Offer, Cause: string(b.Cause), RelayOf: b.RelayOf, Write: b.Write, Size: b.Size})
 	case *OutcomeRec:
 		return rlp.Encode(&outcomeRLP{Format: Format, JSeq: jseq, Of: b.Of, Code: b.Code, Peer: b.Peer, DedupKey: b.DedupKey,
 			Outcome: string(b.Outcome), Check: b.Check, Row: uint64(b.Row + 1), Reason: b.Reason, ErrorClass: b.ErrorClass,
@@ -390,14 +413,18 @@ func decodeBody(k Kind, body []byte) (Record, error) {
 	case KindMsg:
 		var w msgRLP
 		if err := rlp.DecodeStrict(body, &w); err != nil {
-			return fail(err)
+			var old msgRLPNoSize
+			if rlp.DecodeStrict(body, &old) != nil {
+				return fail(err)
+			}
+			w = old.withSize()
 		}
 		if err := check(w.Format); err != nil {
 			return fail(err)
 		}
 		return Record{Kind: k, JSeq: w.JSeq, Body: &MsgRec{Dir: w.Dir, PeerIdx: uint32(w.PeerIdx), Mono: time.Duration(int64(w.Mono)),
 			WallNs: int64(w.WallNs), Code: w.Code, WireCode: w.WireCode, Payload: w.Payload, DedupKey: w.DedupKey, Offer: w.Offer,
-			Cause: event.SendCause(w.Cause), RelayOf: w.RelayOf, Write: w.Write}}, nil
+			Cause: event.SendCause(w.Cause), RelayOf: w.RelayOf, Write: w.Write, Size: w.Size}}, nil
 	case KindOutcome:
 		var w outcomeRLP
 		if err := rlp.DecodeStrict(body, &w); err != nil {
@@ -482,4 +509,12 @@ func size(r Record) int64 {
 		return int64(len(b.Core.ChainConfig)) + 256
 	}
 	return 96
+}
+
+// withSize converts an old msg record (no size; the size is that of its
+// payload).
+func (o msgRLPNoSize) withSize() msgRLP {
+	return msgRLP{Format: o.Format, JSeq: o.JSeq, Dir: o.Dir, PeerIdx: o.PeerIdx, Mono: o.Mono, WallNs: o.WallNs, Code: o.Code,
+		WireCode: o.WireCode, Payload: o.Payload, DedupKey: o.DedupKey, Offer: o.Offer, Cause: o.Cause, RelayOf: o.RelayOf,
+		Write: o.Write}
 }

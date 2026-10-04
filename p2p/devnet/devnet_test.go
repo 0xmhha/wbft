@@ -192,7 +192,10 @@ func (o *obs) add(s string) {
 	o.mu.Unlock()
 }
 
-func (o *obs) Received(peer types.Address, code uint64, payload []byte, offer string) {
+func (o *obs) Received(peer types.Address, code uint64, size int, payload []byte, offer string) {
+	if size != len(payload) {
+		offer += fmt.Sprintf(" size %d", size)
+	}
 	o.add(fmt.Sprintf("in %x %#x %q %s", peer[:1], code, payload, offer))
 }
 

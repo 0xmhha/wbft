@@ -26,7 +26,9 @@ import (
 //
 // The journal does not hold the engine state at receipt, the hits of the
 // two dedup caches or (yet) the send cause, so frame records carry none of
-// these. A conn record carries the times of the record before it, since peer
+// these. A frame the node kept without its payload (too large) has its size,
+// no payload_sha256 and a zero dedup_key. A conn record carries the times of
+// the record before it, since peer
 // records have no times of their own. An outcome the core journaled before
 // the adapter journaled its frame follows the frame in the file and keeps
 // its own (lower) seq; one whose frame does not come within
@@ -328,8 +330,12 @@ func (w *r01Writer) msg(seq uint64, b *journal.MsgRec) error {
 	}
 	r["code"] = fmt.Sprintf("%#x", b.Code)
 	r["wire_code"] = b.WireCode
-	r["size"] = len(b.Payload)
-	if b.Payload != nil {
+	// A record with a size kept only the size (the frame was too large to
+	// keep); otherwise the payload, possibly empty, is the frame's.
+	if b.Size > 0 && uint64(len(b.Payload)) != b.Size {
+		r["size"] = b.Size
+	} else {
+		r["size"] = len(b.Payload)
 		sum, err := w.payload(b.Payload)
 		if err != nil {
 			return err
