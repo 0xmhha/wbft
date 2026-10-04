@@ -66,6 +66,7 @@ faults:
 
 replay:
 	go build -o bin/wbft-replay ./cmd/wbft-replay
+	go build -o bin/wbft-journal ./cmd/wbft-journal
 
 # The kvstore example as a local network of separate processes.
 devnet:

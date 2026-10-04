@@ -492,6 +492,16 @@ func Prune(fs fsys.FS, dir string, head types.Height, opt Options, current uint6
 	return res, nil
 }
 
+// ReadIndex returns the index file of the closed segment name in dir, and
+// false when the segment has none (it is being written, or its writer
+// stopped before closing it). A nil fs is the operating system.
+func ReadIndex(fs fsys.FS, dir, name string) (SegmentIndex, bool) {
+	if fs == nil {
+		fs = fsys.OS{}
+	}
+	return readIndex(fs, dir, name)
+}
+
 func readIndex(fs fsys.FS, dir, name string) (SegmentIndex, bool) {
 	b, err := fs.ReadFile(filepath.Join(dir, name+indexSuffix))
 	if err != nil {
@@ -524,14 +534,22 @@ func OpenReader(fs fsys.FS, dir string) (*Reader, error) {
 
 // Next returns the next record, or io.EOF after the last one.
 func (r *Reader) Next() (Record, error) {
-	rec, _, err := r.r.Next()
+	rec, _, err := r.NextAt()
+	return rec, err
+}
+
+// NextAt is Next with the position of the record: its segment and the
+// byte offset of its frame.
+func (r *Reader) NextAt() (Record, wal.Position, error) {
+	rec, pos, err := r.r.Next()
 	if err != nil {
-		return Record{}, err
+		return Record{}, pos, err
 	}
 	if rec.Format != Format {
-		return Record{}, fmt.Errorf("%w: frame format %d", ErrRecord, rec.Format)
+		return Record{}, pos, fmt.Errorf("%w: frame format %d", ErrRecord, rec.Format)
 	}
-	return decodeBody(Kind(rec.Kind), rec.Body)
+	out, err := decodeBody(Kind(rec.Kind), rec.Body)
+	return out, pos, err
 }
 
 // ReadAll returns every record of the journal in dir.

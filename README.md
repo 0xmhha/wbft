@@ -65,7 +65,9 @@ simulation)** covers:
   `CheckOutbound` and `StoppedEngineAction` for the application adapters.
 - `observe/event` and `observe/journal`: the event vocabulary with a JSON
   Lines writer, and the message journal (a store of its own with pruning by
-  height and size).
+  height and size). `cmd/wbft-journal` reports on a journal directory
+  (`stat`), checks it (`verify`) and prunes it (`prune`), also while a node
+  writes it.
 - `conformance/stepdriver`: the driver of the steps vectors, which a
   transport adapter can reuse with its own frame stage, and `RunTrace`, which
   replays a message journal through the core (`cmd/wbft-replay`).
@@ -136,7 +138,7 @@ and the lint rules below enforce the direction.
 | Node | `node`, `app`, `mempool`, `rpc`, `storage` | `node`, `app`, `mempool`, `rpc`, `storage/kv` | Node assembly, application boundary, transaction pool, RPC, key-value store |
 | Examples | `examples` | `examples/kvstore`, `examples/kvstore/cmd/wbft-kvstore` | An example application and its command for local networks |
 | Conformance | `conformance` | `conformance/stepdriver`, `conformance/sim` | The step driver for vectors and traces, the deterministic simulator |
-| Commands | `cmd` | `cmd/wbft-vector-adapter`, `cmd/wbft-replay` | Conformance vector adapter, journal replay helper |
+| Commands | `cmd` | `cmd/wbft-vector-adapter`, `cmd/wbft-replay`, `cmd/wbft-journal` | Conformance vector adapter, journal replay helper, journal inspection and pruning |
 
 `internal` holds helpers that are not part of the API: `internal/refsort`
 (the reference-compatible sort), `internal/fsys` (the file system interface
@@ -303,6 +305,10 @@ go test -tags wbft_faults -run TestCrashAtFaultPoints ./conformance/sim/
 go test -run TestReplayDeterminism ./conformance/stepdriver/
 # Replay one node journal of a simulator export:
 bin/wbft-replay -journal <dir>/<node> -chain <dir>/chain.rlp
+# Inspect, check and prune a node's journal (JSON output):
+bin/wbft-journal stat --dir <data dir>/journal
+bin/wbft-journal verify --dir <data dir>/journal
+bin/wbft-journal prune --dir <data dir>/journal --keep-heights 100000
 ```
 
 ## Testnet header scan
