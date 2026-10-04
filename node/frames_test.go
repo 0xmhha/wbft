@@ -31,20 +31,21 @@ func (t resultTransport) Send([]types.Address, uint64, []byte) []transport.SendR
 
 // TestFrameRecorder: peers are numbered in the order they are first seen,
 // msg records carry the wire code with the offset, the dedup key and the
-// times, and sends the transport did not attempt are recorded as
-// not_attached or error.
+// times, a frame whose payload was not kept keeps its size, and sends the
+// transport did not attempt are recorded as not_attached or error.
 func TestFrameRecorder(t *testing.T) {
 	jw := &memJournal{}
 	rec := newFrameRecorder(jw, fixedClock{}, 0x10)
 	p1, p2, p3 := types.Address{1}, types.Address{2}, types.Address{3}
 	rec.Attached(p2, "10.0.0.2:1")
-	rec.Received(p2, 0x12, []byte("a"), transport.OfferQueued)
+	rec.Received(p2, 0x12, 1, []byte("a"), transport.OfferQueued)
+	rec.Received(p2, 0x13, 20<<20, nil, transport.OfferFrameDisconnect) // too large: no payload kept
 	rec.Wrote(p1, 0x13, []byte("b"), transport.WriteOK)
 	rec.Closed(p2, "read")
 	tr := recordedTransport{Transport: resultTransport{res: []transport.SendResult{transport.Queued, transport.NotAttached, transport.QueueFull}}, rec: rec}
 	tr.Send([]types.Address{p1, p2, p3}, 0x14, []byte("c"))
 
-	want := []string{"peer 1 attached", "msg in 1 0x22 queued", "msg out 2 0x23 ok", "peer 1 closed", "msg out 1 0x24 not_attached", "msg out 3 0x24 error"}
+	want := []string{"peer 1 attached", "msg in 1 0x22 queued size 0", "msg in 1 0x23 frame_disconnect size 20971520", "msg out 2 0x23 ok", "peer 1 closed", "msg out 1 0x24 not_attached", "msg out 3 0x24 error"}
 	if len(jw.recs) != len(want) {
 		t.Fatalf("%d records, want %d", len(jw.recs), len(want))
 	}
@@ -55,7 +56,14 @@ func TestFrameRecorder(t *testing.T) {
 			got = fmt.Sprintf("peer %d %s", b.PeerIdx, b.Event)
 		case *journal.MsgRec:
 			got = fmt.Sprintf("msg %s %d %#x %s%s", b.Dir, b.PeerIdx, b.WireCode, b.Offer, b.Write)
-			if b.DedupKey != codec.DedupKey(b.Payload) || b.Mono != 5*time.Second || b.WallNs != 10e9 {
+			if b.Dir == journal.In {
+				got += fmt.Sprintf(" size %d", b.Size)
+			}
+			key := codec.DedupKey(b.Payload)
+			if b.Size > 0 {
+				key = types.Hash{} // payload not kept
+			}
+			if b.DedupKey != key || b.Mono != 5*time.Second || b.WallNs != 10e9 {
 				t.Fatalf("record %d: %+v", i, b)
 			}
 		}

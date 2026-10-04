@@ -191,3 +191,37 @@ func TestExportUsage(t *testing.T) {
 	runJSON(t, fs, 2, nil, "export", "--dir", "/j", "--format", "r01")
 	runJSON(t, fs, 2, nil, "export", "--dir", "/j", "--out", "/out", "--format", "r01", "--from", "x")
 }
+
+// TestExportSizes writes the kept size of a frame whose payload was not
+// kept, without a payload hash, and an empty payload as a payload of its
+// own (inspector rules on empty payloads need its hash).
+func TestExportSizes(t *testing.T) {
+	fs := fsys.NewMem()
+	jw, err := journal.Open(journal.Options{FS: fs, Dir: "/j", Synchronous: true}, journal.Identity{Self: nodeA, Run: "r"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	jw.Put(journal.Record{Body: &journal.PeerRec{PeerIdx: 1, Addr: peerB, Event: "attached"}})
+	jw.Put(journal.Record{Body: &journal.MsgRec{Dir: journal.In, PeerIdx: 1, Code: 0x12, WireCode: 0x12, Size: 20 << 20,
+		Offer: "frame_disconnect"}})
+	jw.Put(journal.Record{Body: &journal.MsgRec{Dir: journal.In, PeerIdx: 1, Code: 0x13, WireCode: 0x13, Payload: []byte{},
+		DedupKey: codec.DedupKey(nil), Offer: "frame_disconnect"}})
+	if err := jw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	runJSON(t, fs, 0, nil, "export", "--dir", "/j", "--out", "/out", "--format", "r01")
+	recs := readFrames(t, fs, "/out/frames-r.jsonl")
+	if len(recs) != 3 {
+		t.Fatalf("records %v", recs)
+	}
+	if big := recs[1]; big["size"] != float64(20<<20) || big["payload_sha256"] != nil {
+		t.Fatalf("large frame %v", big)
+	}
+	empty := recs[2]
+	if empty["size"] != float64(0) || empty["payload_sha256"] != sum(nil) {
+		t.Fatalf("empty frame %v", empty)
+	}
+	if b, err := fs.ReadFile("/out/payloads/" + sum(nil)[:2] + "/" + sum(nil)); err != nil || len(b) != 0 {
+		t.Fatalf("empty payload file %x %v", b, err)
+	}
+}

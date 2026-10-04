@@ -54,9 +54,12 @@ func (f *frameRecorder) msg(dir string, peer types.Address, code uint64, payload
 }
 
 // Received implements transport.FrameObserver.
-func (f *frameRecorder) Received(peer types.Address, code uint64, payload []byte, offer string) {
+func (f *frameRecorder) Received(peer types.Address, code uint64, size int, payload []byte, offer string) {
 	m := f.msg(journal.In, peer, code, payload)
 	m.Offer = offer
+	if size > len(payload) { // the payload was not kept: its key is unknown
+		m.Size, m.DedupKey = uint64(size), types.Hash{}
+	}
 	f.jw.Put(journal.Record{Body: m})
 }
 
