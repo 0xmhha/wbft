@@ -18,7 +18,9 @@ func TestNodeMetrics(t *testing.T) {
 	a.waitHead(t, 3, 20*time.Second)
 	stop(t, n)
 	got := map[string]float64{}
+	samples := map[string]int{}
 	for _, f := range n.Metrics().Gather() {
+		samples[f.Name] = len(f.Samples)
 		for _, s := range f.Samples {
 			if f.Kind == "histogram" {
 				got[f.Name] += float64(s.Count)
@@ -29,5 +31,9 @@ func TestNodeMetrics(t *testing.T) {
 	}
 	if got["wbft_consensus_height"] < 3 || got["wbft_messages_total"] == 0 || got["wbft_app_call_seconds"] < 3 {
 		t.Fatalf("metrics %v", got)
+	}
+	// The backlog gauge is read from the core's snapshot: one series.
+	if samples["wbft_backlog_messages"] != 1 {
+		t.Fatalf("backlog gauge: %d series", samples["wbft_backlog_messages"])
 	}
 }

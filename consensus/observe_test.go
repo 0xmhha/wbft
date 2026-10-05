@@ -99,6 +99,9 @@ func TestBacklogAndExtraSealEvents(t *testing.T) {
 	if ev := eventsOf(h.out, event.Backlog); len(ev) != 1 || ev[0].Fields["op"] != "push" {
 		t.Fatalf("push %v", ev)
 	}
+	if got := h.s.Snapshot().Backlog; got != 1 {
+		t.Fatalf("backlog after push: %d", got)
+	}
 	h.deliver(2, h.commit(2, view(10, 0), b))
 	if ev := eventsOf(h.out, event.Backlog); len(ev) != 1 || ev[0].Fields["op"] != "drop" || ev[0].Fields["reason"] != "duplicate" {
 		t.Fatalf("duplicate %v", ev)
@@ -107,6 +110,9 @@ func TestBacklogAndExtraSealEvents(t *testing.T) {
 	h.reachPrepared(b)
 	if ev := eventsOf(h.out, event.Backlog); len(ev) != 1 || ev[0].Fields["op"] != "replay" {
 		t.Fatalf("replay %v", ev)
+	}
+	if got := h.s.Snapshot().Backlog; got != 0 {
+		t.Fatalf("backlog after replay: %d", got)
 	}
 	// A PREPARE in Prepared is an extra seal of the current proposal.
 	h.deliver(3, h.prepare(3, view(10, 0), b))

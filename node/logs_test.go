@@ -26,7 +26,7 @@ func TestLogSettings(t *testing.T) {
 	a := newTestApp(cj, g)
 	logs, ev := &syncBuffer{}, &syncBuffer{}
 	settings := logcat.Settings{Base: logcat.LevelOff, Modules: map[string]logcat.Level{"consensus.round": logcat.LevelTrace}}
-	n, err := New(Config{DataDir: "/data", Log: &settings}, Deps{App: a, Authority: a, fs: fsys.NewMem(), key: key, Events: ev,
+	n, err := New(Config{DataDir: "/data", Log: &settings, LogUnmapped: []string{"p2p/server.go=5"}}, Deps{App: a, Authority: a, fs: fsys.NewMem(), key: key, Events: ev,
 		Logger: slog.New(slog.NewJSONHandler(logs, nil))})
 	if err != nil {
 		t.Fatal(err)
@@ -36,11 +36,11 @@ func TestLogSettings(t *testing.T) {
 		t.Fatal(err)
 	}
 	a.waitHead(t, 2, 20*time.Second)
-	if !strings.Contains(ev.String(), `"kind":"LOG_CONFIG","level":"off","modules":{"consensus.round":"trace"},"source":"config"`) {
+	if !strings.Contains(ev.String(), `"kind":"LOG_CONFIG","level":"off","modules":{"consensus.round":"trace"},"source":"config","unmapped":["p2p/server.go=5"]`) {
 		t.Fatalf("no LOG_CONFIG event:\n%.2000s", ev.String())
 	}
 	out := logs.String()
-	if !strings.Contains(out, `"msg":"log settings","module":"node","level":"off"`) {
+	if !strings.Contains(out, `"msg":"log settings","module":"node","level":"off"`) || !strings.Contains(out, `"unmapped":["p2p/server.go=5"]`) {
 		t.Fatalf("no log settings line:\n%.2000s", out)
 	}
 	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {

@@ -75,8 +75,9 @@ simulation)** covers:
   labels) and its Prometheus text export, on the standard library. A node
   derives the metrics its event records carry (height and round, round
   changes, timer expiries, messages by code and outcome, dropped inbound
-  messages, finalize durations, evidence), reads the pool sizes and the
-  receive-queue bytes when gathered (`GaugeFunc`) and counts sends left out
+  messages, finalize durations, evidence), reads the pool sizes, the
+  receive-queue bytes and the core's backlog (`wbft_backlog_messages`, from
+  the snapshot of the last step) when gathered (`GaugeFunc`) and counts sends left out
   by the recent cache (`wbft_send_suppressed_total`); `Node.Metrics()`
   returns the registry for the application to serve or read.
 - `observe/logcat`: log levels by module (observe.md 7.1). A node logs each
@@ -88,7 +89,8 @@ simulation)** covers:
   progress, timers, decisions; info for engine start/stop and finalized
   blocks) or `consensus.msg` (messages, outcomes, evidence); log settings
   do not change a run (`TestLogLevelsDoNotChangeRun`). The settings in force go to a `LOG_CONFIG` event and a
-  log line at start and on `Node.SetLogLevels`; `wbft_logLevels` reads them,
+  log line at start and on `Node.SetLogLevels`, with the application's
+  settings that name no module (`Config.LogUnmapped`, field `unmapped`); `wbft_logLevels` reads them,
   and `admin_wbftSetLogLevels` (`Node.AdminAPIs`, for IPC or an
   authenticated endpoint only) changes them.
 - `conformance/stepdriver`: the driver of the steps vectors, which a
