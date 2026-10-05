@@ -174,6 +174,13 @@ func (s *service) OnNewHead(ev app.NewHead) {
 	s.n.paths.put(hash, ev.Path)
 	s.n.emit(event.Record{Kind: event.NewHead, Fields: map[string]any{"number": ev.Header.Number.String(),
 		"hash": "0x" + hex.EncodeToString(hash.Bytes()), "path": ev.Path.String()}})
+	// The application stores a block's snapshot before it announces the
+	// head (app-interface.md 8.3); otherwise the child's PRE-PREPARE finds
+	// no parent snapshot.
+	if _, ok := s.n.snaps.Get(hash); !ok {
+		s.n.emit(event.Record{Kind: event.Health, Fields: map[string]any{"what": "snapshot_missing_at_head",
+			"h": ev.Header.Number.String(), "hash": "0x" + hex.EncodeToString(hash.Bytes()), "path": ev.Path.String()}})
+	}
 	if r := s.n.Runner(); r != nil {
 		r.NewHead(ev.Header)
 	}

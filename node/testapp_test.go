@@ -8,6 +8,7 @@ import (
 	"math/big"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -84,6 +85,9 @@ type testApp struct {
 	byHash map[types.Hash]*types.Block
 	head   *types.Block
 	heads  chan uint64 // receives the number of every new head
+	// noSnapshot makes FinalizeBlock announce a head without passing its
+	// authority snapshot (an application that breaks app-interface.md 8.3).
+	noSnapshot atomic.Bool
 }
 
 func newTestApp(cfgJSON []byte, g *types.Block) *testApp {
@@ -179,7 +183,7 @@ func (a *testApp) FinalizeBlock(_ context.Context, req app.FinalizeRequest) (app
 	}
 	a.insert(req.Block)
 	a.mu.Unlock()
-	if s, err := a.Snapshot(context.Background(), hash); err == nil {
+	if s, err := a.Snapshot(context.Background(), hash); err == nil && !a.noSnapshot.Load() {
 		a.cons.OnBlockExecuted(s)
 	}
 	a.cons.OnNewHead(app.NewHead{Header: req.Block.Header, Path: app.SealedLocally})
@@ -257,4 +261,11 @@ func waitEvent(t *testing.T, ev *syncBuffer, substr string, timeout time.Duratio
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
+}
+
+// block returns the stored block of a number.
+func (a *testApp) block(n uint64) *types.Block {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.byNum[n]
 }

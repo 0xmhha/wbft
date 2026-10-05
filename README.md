@@ -82,7 +82,10 @@ simulation)** covers:
   write-ahead log's fsyncs by method (`wbft_wal_fsync_seconds`, through
   `wal.Options.Now` and `Synced`), privval refusals by message code
   (`runner.Deps.Refused`) and parent snapshots missing from the authority
-  cache by context (`preprepare`, `header_only`, `build`); `Node.Metrics()`
+  cache by context (`preprepare`, `header_only`, `build`). A head announced
+  before its snapshot and a PRE-PREPARE whose parent snapshot is missing
+  are also HEALTH records (`snapshot_missing_at_head`,
+  `snapshot_missing_at_preprepare`); `Node.Metrics()`
   returns the registry for the application to serve or read.
 - `observe/logcat`: log levels by module (observe.md 7.1). A node logs each
   part under a fixed module name (`node`, `consensus.round`, `mempool`, ...)
