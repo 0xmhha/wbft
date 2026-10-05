@@ -5,10 +5,12 @@
 //	wbft-journal stat   --dir DIR
 //	wbft-journal verify --dir DIR
 //	wbft-journal prune  --dir DIR [--keep-heights N] [--max-bytes S] [--head H]
-//	wbft-journal export --dir DIR --out OUT --format r01 [--from H1] [--to H2]
+//	wbft-journal export --dir DIR --out OUT [--format bundle|r01] [--from H1] [--to H2] [--warmup K]
 //
-// export --format r01 writes the R-01 frame dump that wbft-inspector reads
-// (export.go); the bundle format for the analyzer is not available yet.
+// export --format bundle (the default) writes the journal bundle that the
+// analyzer and wbft-replay read: a tar file of the segments that cover the
+// heights, with a manifest (bundle.go). export --format r01 writes the R-01
+// frame dump that wbft-inspector reads into the directory OUT (export.go).
 //
 // Every command prints one JSON object. verify exits with 1 when it finds a
 // problem; every command exits with 2 on a usage or I/O error.
@@ -48,8 +50,9 @@ func run(args []string, fs fsys.FS, stdout, stderr io.Writer) int {
 	keep := set.Uint64("keep-heights", journal.DefaultOptions("").KeepHeights, "prune: keep the segments that hold heights >= head - N (0: no height rule)")
 	maxBytes := set.Int64("max-bytes", journal.DefaultOptions("").MaxBytes, "prune: then remove the oldest segments while the total is above S bytes (0: no size rule)")
 	head := set.String("head", "", "prune: the head height (decimal); default: the highest head in the index files")
-	out := set.String("out", "", "export: output directory (its frame files must not exist)")
-	format := set.String("format", "bundle", "export: r01 (the frame dump); bundle is not available yet")
+	out := set.String("out", "", "export: output file (bundle; must not exist) or directory (r01; its frame files must not exist)")
+	format := set.String("format", "bundle", "export: bundle (journal segments and manifest, a tar file) or r01 (the frame dump)")
+	warmup := set.Uint64("warmup", journal.DefaultBundleWarmup, "export bundle: heights before --from to include")
 	from := set.String("from", "", "export: first height (decimal) of the records")
 	to := set.String("to", "", "export: last height (decimal) of the records")
 	if err := set.Parse(args[1:]); err != nil {
@@ -78,10 +81,12 @@ func run(args []string, fs fsys.FS, stdout, stderr io.Writer) int {
 		switch {
 		case *out == "":
 			err = errors.New("export: --out is required")
-		case *format != "r01":
-			err = fmt.Errorf("export: format %q is not available (use --format r01)", *format)
-		default:
+		case *format == "bundle":
+			res, err = exportBundle(fs, *dir, *out, *from, *to, *warmup)
+		case *format == "r01":
 			res, err = exportR01(fs, *dir, *out, *from, *to)
+		default:
+			err = fmt.Errorf("export: unknown format %q (bundle or r01)", *format)
 		}
 	default:
 		fmt.Fprintln(stderr, usage)

@@ -2,7 +2,9 @@
 // consensus core and reports, step by step, whether the replayed outputs
 // match the recorded ones. It wraps conformance/stepdriver.RunTrace.
 //
-// With -journal it replays one journal directory and prints a summary:
+// With -journal it replays one journal directory, or a journal bundle
+// written by wbft-journal export that starts at the start of a writer run,
+// and prints a summary:
 //
 //	wbft-replay -journal DIR -chain FILE [-v]
 //
@@ -90,8 +92,30 @@ func replay(dir, chain string, opts stepdriver.TraceOptions, yield func(stepdriv
 	if err != nil {
 		return err
 	}
-	if st, err := os.Stat(dir); err != nil || !st.IsDir() {
-		return fmt.Errorf("journal directory %s: not a directory", dir)
+	st, err := os.Stat(dir)
+	if err != nil {
+		return fmt.Errorf("journal %s: %w", dir, err)
+	}
+	if !st.IsDir() {
+		// A journal bundle (wbft-journal export): extract it first.
+		tmp, err := os.MkdirTemp("", "wbft-replay-")
+		if err != nil {
+			return err
+		}
+		defer os.RemoveAll(tmp)
+		f, err := os.Open(dir)
+		if err != nil {
+			return err
+		}
+		m, err := journal.ReadBundle(f, fsys.OS{}, tmp)
+		_ = f.Close()
+		if err != nil {
+			return err
+		}
+		if !m.StartsAtRunStart {
+			return fmt.Errorf("journal bundle %s does not start at the start of a writer run; its engine runs cannot be rebuilt", dir)
+		}
+		dir = tmp
 	}
 	r, err := journal.OpenReader(fsys.OS{}, dir)
 	if err != nil {

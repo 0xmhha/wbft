@@ -66,9 +66,11 @@ simulation)** covers:
 - `observe/event` and `observe/journal`: the event vocabulary with a JSON
   Lines writer, and the message journal (a store of its own with pruning by
   height and size). `cmd/wbft-journal` reports on a journal directory
-  (`stat`), checks it (`verify`), prunes it (`prune`) and exports the R-01
-  frame dump that wbft-inspector reads (`export --format r01`), also while
-  a node writes it.
+  (`stat`), checks it (`verify`), prunes it (`prune`) and exports it, also
+  while a node writes it: as a bundle (`export`, a tar file of the segments
+  that cover a range of heights with a manifest, which the analyzer and
+  `cmd/wbft-replay` read) or as the R-01 frame dump that wbft-inspector
+  reads (`export --format r01`).
 - `conformance/stepdriver`: the driver of the steps vectors, which a
   transport adapter can reuse with its own frame stage, and `RunTrace`, which
   replays a message journal through the core (`cmd/wbft-replay`).
@@ -310,6 +312,10 @@ bin/wbft-replay -journal <dir>/<node> -chain <dir>/chain.rlp
 bin/wbft-journal stat --dir <data dir>/journal
 bin/wbft-journal verify --dir <data dir>/journal
 bin/wbft-journal prune --dir <data dir>/journal --keep-heights 100000
+# Bundle of heights 100 to 200 (two warm-up heights before), and its replay
+# when it starts at the start of a writer run:
+bin/wbft-journal export --dir <data dir>/journal --out node.tar --from 100 --to 200
+bin/wbft-replay -journal node.tar -chain <chain.rlp>
 # R-01 frame dump (frames-<run>.jsonl and payloads/) of heights 100 to 200:
 bin/wbft-journal export --dir <data dir>/journal --out <dir> --format r01 --from 100 --to 200
 ```

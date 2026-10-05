@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/0xmhha/wbft/conformance/sim"
 	"github.com/0xmhha/wbft/crypto/keccak"
+	"github.com/0xmhha/wbft/observe/journal"
 )
 
 func export(t *testing.T) (journalDir, chain string) {
@@ -73,5 +75,33 @@ func TestProtocol(t *testing.T) {
 	}
 	if strings.Join(types, ",") != "hello,step,step,step,done,error" {
 		t.Fatalf("answers %v", types)
+	}
+}
+
+// TestReplayBundle replays a journal bundle (wbft-journal export) of a
+// simulator node: the same steps as the journal directory, no mismatch.
+func TestReplayBundle(t *testing.T) {
+	jd, chain := export(t)
+	bundle := filepath.Join(t.TempDir(), "node.tar")
+	f, err := os.Create(bundle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m, err := journal.WriteBundle(nil, jd, f, journal.BundleOptions{})
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil || !m.StartsAtRunStart {
+		t.Fatalf("bundle %+v: %v", m, err)
+	}
+	var fromDir, fromBundle bytes.Buffer
+	if code := replayOnce(jd, chain, false, &fromDir); code != 0 {
+		t.Fatalf("directory: exit %d: %s", code, fromDir.String())
+	}
+	if code := replayOnce(bundle, chain, false, &fromBundle); code != 0 {
+		t.Fatalf("bundle: exit %d: %s", code, fromBundle.String())
+	}
+	if fromBundle.String() != fromDir.String() || !strings.Contains(fromBundle.String(), "mismatches 0") {
+		t.Fatalf("bundle replay %q, directory replay %q", fromBundle.String(), fromDir.String())
 	}
 }
