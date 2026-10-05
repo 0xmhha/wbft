@@ -124,3 +124,34 @@ func TestLogLevelsRPC(t *testing.T) {
 		t.Fatalf("a refused request changed the settings: %+v", got)
 	}
 }
+
+// TestNodeLogger gives an application module a logger at the level of the
+// node's settings, which a run-time change reaches.
+func TestNodeLogger(t *testing.T) {
+	key := testKey(0)
+	cj, g := testGenesis(t, key)
+	a := newTestApp(cj, g)
+	logs := &syncBuffer{}
+	settings := logcat.Settings{Base: logcat.LevelInfo, Modules: map[string]logcat.Level{"node": logcat.LevelOff}}
+	n, err := New(Config{DataDir: "/data", Log: &settings}, Deps{App: a, Authority: a, fs: fsys.NewMem(), key: key,
+		Logger: slog.New(slog.NewJSONHandler(logs, nil))})
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.cons = n.Consensus()
+	if err := n.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer stop(t, n)
+	lg := n.Logger(logcat.App)
+	lg.Debug("hidden")
+	lg.Info("shown")
+	if _, err := n.SetLogLevels(logcat.Settings{Base: logcat.LevelInfo, Modules: map[string]logcat.Level{"app": logcat.LevelDebug}}, "rpc"); err != nil {
+		t.Fatal(err)
+	}
+	lg.Debug("now shown")
+	out := logs.String()
+	if strings.Contains(out, `"msg":"hidden"`) || !strings.Contains(out, `"msg":"shown","module":"app"`) || !strings.Contains(out, `"msg":"now shown"`) {
+		t.Fatalf("app module lines:\n%s", out)
+	}
+}

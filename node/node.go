@@ -435,6 +435,11 @@ func (n *Node) openJournal(core consensus.Options, runID string) (*journal.FileW
 	return jw, nil
 }
 
+// Logger returns a logger of module m (logcat.Register for application
+// modules, before the node is made) that writes where the node's lines go,
+// at the level the node's log settings give m.
+func (n *Node) Logger(m logcat.Module) *slog.Logger { return n.levels.Logger(m, n.logBase) }
+
 // LogLevels returns the log settings in force.
 func (n *Node) LogLevels() logcat.Applied { return n.levels.Current() }
 
