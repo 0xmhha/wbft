@@ -18,8 +18,10 @@ import (
 	"github.com/0xmhha/wbft/internal/faultpoint"
 	"github.com/0xmhha/wbft/observe/event"
 	"github.com/0xmhha/wbft/observe/journal"
+	"github.com/0xmhha/wbft/observe/logcat"
 	"github.com/0xmhha/wbft/p2p/transport"
 	"github.com/0xmhha/wbft/types"
+	"slices"
 )
 
 // Clock is the runner's source of time. Durations are measured on the
@@ -141,6 +143,11 @@ type Deps struct {
 	Faults faultpoint.Handler
 	// Logger logs; nil discards.
 	Logger *slog.Logger
+	// ModuleLogger, when set, gives the loggers of the log modules: the
+	// runner writes a line of the logcat catalog for each event record,
+	// under consensus.round or consensus.msg, when that module's level
+	// lets it through (observe.md 7.1).
+	ModuleLogger func(logcat.Module) *slog.Logger
 }
 
 // Errors of the runner.
@@ -179,6 +186,9 @@ type Runner struct {
 	cfg Config
 	d   Deps
 	log *slog.Logger
+	// modLogs are the loggers of consensus.round and consensus.msg; nil
+	// without Deps.ModuleLogger.
+	modLogs map[logcat.Module]*slog.Logger
 
 	// Owned by the consensus goroutine.
 	core      *consensus.State
@@ -272,6 +282,10 @@ func New(cfg Config, d Deps) (*Runner, error) {
 		lg = slog.New(slog.DiscardHandler)
 	}
 	r := &Runner{cfg: cfg, d: d, log: lg, notify: make(chan struct{}, 1), floorSkip: map[string]bool{}}
+	if d.ModuleLogger != nil {
+		r.modLogs = map[logcat.Module]*slog.Logger{logcat.ConsensusRound: d.ModuleLogger(logcat.ConsensusRound),
+			logcat.ConsensusMsg: d.ModuleLogger(logcat.ConsensusMsg)}
+	}
 	r.timers.r = r
 	r.inbox.init(r)
 	r.commitCond = sync.NewCond(&r.commitMu)
@@ -504,14 +518,47 @@ func (r *Runner) checkHead() {
 // events of a step carry the moment the step started; the others the
 // moment they are written.
 func (r *Runner) emit(rec event.Record, step *uint64) {
-	if r.d.Events == nil {
+	if r.d.Events == nil && r.modLogs == nil {
 		return
 	}
 	at := event.Stamp{Wall: r.d.Clock.Now(), Mono: r.d.Clock.Mono(), Step: step}
 	if step != nil {
 		at.Wall, at.Mono = r.stepAt.Wall, r.stepAt.Mono
 	}
-	if err := r.d.Events.Write(rec, at); err != nil {
-		r.log.Warn("event write failed", "kind", rec.Kind, "err", err)
+	if r.d.Events != nil {
+		if err := r.d.Events.Write(rec, at); err != nil {
+			r.log.Warn("event write failed", "kind", rec.Kind, "err", err)
+		}
 	}
+	r.logEvent(rec, step)
+}
+
+// logEvent writes the catalog line of an event record when its module's
+// level lets it through; a disabled line costs one level check.
+func (r *Runner) logEvent(rec event.Record, step *uint64) {
+	e, ok := logcat.EventEntry(string(rec.Kind))
+	if !ok {
+		return
+	}
+	lg := r.modLogs[e.Module]
+	ctx := context.Background()
+	if lg == nil || !lg.Enabled(ctx, e.Level) {
+		return
+	}
+	attrs := make([]slog.Attr, 0, len(rec.Fields)+4)
+	if rec.View != nil {
+		attrs = append(attrs, slog.String("h", rec.View.Seq), slog.String("r", rec.View.Round))
+	}
+	if step != nil {
+		attrs = append(attrs, slog.Uint64("step", *step))
+	}
+	keys := make([]string, 0, len(rec.Fields))
+	for k := range rec.Fields { //wbft:unordered sorted below
+		keys = append(keys, k)
+	}
+	slices.Sort(keys)
+	for _, k := range keys {
+		attrs = append(attrs, slog.Any(k, rec.Fields[k]))
+	}
+	lg.LogAttrs(ctx, e.Level, e.Msg, attrs...)
 }

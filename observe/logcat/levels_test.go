@@ -137,3 +137,26 @@ func BenchmarkDisabled(b *testing.B) {
 		lg.Debug("message handled", "code", 0x13, "round", 2)
 	}
 }
+
+// TestCatalog lists every event kind of the runner's log lines with a
+// fixed, non-empty message, under consensus.round or consensus.msg.
+func TestCatalog(t *testing.T) {
+	kinds := EventKinds()
+	if len(kinds) == 0 {
+		t.Fatal("empty catalog")
+	}
+	seen := map[string]bool{}
+	for _, k := range kinds {
+		e, ok := EventEntry(k)
+		if !ok || e.Msg == "" || (e.Module != ConsensusRound && e.Module != ConsensusMsg) {
+			t.Fatalf("%s: %+v", k, e)
+		}
+		if seen[e.Msg] {
+			t.Fatalf("message %q used twice", e.Msg)
+		}
+		seen[e.Msg] = true
+	}
+	if _, ok := EventEntry("NODE_START"); ok {
+		t.Fatal("NODE_START is the node's, not the runner's")
+	}
+}

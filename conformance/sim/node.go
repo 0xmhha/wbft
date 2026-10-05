@@ -17,6 +17,7 @@ import (
 	"github.com/0xmhha/wbft/internal/fsys"
 	"github.com/0xmhha/wbft/observe/event"
 	"github.com/0xmhha/wbft/observe/journal"
+	"github.com/0xmhha/wbft/observe/logcat"
 	"github.com/0xmhha/wbft/p2p/transport"
 	"github.com/0xmhha/wbft/types"
 )
@@ -199,7 +200,7 @@ func (n *node) start() {
 	}
 	r, err := runner.New(runner.Config{Core: opts, ReplayWAL: n.spec.ReplayWAL, Manual: true},
 		runner.Deps{Chain: n.app, App: n.app, Transport: dedup, Net: n.tr, Signer: recSigner{signer, n}, WAL: log,
-			Clock: n.clock, Events: countingSink{n.ev, n.s}, Journal: jw, Rand: n.rng.IntN, Faults: fh})
+			Clock: n.clock, Events: countingSink{n.ev, n.s}, Journal: jw, Rand: n.rng.IntN, Faults: fh, Logger: n.s.logger(logcat.ConsensusRound), ModuleLogger: n.s.moduleLogger()})
 	if err != nil {
 		fail(err)
 		return

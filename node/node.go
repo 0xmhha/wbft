@@ -378,7 +378,7 @@ func (n *Node) start(ctx context.Context) error {
 	}
 	deps := runner.Deps{Chain: n.view, App: &appDriver{a: n.d.App, ctx: n.ctx}, Transport: dedup, Net: n.d.Transport,
 		Signer: n.signer, WAL: log, Clock: n.clock, Events: sink, Synchronising: n.synchronising,
-		Faults: n.d.faults, Logger: n.levels.Logger(logcat.ConsensusRound, n.logBase)}
+		Faults: n.d.faults, Logger: n.levels.Logger(logcat.ConsensusRound, n.logBase), ModuleLogger: n.Logger}
 	if jw != nil {
 		deps.Journal = jw
 	}
