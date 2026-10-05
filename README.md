@@ -71,6 +71,12 @@ simulation)** covers:
   that cover a range of heights with a manifest, which the analyzer and
   `cmd/wbft-replay` read) or as the R-01 frame dump that wbft-inspector
   reads (`export --format r01`).
+- `observe/metrics`: the metric registry (counters, gauges, histograms with
+  labels) and its Prometheus text export, on the standard library. A node
+  derives the metrics its event records carry (height and round, round
+  changes, timer expiries, messages by code and outcome, dropped inbound
+  messages, finalize durations, evidence); `Node.Metrics()` returns the
+  registry for the application to serve or read.
 - `conformance/stepdriver`: the driver of the steps vectors, which a
   transport adapter can reuse with its own frame stage, and `RunTrace`, which
   replays a message journal through the core (`cmd/wbft-replay`).
@@ -137,7 +143,7 @@ and the lint rules below enforce the direction.
 | Chain rules | `chain` | `chain/validator`, `chain/validator/source`, `chain/epoch`, `chain/header` | Quorums, validator sets and proposers, authority source interface, epoch computation, header and proposal rules |
 | Consensus | `consensus` | `consensus`, `consensus/inputlog`, `consensus/wal`, `consensus/privval`, `consensus/runner` | The pure state machine, input encoding for WAL and journal, write-ahead log, private validator, the runtime around the core |
 | Network | `p2p` | `p2p/transport`, `p2p/devnet` | Transport interface, deduplication and frame verdicts for the application adapters; a development transport |
-| Observation | `observe` | `observe`, `observe/event`, `observe/journal`, `observe/logcat`, `observe/participation` | Event vocabulary, message journal, logging, participation records |
+| Observation | `observe` | `observe`, `observe/event`, `observe/journal`, `observe/metrics`, `observe/logcat`, `observe/participation` | Event vocabulary, message journal, metrics, logging, participation records |
 | Node | `node`, `app`, `mempool`, `rpc`, `storage` | `node`, `app`, `mempool`, `rpc`, `storage/kv` | Node assembly, application boundary, transaction pool, RPC, key-value store |
 | Examples | `examples` | `examples/kvstore`, `examples/kvstore/cmd/wbft-kvstore` | An example application and its command for local networks |
 | Conformance | `conformance` | `conformance/stepdriver`, `conformance/sim` | The step driver for vectors and traces, the deterministic simulator |
@@ -175,7 +181,7 @@ rejects anything else (`.golangci.yml`, `scripts/check-deps.sh`):
 | `github.com/supranational/blst` | `crypto/bls` |
 | `github.com/holiman/uint256` | `chain/validator/source`, `chain/header`, `mempool`, the simulator's fake application |
 | `github.com/cockroachdb/pebble` | `storage/kv` |
-| `github.com/prometheus/client_golang` | `observe/metrics/prom` |
+| `github.com/prometheus/client_golang` | `observe/metrics/prom` (reserved; `observe/metrics` writes the text format itself) |
 | `github.com/BurntSushi/toml` | `node` |
 
 `golang.org/x/sys` is linked as a dependency of the go-ethereum `crypto`

@@ -21,6 +21,7 @@ import (
 	"github.com/0xmhha/wbft/observe/event"
 	"github.com/0xmhha/wbft/observe/evidence"
 	"github.com/0xmhha/wbft/observe/journal"
+	"github.com/0xmhha/wbft/observe/metrics"
 	"github.com/0xmhha/wbft/observe/rejection"
 	"github.com/0xmhha/wbft/p2p/transport"
 	"github.com/0xmhha/wbft/rpc"
@@ -71,13 +72,16 @@ type Node struct {
 	evid     *evidence.Store
 	rej      *rejection.Store
 	paths    *headPaths // the paths of recent heads (wbft_headerCopy)
-	ring     *eventRing // the recent event records (wbft_events)
-	r        *runner.Runner
-	pool     *mempool.TxPool
-	view     *chainView
-	floor    *types.Height // the sign floor this start set or kept
-	done     chan struct{} // closed by Stop; ends the node's goroutines
-	wg       sync.WaitGroup
+	metrics  *metrics.Registry
+	// eventMetrics derives metrics from the event records.
+	eventMetrics *metrics.EventMetrics
+	ring         *eventRing // the recent event records (wbft_events)
+	r            *runner.Runner
+	pool         *mempool.TxPool
+	view         *chainView
+	floor        *types.Height // the sign floor this start set or kept
+	done         chan struct{} // closed by Stop; ends the node's goroutines
+	wg           sync.WaitGroup
 
 	syncMu     sync.Mutex
 	syncLatest *app.SyncState // latest unhandled sync notification
@@ -117,8 +121,15 @@ func New(cfg Config, d Deps) (*Node, error) {
 		n.log = slog.New(slog.NewTextHandler(io.Discard, nil))
 	}
 	n.svc = &service{n: n}
+	n.metrics = metrics.NewRegistry()
+	n.eventMetrics = metrics.NewEventMetrics(n.metrics)
 	return n, nil
 }
+
+// Metrics returns the node's metric registry (observe.md 5). The
+// application serves it (metrics.Registry.Handler) or reads it (Gather)
+// and may register its own metrics in it.
+func (n *Node) Metrics() *metrics.Registry { return n.metrics }
 
 // Consensus returns the service the application calls.
 func (n *Node) Consensus() app.Consensus { return n.svc }
@@ -258,6 +269,7 @@ func (n *Node) start(ctx context.Context) error {
 		out = io.MultiWriter(n.d.Events, n.ring)
 	}
 	ev := event.NewWriter(out, self, runID)
+	ev.Observe(n.eventMetrics.Observe)
 	n.mu.Lock() // AppEvents reads it from other goroutines
 	n.ev = ev
 	n.mu.Unlock()
