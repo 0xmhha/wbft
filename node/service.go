@@ -59,7 +59,7 @@ func (s *service) PrepareConsensusFields(ctx context.Context, h *types.Header) (
 	if r := s.n.Runner(); r != nil {
 		ep, ec = r.Snapshot().ExtraSeals(parent)
 	}
-	return header.PrepareProposal(view.env(), h, header.ProposalInputs{Coinbase: signer.Address(),
+	return header.PrepareProposal(view.env(""), h, header.ProposalInputs{Coinbase: signer.Address(),
 		Signer: randaoSigner{signer, view.cfg.ChainID, h.Number}, ExtraPrepared: ep, ExtraCommitted: ec,
 		ParentGasTip: snap.GasTip()})
 }
@@ -70,6 +70,7 @@ func (s *service) snapshot(ctx context.Context, hash types.Hash) (*source.Author
 	if snap, ok := s.n.snaps.Get(hash); ok {
 		return snap, nil
 	}
+	s.n.cacheMisses.Inc("build")
 	snap, err := s.n.d.Authority.Snapshot(ctx, hash)
 	if err != nil {
 		return nil, fmt.Errorf("node: authority snapshot of %x: %w", hash, err)
@@ -140,7 +141,7 @@ func (s *service) VerifyHeader(_ context.Context, h *types.Header, opt app.Verif
 	if err != nil {
 		return err
 	}
-	return header.VerifyHeader(view.env(), h, nil, header.Options{CheckSeals: opt.CheckSeals, Mode: header.HeaderOnly})
+	return header.VerifyHeader(view.env("header_only"), h, nil, header.Options{CheckSeals: opt.CheckSeals, Mode: header.HeaderOnly})
 }
 
 // VerifyHeaders verifies a batch of headers.
@@ -154,7 +155,7 @@ func (s *service) VerifyHeaders(ctx context.Context, hs []*types.Header, opt app
 		close(out)
 		return out
 	}
-	return header.VerifyHeaders(ctx, view.env(), hs, header.Options{CheckSeals: opt.CheckSeals, Mode: header.HeaderOnly})
+	return header.VerifyHeaders(ctx, view.env("header_only"), hs, header.Options{CheckSeals: opt.CheckSeals, Mode: header.HeaderOnly})
 }
 
 // OnBlockExecuted stores the authority snapshot of an executed block.

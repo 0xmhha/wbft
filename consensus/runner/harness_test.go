@@ -329,6 +329,8 @@ type tnode struct {
 	opts   consensus.Options
 	// noJournal boots the runner without a message journal.
 	noJournal bool
+	// refused is the codes of the signatures privval refused (Deps.Refused).
+	refused []uint64
 }
 
 func newTNode(t *testing.T, k *keys, self int) *tnode {
@@ -376,7 +378,8 @@ func (n *tnode) boot() {
 	}
 	n.events = &eventLog{}
 	d := Deps{Chain: n.chain, App: n.app, Transport: dd, Net: n.net,
-		Signer: s, WAL: log, Clock: n.clock, Events: n.events, Journal: jw, Rand: rand.New(rand.NewPCG(1, 2)).IntN}
+		Signer: s, WAL: log, Clock: n.clock, Events: n.events, Journal: jw, Rand: rand.New(rand.NewPCG(1, 2)).IntN,
+		Refused: func(code uint64) { n.refused = append(n.refused, code) }}
 	if n.noJournal {
 		d.Journal = nil
 	}

@@ -80,6 +80,8 @@ type Node struct {
 	// eventMetrics derives metrics from the event records.
 	eventMetrics *metrics.EventMetrics
 	walFsync     *metrics.Histogram // wbft_wal_fsync_seconds
+	refusals     *metrics.Counter   // wbft_privval_refusals_total
+	cacheMisses  *metrics.Counter   // wbft_authority_cache_misses_total
 	ring         *eventRing         // the recent event records (wbft_events)
 	r            *runner.Runner
 	pool         *mempool.TxPool
@@ -131,6 +133,9 @@ func New(cfg Config, d Deps) (*Node, error) {
 	n.metrics = metrics.NewRegistry()
 	n.eventMetrics = metrics.NewEventMetrics(n.metrics)
 	n.registerStateMetrics()
+	n.refusals = n.metrics.Counter("wbft_privval_refusals_total", "Signatures privval refused, sign floor skips included, by message code.", "code")
+	n.cacheMisses = n.metrics.Counter("wbft_authority_cache_misses_total",
+		"Authority snapshots of a parent missing from the cache, once per parent and verification, by context.", "context")
 	n.walFsync = n.metrics.Histogram("wbft_wal_fsync_seconds", "Duration of the write-ahead log's fsyncs, by method.", fsyncBuckets, "method")
 	return n, nil
 }
@@ -262,7 +267,7 @@ func (n *Node) start(ctx context.Context) error {
 	n.mu.Lock()
 	n.chainCfg = cfg
 	n.rej = rej
-	n.view = &chainView{a: n.d.App, cfg: cfg, snaps: n.snaps, now: n.clock.Now, rej: rej, log: n.log}
+	n.view = &chainView{a: n.d.App, cfg: cfg, snaps: n.snaps, now: n.clock.Now, rej: rej, log: n.log, misses: n.cacheMisses}
 	n.mu.Unlock()
 
 	runID := n.cfg.RunID
@@ -384,7 +389,8 @@ func (n *Node) start(ctx context.Context) error {
 	}
 	deps := runner.Deps{Chain: n.view, App: &appDriver{a: n.d.App, ctx: n.ctx}, Transport: dedup, Net: n.d.Transport,
 		Signer: n.signer, WAL: log, Clock: n.clock, Events: sink, Synchronising: n.synchronising,
-		Faults: n.d.faults, Logger: n.levels.Logger(logcat.ConsensusRound, n.logBase), ModuleLogger: n.Logger}
+		Faults: n.d.faults, Logger: n.levels.Logger(logcat.ConsensusRound, n.logBase), ModuleLogger: n.Logger,
+		Refused: func(code uint64) { n.refusals.Inc(fmt.Sprintf("%#x", code)) }}
 	if jw != nil {
 		deps.Journal = jw
 	}

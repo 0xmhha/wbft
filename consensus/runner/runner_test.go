@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -172,6 +173,16 @@ func TestSignFloorSkip(t *testing.T) {
 	}
 	if v := n.r.Vars(); v.State != consensus.Preprepared {
 		t.Fatalf("state %s", v.State)
+	}
+	// The round's timeout makes a ROUND-CHANGE at the same height: privval
+	// refuses it too, Deps.Refused hears of each refusal, and the HEALTH
+	// record of the height is not repeated.
+	n.advance(10 * time.Second)
+	if len(n.refused) < 2 || n.refused[0] != uint64(codec.CodePrepare) || !slices.Contains(n.refused, uint64(codec.CodeRoundChange)) {
+		t.Fatalf("refused codes %#x", n.refused)
+	}
+	if h := n.events.kinds(event.Health); len(h) != 1 {
+		t.Fatalf("health after the round change %v", h)
 	}
 }
 

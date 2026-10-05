@@ -148,6 +148,10 @@ type Deps struct {
 	// under consensus.round or consensus.msg, when that module's level
 	// lets it through (observe.md 7.1).
 	ModuleLogger func(logcat.Module) *slog.Logger
+	// Refused, when set, is called for every signature privval refuses,
+	// with the code of the message (sign floor skips included; the HEALTH
+	// record of a skip is written once per height).
+	Refused func(code uint64)
 }
 
 // Errors of the runner.
