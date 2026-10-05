@@ -16,7 +16,10 @@ import (
 	"github.com/0xmhha/wbft/consensus/runner"
 	"github.com/0xmhha/wbft/crypto/bls"
 	"github.com/0xmhha/wbft/crypto/ecdsa"
+	"github.com/0xmhha/wbft/observe/logcat"
 	"github.com/0xmhha/wbft/types"
+	"io"
+	"log/slog"
 )
 
 // Validator is the key of one simulated node. Tests supply the keys; the
@@ -192,6 +195,12 @@ type Scenario struct {
 	Until       Stop
 	// NoProgress disables the progress check.
 	NoProgress bool
+	// Log, when set, makes every node's runner log through a logcat level
+	// table with these settings, into LogOut (nil: discarded). Log
+	// settings must not change a run: events and journals are the same
+	// whatever the levels (observe.md 7.1).
+	Log    *logcat.Settings
+	LogOut io.Writer
 }
 
 // DefaultNode is the default node: reference behaviour with the two
@@ -345,6 +354,8 @@ func ReadJournalDir(dir string) (nodes []string, chain []*types.Block, err error
 // simulation is the state of one run.
 type simulation struct {
 	sc       Scenario
+	levels   *logcat.Levels // nil without Scenario.Log
+	logBase  slog.Handler
 	l        loop
 	rng      *rand.Rand
 	cfg      *types.Config
@@ -430,6 +441,16 @@ func newSimulation(sc Scenario) (*simulation, error) {
 		byAddr: map[types.Address]*node{}, decided: map[uint64]types.Hash{}, decBlock: map[uint64]*types.Block{},
 		rounds: map[uint64]uint64{}, signed: map[signKey]types.Hash{}, verified: map[types.Hash]bool{}}
 	s.decided[0] = codec.BlockHash(g.Header)
+	if sc.Log != nil {
+		out := sc.LogOut
+		if out == nil {
+			out = io.Discard
+		}
+		s.levels, s.logBase = logcat.NewLevels(), slog.NewTextHandler(out, &slog.HandlerOptions{Level: logcat.SlogLevelTrace})
+		if _, err := s.levels.Apply(*sc.Log, "config", time.Time{}); err != nil {
+			return nil, fmt.Errorf("%w: %v", ErrScenario, err)
+		}
+	}
 	s.decBlock[0] = g
 	for i, v := range sc.Validators {
 		spec := DefaultNode()
@@ -617,4 +638,22 @@ func (s *simulation) result() *Result {
 		}
 	}
 	return res
+}
+
+// logger returns the logger of module m for a node's runner, or nil
+// without Scenario.Log.
+func (s *simulation) logger(m logcat.Module) *slog.Logger {
+	if s.levels == nil {
+		return nil
+	}
+	return s.levels.Logger(m, s.logBase)
+}
+
+// moduleLogger returns the module loggers for a node's runner, or nil
+// without Scenario.Log.
+func (s *simulation) moduleLogger() func(logcat.Module) *slog.Logger {
+	if s.levels == nil {
+		return nil
+	}
+	return s.logger
 }

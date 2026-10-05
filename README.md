@@ -81,7 +81,11 @@ simulation)** covers:
   part under a fixed module name (`node`, `consensus.round`, `mempool`, ...)
   at the level of `Config.Log` (a base level and per-module exceptions,
   `off` to `trace`); an unknown module refuses the start. A disabled call
-  makes no record. The settings in force go to a `LOG_CONFIG` event and a
+  makes no record. The runner writes one line of the fixed message catalog
+  (`logcat.EventEntry`) per event record, under `consensus.round` (round
+  progress, timers, decisions; info for engine start/stop and finalized
+  blocks) or `consensus.msg` (messages, outcomes, evidence); log settings
+  do not change a run (`TestLogLevelsDoNotChangeRun`). The settings in force go to a `LOG_CONFIG` event and a
   log line at start and on `Node.SetLogLevels`; `wbft_logLevels` reads them,
   and `admin_wbftSetLogLevels` (`Node.AdminAPIs`, for IPC or an
   authenticated endpoint only) changes them.
