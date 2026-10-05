@@ -44,6 +44,16 @@ type Writer struct {
 	node string
 	run  string
 	seq  uint64
+	obs  []func(Record, Stamp)
+}
+
+// Observe adds f, called with every record after it was written, in
+// write order, under the writer's lock: f must be quick and must not write
+// to w. Observers are added before the writer is used.
+func (w *Writer) Observe(f func(Record, Stamp)) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.obs = append(w.obs, f)
 }
 
 // NewWriter returns a writer for the node with address node in run run.
@@ -63,6 +73,9 @@ func (w *Writer) Write(r Record, at Stamp) error {
 		return err
 	}
 	w.seq++
+	for _, f := range w.obs {
+		f(r, at)
+	}
 	return nil
 }
 
