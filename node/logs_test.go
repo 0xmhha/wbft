@@ -40,7 +40,7 @@ func TestLogSettings(t *testing.T) {
 		t.Fatalf("no LOG_CONFIG event:\n%.2000s", ev.String())
 	}
 	out := logs.String()
-	if !strings.Contains(out, `"msg":"log settings","module":"node","level":"off"`) || !strings.Contains(out, `"unmapped":["p2p/server.go=5"]`) {
+	if !strings.Contains(out, `"msg":"log settings","module":"node","base_level":"off"`) || !strings.Contains(out, `"unmapped":["p2p/server.go=5"]`) {
 		t.Fatalf("no log settings line:\n%.2000s", out)
 	}
 	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
@@ -153,5 +153,59 @@ func TestNodeLogger(t *testing.T) {
 	out := logs.String()
 	if strings.Contains(out, `"msg":"hidden"`) || !strings.Contains(out, `"msg":"shown","module":"app"`) || !strings.Contains(out, `"msg":"now shown"`) {
 		t.Fatalf("app module lines:\n%s", out)
+	}
+}
+
+// TestLogProfileMatchesLines runs a node with every module at trace and
+// maps each line of the consensus modules and the log settings line to a
+// profile entry by message and module, at the entry's level; NODE_START
+// and wbft_nodeInfo report the profile's ID.
+func TestLogProfileMatchesLines(t *testing.T) {
+	key := testKey(0)
+	cj, g := testGenesis(t, key)
+	a := newTestApp(cj, g)
+	logs, ev := &syncBuffer{}, &syncBuffer{}
+	settings := logcat.Settings{Base: logcat.LevelTrace}
+	n, err := New(Config{DataDir: "/data", Log: &settings}, Deps{App: a, Authority: a, fs: fsys.NewMem(), key: key, Events: ev,
+		Logger: slog.New(slog.NewJSONHandler(logs, &slog.HandlerOptions{Level: logcat.SlogLevelTrace}))})
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.cons = n.Consensus()
+	if err := n.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	a.waitHead(t, 2, 20*time.Second)
+	info := (backend{n}).NodeInfo()
+	stop(t, n)
+
+	p := logcat.BuildProfile()
+	if info.LogProfile != p.ID || !strings.Contains(ev.String(), `"log_profile":"`+p.ID+`"`) {
+		t.Fatalf("profile id %q, NODE_START:\n%.500s", info.LogProfile, ev.String())
+	}
+	slogLevel := map[string]string{"trace": "DEBUG-4", "debug": "DEBUG", "info": "INFO", "warn": "WARN", "error": "ERROR"}
+	byLine := map[[2]string]logcat.ProfileEntry{}
+	for _, e := range p.Entries {
+		byLine[[2]string{e.Msg, e.Module}] = e
+	}
+	kinds := map[string]int{}
+	for _, l := range strings.Split(strings.TrimSpace(logs.String()), "\n") {
+		var line struct{ Msg, Level, Module string }
+		if err := json.Unmarshal([]byte(l), &line); err != nil {
+			t.Fatal(err)
+		}
+		if line.Module != "consensus.round" && line.Module != "consensus.msg" && line.Msg != "log settings" {
+			continue
+		}
+		e, ok := byLine[[2]string{line.Msg, line.Module}]
+		if !ok || slogLevel[e.Level] != line.Level {
+			t.Fatalf("a line the profile does not map: %s", l)
+		}
+		kinds[e.Kind]++
+	}
+	for _, k := range []string{"LOG_CONFIG", "ENGINE_START", "ROUND_ENTER", "SEND", "MSG_OUTCOME", "COMMIT_RESULT"} {
+		if kinds[k] == 0 {
+			t.Fatalf("no %s line: %v", k, kinds)
+		}
 	}
 }

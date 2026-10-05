@@ -84,7 +84,7 @@ func logLevels(a logcat.Applied) rpc.LogLevels {
 func (b backend) NodeInfo() rpc.NodeInfo {
 	n := b.n
 	info := rpc.NodeInfo{Impl: "wbft", Address: n.Address(), Mode: n.mode(), Version: moduleVersion(), Build: "cgo",
-		Improvements: n.improvements()}
+		LogProfile: logcat.ProfileID(), Improvements: n.improvements()}
 	n.mu.Lock()
 	info.Validator = n.signer != nil
 	if n.signer != nil {
