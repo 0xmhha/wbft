@@ -43,6 +43,14 @@ type metric struct {
 	buckets          []float64 // histogram upper bounds, ascending, without +Inf
 	mu               sync.Mutex
 	series           map[string]*series
+	collect          func() []Value // a gauge read when gathered
+}
+
+// Value is one series of a gauge read when gathered: its label values in
+// the order of the labels, and its value.
+type Value struct {
+	Labels []string
+	V      float64
 }
 
 type series struct {
@@ -128,6 +136,16 @@ func (g *Gauge) Set(v float64, labelValues ...string) {
 	g.m.mu.Unlock()
 }
 
+// GaugeFunc registers a gauge whose series f returns each time the registry
+// is gathered (a size or a queue length read from its owner). f must be
+// quick and safe for concurrent use.
+func (r *Registry) GaugeFunc(name, help string, labels []string, f func() []Value) {
+	m := r.register(name, help, KindGauge, nil, labels)
+	m.mu.Lock()
+	m.collect = f
+	m.mu.Unlock()
+}
+
 // Histogram counts observations in buckets.
 type Histogram struct{ m *metric }
 
@@ -187,6 +205,16 @@ func (r *Registry) Gather() []Family {
 	out := make([]Family, 0, len(ms))
 	for _, m := range ms {
 		m.mu.Lock()
+		if m.collect != nil {
+			f := m.collect
+			m.mu.Unlock()
+			vals := f() // outside the lock: f reads its owner
+			m.mu.Lock()
+			m.series = map[string]*series{}
+			for _, v := range vals {
+				m.get(v.Labels).value = v.V
+			}
+		}
 		keys := make([]string, 0, len(m.series))
 		for k := range m.series { //wbft:unordered sorted below
 			keys = append(keys, k)

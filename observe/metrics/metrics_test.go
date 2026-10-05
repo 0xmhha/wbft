@@ -150,3 +150,25 @@ func TestEventMetrics(t *testing.T) {
 		}
 	}
 }
+
+// TestGaugeFunc reads its series when the registry is gathered, and drops
+// series that are no longer returned.
+func TestGaugeFunc(t *testing.T) {
+	r := NewRegistry()
+	vals := []Value{{Labels: []string{"executable"}, V: 3}, {Labels: []string{"queued"}, V: 1}}
+	r.GaugeFunc("wbft_pool_txs", "Pool.", []string{"list"}, func() []Value { return vals })
+	var b bytes.Buffer
+	if err := r.WriteText(&b); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(b.String(), `wbft_pool_txs{list="executable"} 3`) || !strings.Contains(b.String(), `wbft_pool_txs{list="queued"} 1`) {
+		t.Fatalf("text %s", b.String())
+	}
+	vals = vals[:1]
+	vals[0].V = 4
+	b.Reset()
+	_ = r.WriteText(&b)
+	if !strings.Contains(b.String(), `wbft_pool_txs{list="executable"} 4`) || strings.Contains(b.String(), "queued") {
+		t.Fatalf("text after a change %s", b.String())
+	}
+}

@@ -237,6 +237,14 @@ func TestMempool(t *testing.T) {
 	if r, err := n.Mempool().Add(context.Background(), []byte{0}); err != nil || r.Code != mempool.CodeOK {
 		t.Fatalf("add: %v %v", r, err)
 	}
+	// The pool sizes are metrics.
+	var text strings.Builder
+	if err := n.Metrics().WriteText(&text); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(text.String(), `wbft_mempool_txs{list="executable"} 1`) || !strings.Contains(text.String(), `wbft_mempool_bytes{list="executable"} 1`) {
+		t.Fatalf("pool metrics:\n%s", text.String())
+	}
 	stop(t, n)
 
 	n, err = New(Config{DataDir: "/data", Mempool: MempoolConfig{Ordering: "stablenet"}},

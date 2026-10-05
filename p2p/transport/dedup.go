@@ -46,6 +46,9 @@ const (
 type DedupOptions struct {
 	// Self is the node's address; it is never a gossip target.
 	Self types.Address
+	// Suppressed, when set, is called for each send left out because the
+	// peer's recent cache holds the message (wbft_send_suppressed_total).
+	Suppressed func(cause event.SendCause)
 
 	// The fields below are reserved for optional behaviours of a later
 	// milestone and must be left at their zero values.
@@ -175,9 +178,12 @@ func (d *Dedup) Gossip(vs *validator.Set, code uint64, payload []byte, cause eve
 		out = CodeLegacy
 	}
 	cs, _ := d.t.(CauseSender)
-	if cs != nil {
-		for _, a := range suppressed {
+	for _, a := range suppressed {
+		if cs != nil {
 			cs.Suppressed(a, out, payload, cause, SuppressRecentCache)
+		}
+		if d.opt.Suppressed != nil {
+			d.opt.Suppressed(cause)
 		}
 	}
 	if len(targets) > 0 {
