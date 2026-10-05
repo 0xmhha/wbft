@@ -12,6 +12,7 @@ import (
 	"github.com/0xmhha/wbft/internal/faultpoint"
 	"github.com/0xmhha/wbft/internal/fsys"
 	"github.com/0xmhha/wbft/mempool"
+	"github.com/0xmhha/wbft/observe/logcat"
 	"github.com/0xmhha/wbft/p2p/transport"
 	"github.com/0xmhha/wbft/types"
 )
@@ -45,7 +46,15 @@ type Config struct {
 	Standalone bool
 	// Journal configures the message journal of a validator.
 	Journal JournalConfig
+	// Log is the base log level and the levels of single modules
+	// (observe.md 7.1); nil uses LogDefaults. An unknown module name
+	// refuses the start.
+	Log *logcat.Settings
 }
+
+// LogDefaults are the log settings of a node whose Config.Log is nil: every
+// module at info.
+var LogDefaults = logcat.Settings{Base: logcat.LevelInfo}
 
 // JournalConfig configures the message journal (package observe/journal):
 // the steps of the consensus core and the outcomes of received messages, in
@@ -86,7 +95,9 @@ type Deps struct {
 	Orderings []mempool.OrderingPolicy
 	// Events receives the event records as JSON Lines; nil drops them.
 	Events io.Writer
-	// Logger logs; nil discards.
+	// Logger is where the node's log lines go; nil discards. Each module
+	// logs through it with a module attribute, at the level the log
+	// settings give the module, so its handler should accept every level.
 	Logger *slog.Logger
 
 	// Test hooks: the file system, the fault handler, the clock and a key

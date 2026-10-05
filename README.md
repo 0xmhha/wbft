@@ -77,6 +77,12 @@ simulation)** covers:
   changes, timer expiries, messages by code and outcome, dropped inbound
   messages, finalize durations, evidence); `Node.Metrics()` returns the
   registry for the application to serve or read.
+- `observe/logcat`: log levels by module (observe.md 7.1). A node logs each
+  part under a fixed module name (`node`, `consensus.round`, `mempool`, ...)
+  at the level of `Config.Log` (a base level and per-module exceptions,
+  `off` to `trace`); an unknown module refuses the start. A disabled call
+  makes no record. The settings in force go to a `LOG_CONFIG` event and a
+  log line at start and on `Node.SetLogLevels`.
 - `conformance/stepdriver`: the driver of the steps vectors, which a
   transport adapter can reuse with its own frame stage, and `RunTrace`, which
   replays a message journal through the core (`cmd/wbft-replay`).

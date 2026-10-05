@@ -21,6 +21,7 @@ import (
 	"github.com/0xmhha/wbft/observe/event"
 	"github.com/0xmhha/wbft/observe/evidence"
 	"github.com/0xmhha/wbft/observe/journal"
+	"github.com/0xmhha/wbft/observe/logcat"
 	"github.com/0xmhha/wbft/observe/metrics"
 	"github.com/0xmhha/wbft/observe/rejection"
 	"github.com/0xmhha/wbft/p2p/transport"
@@ -73,6 +74,8 @@ type Node struct {
 	rej      *rejection.Store
 	paths    *headPaths // the paths of recent heads (wbft_headerCopy)
 	metrics  *metrics.Registry
+	levels   *logcat.Levels // log levels by module
+	logBase  slog.Handler   // where the modules' log lines go
 	// eventMetrics derives metrics from the event records.
 	eventMetrics *metrics.EventMetrics
 	ring         *eventRing // the recent event records (wbft_events)
@@ -116,10 +119,12 @@ func New(cfg Config, d Deps) (*Node, error) {
 	if n.clock == nil {
 		n.clock = runner.SystemClock()
 	}
-	n.log = d.Logger
-	if n.log == nil {
-		n.log = slog.New(slog.NewTextHandler(io.Discard, nil))
+	base := slog.Handler(slog.NewTextHandler(io.Discard, nil))
+	if d.Logger != nil {
+		base = d.Logger.Handler()
 	}
+	n.logBase, n.levels = base, logcat.NewLevels()
+	n.log = n.levels.Logger(logcat.Node, base)
 	n.svc = &service{n: n}
 	n.metrics = metrics.NewRegistry()
 	n.eventMetrics = metrics.NewEventMetrics(n.metrics)
@@ -204,6 +209,15 @@ func (n *Node) Start(ctx context.Context) error {
 }
 
 func (n *Node) start(ctx context.Context) error {
+	// 0. Log settings: an unknown module refuses the start.
+	settings := LogDefaults
+	if n.cfg.Log != nil {
+		settings = *n.cfg.Log
+	}
+	if _, err := n.levels.Apply(settings, "config", n.clock.Now()); err != nil {
+		return refuse("%v", err)
+	}
+
 	// 1. Application info.
 	info, err := n.d.App.Info(ctx)
 	if err != nil {
@@ -329,6 +343,7 @@ func (n *Node) start(ctx context.Context) error {
 	}
 
 	n.emit(event.Record{Kind: event.NodeStart, Fields: n.startFields(act, recov)})
+	n.logConfig(n.levels.Current())
 	if n.signer == nil {
 		return nil
 	}
@@ -363,7 +378,7 @@ func (n *Node) start(ctx context.Context) error {
 	}
 	deps := runner.Deps{Chain: n.view, App: &appDriver{a: n.d.App, ctx: n.ctx}, Transport: dedup, Net: n.d.Transport,
 		Signer: n.signer, WAL: log, Clock: n.clock, Events: sink, Synchronising: n.synchronising,
-		Faults: n.d.faults, Logger: n.log}
+		Faults: n.d.faults, Logger: n.levels.Logger(logcat.ConsensusRound, n.logBase)}
 	if jw != nil {
 		deps.Journal = jw
 	}
@@ -420,6 +435,36 @@ func (n *Node) openJournal(core consensus.Options, runID string) (*journal.FileW
 	return jw, nil
 }
 
+// LogLevels returns the log settings in force.
+func (n *Node) LogLevels() logcat.Applied { return n.levels.Current() }
+
+// SetLogLevels applies new log settings while the node runs (source: rpc,
+// or config for a reload) and records them; an unknown module changes
+// nothing and returns an error.
+func (n *Node) SetLogLevels(s logcat.Settings, source string) (logcat.Applied, error) {
+	a, err := n.levels.Apply(s, source, n.clock.Now())
+	if err != nil {
+		return logcat.Applied{}, err
+	}
+	n.logConfig(a)
+	return a, nil
+}
+
+// logConfig records the settings in force: a LOG_CONFIG event, and a log
+// line written whatever the level of the node module, so that a reader of
+// the log alone knows which lines were turned off (observe.md 7.1).
+func (n *Node) logConfig(a logcat.Applied) {
+	modules := map[string]any{}
+	for name, lv := range a.Modules { //wbft:unordered the event writer sorts keys
+		modules[name] = lv.String()
+	}
+	n.emit(event.Record{Kind: event.LogConfig, Fields: map[string]any{"level": a.Base.String(), "modules": modules, "source": a.Source}})
+	r := slog.NewRecord(n.clock.Now(), slog.LevelInfo, "log settings", 0)
+	r.AddAttrs(slog.String("module", logcat.Node.Name()), slog.String("level", a.Base.String()), slog.Any("modules", modules),
+		slog.String("source", a.Source))
+	_ = n.logBase.Handle(context.Background(), r)
+}
+
 // engineState is the state of the consensus engine as the frame dump
 // records it: running, syncing (stopped while the application
 // synchronises) or stopped.
@@ -462,7 +507,7 @@ func (n *Node) startPool(ctx context.Context) error {
 	}
 	limits := n.cfg.Mempool.Limits
 	if limits.Logger == nil {
-		limits.Logger = n.log
+		limits.Logger = n.levels.Logger(logcat.Mempool, n.logBase)
 	}
 	pool, err := mempool.New(limits, n.d.Admission, policy, n.d.TxTransport)
 	if err != nil {
