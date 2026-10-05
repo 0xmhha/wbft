@@ -100,6 +100,22 @@ func (m *metric) get(values []string) *series {
 	return s
 }
 
+// deleteWhere removes the series whose value of label is value; an unknown
+// label removes nothing.
+func (m *metric) deleteWhere(label, value string) {
+	i := slices.Index(m.labels, label)
+	if i < 0 {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for k, s := range m.series { //wbft:unordered deleting a set
+		if s.values[i] == value {
+			delete(m.series, k)
+		}
+	}
+}
+
 // Counter is a monotonically increasing value.
 type Counter struct{ m *metric }
 
@@ -120,6 +136,10 @@ func (c *Counter) Add(v float64, labelValues ...string) {
 
 // Inc adds 1.
 func (c *Counter) Inc(labelValues ...string) { c.Add(1, labelValues...) }
+
+// DeleteWhere removes the series whose value of label is value (a series
+// of something that no longer exists).
+func (c *Counter) DeleteWhere(label, value string) { c.m.deleteWhere(label, value) }
 
 // Gauge is a value that goes up and down.
 type Gauge struct{ m *metric }
@@ -157,6 +177,9 @@ func (r *Registry) Histogram(name, help string, buckets []float64, labels ...str
 	}
 	return &Histogram{r.register(name, help, KindHistogram, buckets, labels)}
 }
+
+// DeleteWhere removes the series whose value of label is value.
+func (h *Histogram) DeleteWhere(label, value string) { h.m.deleteWhere(label, value) }
 
 // Observe records v in the series of the label values.
 func (h *Histogram) Observe(v float64, labelValues ...string) {

@@ -58,7 +58,7 @@ func TestValidatorMetrics(t *testing.T) {
 
 	reg := metrics.NewRegistry()
 	m := newValidatorMetrics(reg)
-	m.attach(chain, func(types.Height, types.Hash) (*validator.Set, error) { return vs, nil }, nil)
+	m.attach(chain, func(types.Height, types.Hash) (*validator.Set, error) { return vs, nil }, nil, nil)
 	m.head(h1)
 	m.head(h2)
 	m.head(h2) // a repeated head is not counted again
@@ -112,7 +112,7 @@ func TestValidatorMetricsLabelLimit(t *testing.T) {
 	}
 	reg := metrics.NewRegistry()
 	m := newValidatorMetrics(reg)
-	m.attach(headerChain{}, func(types.Height, types.Hash) (*validator.Set, error) { return vs, nil }, nil)
+	m.attach(headerChain{}, func(types.Height, types.Hash) (*validator.Set, error) { return vs, nil }, nil, nil)
 	m.head(h)
 	// The delay histogram is off above the limit, "total" included.
 	m.observe(event.Record{Kind: event.RoundEnter, View: &event.View{Seq: "2", Round: "1"}}, event.Stamp{Wall: time.Unix(10, 0)})
@@ -155,7 +155,7 @@ func TestValidatorMessageDelay(t *testing.T) {
 	reg := metrics.NewRegistry()
 	m := newValidatorMetrics(reg)
 	m.attach(fixedHead{h: parent}, func(types.Height, types.Hash) (*validator.Set, error) { return vs, nil },
-		func(types.Height) time.Duration { return 2 * time.Second })
+		func(types.Height) time.Duration { return 2 * time.Second }, nil)
 	at := func(d time.Duration) event.Stamp { return event.Stamp{Wall: time.Unix(1000, 0).Add(d)} }
 	enter := func(round string, d time.Duration) {
 		m.observe(event.Record{Kind: event.RoundEnter, View: &event.View{Seq: "6", Round: round}}, at(d))
@@ -246,7 +246,7 @@ func TestValidatorMetricsBatchedHeads(t *testing.T) {
 
 	reg := metrics.NewRegistry()
 	m := newValidatorMetrics(reg)
-	m.attach(chain, valsAt, nil)
+	m.attach(chain, valsAt, nil, nil)
 	m.head(hs[1])
 	m.head(hs[4])
 	m.head(hs[4]) // announced again: counted once
@@ -256,7 +256,7 @@ func TestValidatorMetricsBatchedHeads(t *testing.T) {
 
 	reg = metrics.NewRegistry()
 	m = newValidatorMetrics(reg)
-	m.attach(fixedHead{headerChain: chain, h: hs[1]}, valsAt, nil)
+	m.attach(fixedHead{headerChain: chain, h: hs[1]}, valsAt, nil, nil)
 	m.head(hs[1]) // the start head itself is not counted
 	m.head(hs[4])
 	if got := committed(reg); got != 3 {
@@ -265,7 +265,7 @@ func TestValidatorMetricsBatchedHeads(t *testing.T) {
 
 	reg = metrics.NewRegistry()
 	m = newValidatorMetrics(reg)
-	m.attach(chain, valsAt, nil)
+	m.attach(chain, valsAt, nil, nil)
 	m.head(hs[4])
 	if got := committed(reg); got != 1 {
 		t.Fatalf("committed seals of the first head without a start head: %v, want 1", got)
@@ -292,7 +292,7 @@ func TestValidatorMetricsBackfillLimit(t *testing.T) {
 	}
 	reg := metrics.NewRegistry()
 	m := newValidatorMetrics(reg)
-	m.attach(fixedHead{headerChain: chain, h: hs[0]}, func(types.Height, types.Hash) (*validator.Set, error) { return vs, nil }, nil)
+	m.attach(fixedHead{headerChain: chain, h: hs[0]}, func(types.Height, types.Hash) (*validator.Set, error) { return vs, nil }, nil, nil)
 	m.head(hs[len(hs)-1])
 	for _, f := range reg.Gather() {
 		for _, s := range f.Samples {
@@ -301,5 +301,91 @@ func TestValidatorMetricsBackfillLimit(t *testing.T) {
 				t.Fatalf("committed seals %v, want %d", s.Value, backfillMax+1)
 			}
 		}
+	}
+}
+
+// TestValidatorSeriesPruned removes a validator's series once it has been
+// absent from the sets for more than two epochs (observe.md 5.2): a1
+// leaves after block 2 and, with epochs of 2 blocks, loses its series at
+// block 7. A message source never in a set is removed the same way from
+// the head it was first seen at; "total" and a0 stay.
+func TestValidatorSeriesPruned(t *testing.T) {
+	a0, a1, stranger := types.Address{0xa0}, types.Address{0xa1}, types.Address{0xee}
+	both, err := validator.NewSet([]types.Address{a0, a1}, make([][]byte, 2), types.ProposerPolicy{ID: types.RoundRobin})
+	if err != nil {
+		t.Fatal(err)
+	}
+	one, err := validator.NewSet([]types.Address{a0}, make([][]byte, 1), types.ProposerPolicy{ID: types.RoundRobin})
+	if err != nil {
+		t.Fatal(err)
+	}
+	chain := headerChain{byHash: map[types.Hash]*types.Header{}}
+	var hs []*types.Header
+	parent := types.Hash{}
+	for n := uint64(0); n <= 8; n++ {
+		x := &types.WBFTExtra{CommittedSeal: seal(0)}
+		if n <= 2 {
+			x.CommittedSeal = seal(0, 1)
+		}
+		if n == 2 { // rounds 0 and 1 missed: a0 and a1
+			x.Round = 2
+		}
+		h := &types.Header{Number: types.HeightFromUint64(n), ParentHash: parent}
+		if err := codec.SetExtra(h, x); err != nil {
+			t.Fatal(err)
+		}
+		chain.byHash[codec.BlockHash(h)] = h
+		hs, parent = append(hs, h), codec.BlockHash(h)
+	}
+	reg := metrics.NewRegistry()
+	m := newValidatorMetrics(reg)
+	m.attach(fixedHead{headerChain: chain, h: hs[0]}, func(n types.Height, _ types.Hash) (*validator.Set, error) {
+		if n.RefLow64() <= 2 {
+			return both, nil
+		}
+		return one, nil
+	}, func(types.Height) time.Duration { return 0 }, func(types.Height) uint64 { return 2 })
+	labels := func() map[string]bool {
+		out := map[string]bool{}
+		for _, f := range reg.Gather() {
+			for _, s := range f.Samples {
+				out[s.Labels["validator"]] = true
+			}
+		}
+		return out
+	}
+	hexOf := func(a types.Address) string { return "0x" + hex.EncodeToString(a[:]) }
+	for n := 1; n <= 3; n++ {
+		m.head(hs[n])
+	}
+	m.observe(event.Record{Kind: event.RoundEnter, View: &event.View{Seq: "4", Round: "1"}}, event.Stamp{Wall: time.Unix(1, 0)})
+	m.observe(event.Record{Kind: event.MsgOutcome, View: &event.View{Seq: "4", Round: "1"},
+		Fields: map[string]any{"code": uint64(0x13), "source": hexOf(stranger)}}, event.Stamp{Wall: time.Unix(2, 0)})
+	for n := 4; n <= 6; n++ {
+		m.head(hs[n])
+	}
+	if l := labels(); !l[hexOf(a1)] || !l[hexOf(stranger)] {
+		t.Fatalf("pruned too early at block 6: %v", l)
+	}
+	missedA1 := func() bool {
+		for _, f := range reg.Gather() {
+			for _, s := range f.Samples {
+				if f.Name == "wbft_validator_missed_proposals_total" && s.Labels["validator"] == hexOf(a1) {
+					return true
+				}
+			}
+		}
+		return false
+	}
+	if !missedA1() {
+		t.Fatal("no missed proposal of a1 before pruning")
+	}
+	m.head(hs[7])
+	if l := labels(); l[hexOf(a1)] || !l[hexOf(stranger)] || !l[hexOf(a0)] || !l["total"] {
+		t.Fatalf("at block 7: %v", l)
+	}
+	m.head(hs[8])
+	if l := labels(); l[hexOf(stranger)] || !l[hexOf(a0)] {
+		t.Fatalf("at block 8: %v", l)
 	}
 }

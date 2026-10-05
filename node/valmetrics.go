@@ -51,6 +51,7 @@ type validatorMetrics struct {
 	chain         types.ChainReader
 	valsAt        func(types.Height, types.Hash) (*validator.Set, error)
 	period        func(types.Height) time.Duration
+	epoch         func(types.Height) uint64 // blocks per epoch
 
 	mu      sync.Mutex
 	last    types.Height      // the last head counted, or the head the node started on
@@ -60,6 +61,10 @@ type validatorMetrics struct {
 	seq     string            // the sequence of the node's current view
 	starts  map[string]time.Time
 	seen    map[delayKey]bool
+	// inSet is the last head at which each validator label (an address)
+	// was in the set, or first sent a message; a label absent for two
+	// epochs loses its series (observe.md 5.2).
+	inSet map[string]types.Height
 }
 
 // delayKey is one source's message of one code in one round.
@@ -87,16 +92,17 @@ func newValidatorMetrics(r *metrics.Registry) *validatorMetrics {
 		delay: r.Histogram("wbft_validator_message_delay_seconds",
 			"First arrival of a validator's message in a view less the start of the round, by code.", delayBuckets, "validator", "code"),
 		heads: map[string]uint64{},
+		inSet: map[string]types.Height{},
 	}
 }
 
 // attach gives the chain the headers and validator sets are read from; the
 // node calls it when it starts.
 func (m *validatorMetrics) attach(chain types.ChainReader, valsAt func(types.Height, types.Hash) (*validator.Set, error),
-	period func(types.Height) time.Duration) {
+	period func(types.Height) time.Duration, epoch func(types.Height) uint64) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.chain, m.valsAt, m.period = chain, valsAt, period
+	m.chain, m.valsAt, m.period, m.epoch = chain, valsAt, period, epoch
 	if h := chain.Head(); h != nil {
 		// The node's own head is not counted: its blocks were counted, if
 		// at all, by an earlier run. The blocks after it are.
@@ -163,6 +169,9 @@ func (m *validatorMetrics) observe(r event.Record, at event.Stamp) {
 		return
 	}
 	m.seen[k] = true
+	if _, ok := m.inSet[src]; !ok && m.started {
+		m.inSet[src] = m.last
+	}
 	d := max(at.Wall.Sub(start), 0).Seconds()
 	label := fmt.Sprintf("%#x", code)
 	m.delay.Observe(d, "total", label)
@@ -224,6 +233,7 @@ func (m *validatorMetrics) countHead(h *types.Header) {
 	m.last, m.started = h.Number, true
 	m.setLen = vs.Len()
 	m.keepHead(h)
+	m.prune(h.Number, vs)
 	m.count(vs, x.PreparedSeal, "prepared")
 	m.count(vs, x.CommittedSeal, "committed")
 	parent := m.chain.Header(h.ParentHash, h.Number.RefLow64()-1) //wbft:low64 HH-28
@@ -269,6 +279,30 @@ func (m *validatorMetrics) countHead(h *types.Header) {
 	for i := range extra { //wbft:unordered counters commute
 		if mb, ok := pvs.Get(uint64(i)); ok {
 			m.inc(m.seals, pvs, mb.Addr, "extra")
+		}
+	}
+}
+
+// prune notes the members of the set at height n and removes the series of
+// every validator label absent from the sets for more than two epochs.
+func (m *validatorMetrics) prune(n types.Height, vs *validator.Set) {
+	for i := range vs.Len() {
+		a := vs.At(i).Addr
+		m.inSet["0x"+hex.EncodeToString(a[:])] = n
+	}
+	if m.epoch == nil {
+		return
+	}
+	window := 2 * m.epoch(n)
+	if window == 0 {
+		return
+	}
+	for v, at := range m.inSet { //wbft:unordered deleting a set
+		if at.AddUint64(window).Cmp(n) < 0 {
+			m.seals.DeleteWhere("validator", v)
+			m.missed.DeleteWhere("validator", v)
+			m.delay.DeleteWhere("validator", v)
+			delete(m.inSet, v)
 		}
 	}
 }

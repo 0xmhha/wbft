@@ -91,7 +91,8 @@ simulation)** covers:
   `validator="total"` and per address for a set of at most 64; the event
   records give `wbft_validator_message_delay_seconds{validator, code}`,
   each source's first message of a code in a view less the round's start
-  (off above 64 validators); `Node.Metrics()`
+  (off above 64 validators); a validator absent from the sets for more
+  than two epochs loses its series (`DeleteWhere`); `Node.Metrics()`
   returns the registry for the application to serve or read.
 - `observe/logcat`: log levels by module (observe.md 7.1). A node logs each
   part under a fixed module name (`node`, `consensus.round`, `mempool`, ...)

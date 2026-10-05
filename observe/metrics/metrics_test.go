@@ -172,3 +172,32 @@ func TestGaugeFunc(t *testing.T) {
 		t.Fatalf("text after a change %s", b.String())
 	}
 }
+
+// TestDeleteWhere removes the series of one label value from a counter and
+// a histogram and keeps the others; an unknown label removes nothing.
+func TestDeleteWhere(t *testing.T) {
+	r := NewRegistry()
+	c := r.Counter("c_total", "", "validator", "type")
+	h := r.Histogram("h_seconds", "", []float64{1}, "validator")
+	c.Inc("a", "x")
+	c.Inc("a", "y")
+	c.Inc("b", "x")
+	h.Observe(0.5, "a")
+	h.Observe(0.5, "b")
+	c.DeleteWhere("nope", "b")
+	c.DeleteWhere("validator", "a")
+	h.DeleteWhere("validator", "a")
+	var b strings.Builder
+	if err := r.WriteText(&b); err != nil {
+		t.Fatal(err)
+	}
+	out := b.String()
+	if strings.Contains(out, `validator="a"`) || !strings.Contains(out, `c_total{type="x",validator="b"} 1`) ||
+		!strings.Contains(out, `h_seconds_count{validator="b"} 1`) {
+		t.Fatalf("after deleting a:\n%s", out)
+	}
+	c.Inc("a", "x") // a series can come back
+	if got := r.Gather()[0].Samples; len(got) != 2 {
+		t.Fatalf("series %v", got)
+	}
+}
