@@ -184,6 +184,7 @@ func (s *service) OnNewHead(ev app.NewHead) {
 	if r := s.n.Runner(); r != nil {
 		r.NewHead(ev.Header)
 	}
+	s.n.valMetrics.head(ev.Header)
 }
 
 // OnSyncState records the synchronisation state; the node's sync loop

@@ -82,6 +82,7 @@ type Node struct {
 	walFsync     *metrics.Histogram // wbft_wal_fsync_seconds
 	refusals     *metrics.Counter   // wbft_privval_refusals_total
 	cacheMisses  *metrics.Counter   // wbft_authority_cache_misses_total
+	valMetrics   *validatorMetrics  // wbft_validator_*
 	ring         *eventRing         // the recent event records (wbft_events)
 	r            *runner.Runner
 	pool         *mempool.TxPool
@@ -136,6 +137,7 @@ func New(cfg Config, d Deps) (*Node, error) {
 	n.refusals = n.metrics.Counter("wbft_privval_refusals_total", "Signatures privval refused, sign floor skips included, by message code.", "code")
 	n.cacheMisses = n.metrics.Counter("wbft_authority_cache_misses_total",
 		"Authority snapshots of a parent missing from the cache, once per parent and verification, by context.", "context")
+	n.valMetrics = newValidatorMetrics(n.metrics)
 	n.walFsync = n.metrics.Histogram("wbft_wal_fsync_seconds", "Duration of the write-ahead log's fsyncs, by method.", fsyncBuckets, "method")
 	return n, nil
 }
@@ -268,6 +270,7 @@ func (n *Node) start(ctx context.Context) error {
 	n.chainCfg = cfg
 	n.rej = rej
 	n.view = &chainView{a: n.d.App, cfg: cfg, snaps: n.snaps, now: n.clock.Now, rej: rej, log: n.log, misses: n.cacheMisses, emit: n.emit}
+	n.valMetrics.attach(n.d.App, n.view.ValidatorsAt)
 	n.mu.Unlock()
 
 	runID := n.cfg.RunID
