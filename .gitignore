@@ -2,3 +2,8 @@
 /bin/
 *.test
 *.out
+# Command binaries built in the repository root (go build ./cmd/...)
+/wbft-journal
+/wbft-logprofile
+/wbft-replay
+/wbft-vector-adapter
