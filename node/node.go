@@ -267,7 +267,7 @@ func (n *Node) start(ctx context.Context) error {
 	n.mu.Lock()
 	n.chainCfg = cfg
 	n.rej = rej
-	n.view = &chainView{a: n.d.App, cfg: cfg, snaps: n.snaps, now: n.clock.Now, rej: rej, log: n.log, misses: n.cacheMisses}
+	n.view = &chainView{a: n.d.App, cfg: cfg, snaps: n.snaps, now: n.clock.Now, rej: rej, log: n.log, misses: n.cacheMisses, emit: n.emit}
 	n.mu.Unlock()
 
 	runID := n.cfg.RunID

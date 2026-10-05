@@ -2,9 +2,13 @@ package node
 
 import (
 	"context"
+	"errors"
 	"math/big"
+	"strings"
 	"testing"
+	"time"
 
+	"github.com/0xmhha/wbft/chain/header"
 	"github.com/0xmhha/wbft/chain/validator/source"
 	"github.com/0xmhha/wbft/codec"
 	"github.com/0xmhha/wbft/internal/fsys"
@@ -84,5 +88,38 @@ func TestBuildCacheMiss(t *testing.T) {
 	}
 	if got != 1 {
 		t.Fatalf("build misses %v", got)
+	}
+}
+
+// TestSnapshotMissingHealth: a node whose application passes every snapshot
+// reports no missing one; a head announced without its snapshot is
+// reported (snapshot_missing_at_head), and so is a PRE-PREPARE whose
+// parent snapshot the cache does not hold (snapshot_missing_at_preprepare).
+func TestSnapshotMissingHealth(t *testing.T) {
+	key := testKey(0)
+	cj, g := testGenesis(t, key)
+	a := newTestApp(cj, g)
+	ev := &syncBuffer{}
+	n := startNode(t, a, fsys.NewMem(), key, false, ev)
+	a.waitHead(t, 3, 20*time.Second)
+	if strings.Contains(ev.String(), "snapshot_missing") {
+		t.Fatalf("a snapshot missing with an orderly application:\n%.2000s", ev.String())
+	}
+	a.noSnapshot.Store(true)
+	h := a.Head().Number.RefLow64() //wbft:low64 HH-60
+	a.waitHead(t, h+1, 20*time.Second)
+	// The node's chain view with a cache that lacks block 1's snapshot.
+	v := *n.view
+	v.snaps = source.NewCache(4)
+	if _, err := v.ValidateProposal(a.block(2)); !errors.Is(err, header.ErrSnapshotMissing) {
+		t.Fatalf("validation without the parent snapshot: %v", err)
+	}
+	stop(t, n)
+	out := ev.String()
+	if !strings.Contains(out, `"what":"snapshot_missing_at_head"`) {
+		t.Fatalf("no snapshot_missing_at_head:\n%.2000s", out)
+	}
+	if strings.Count(out, `"what":"snapshot_missing_at_preprepare"`) != 1 || !strings.Contains(out, `"h":"2"`) {
+		t.Fatalf("no snapshot_missing_at_preprepare:\n%.2000s", out)
 	}
 }

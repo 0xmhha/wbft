@@ -15,6 +15,7 @@ import (
 	"github.com/0xmhha/wbft/codec"
 	"github.com/0xmhha/wbft/consensus"
 	"github.com/0xmhha/wbft/consensus/runner"
+	"github.com/0xmhha/wbft/observe/event"
 	"github.com/0xmhha/wbft/observe/metrics"
 	"github.com/0xmhha/wbft/observe/rejection"
 	"github.com/0xmhha/wbft/types"
@@ -32,6 +33,8 @@ type chainView struct {
 	// misses counts the parent snapshots the header rules did not find
 	// (wbft_authority_cache_misses_total); nil counts nothing.
 	misses *metrics.Counter
+	// emit writes a record to the node's event stream; nil drops it.
+	emit func(event.Record)
 }
 
 var _ runner.Chain = (*chainView)(nil)
@@ -90,6 +93,14 @@ func (c *chainView) ValidatorsAt(n types.Height, parent types.Hash) (*validator.
 // from the future is not rejected, the core waits for it.
 func (c *chainView) ValidateProposal(b *types.Block) (time.Duration, error) {
 	d, err := header.VerifyProposal(c.env("preprepare"), b)
+	if errors.Is(err, header.ErrSnapshotMissing) && c.emit != nil {
+		// The core sends no PREPARE for it and does not wait
+		// (app-interface.md 5.4): the application stored the parent
+		// before its snapshot.
+		c.emit(event.Record{Kind: event.Health, Fields: map[string]any{"what": "snapshot_missing_at_preprepare",
+			"h": b.Header.Number.String(), "hash": "0x" + hex.EncodeToString(codec.BlockHash(b.Header).Bytes()),
+			"parent": "0x" + hex.EncodeToString(b.Header.ParentHash.Bytes())}})
+	}
 	if err != nil && !errors.Is(err, header.ErrFutureBlock) && c.rej != nil {
 		r := rejection.Record{Number: b.Header.Number.String(), Hash: "0x" + hex.EncodeToString(codec.BlockHash(b.Header).Bytes()),
 			Path: "preprepare", Time: c.now()}
