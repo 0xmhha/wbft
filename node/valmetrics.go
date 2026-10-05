@@ -32,7 +32,10 @@ const validatorLabelLimit = 64
 //     rounds below the head's round.
 //
 // Each head number is counted once; a head at or below the last counted one
-// (a reorganisation, a restart of the core) is not counted again.
+// (a reorganisation, a restart of the core) is not counted again, and the
+// blocks between the last counted head and a new one, which an application
+// that stores a batch does not announce, are counted with it (up to
+// backfillMax).
 //
 // wbft_validator_message_delay_seconds{validator, code} comes from the event
 // records (observe): the first PRE-PREPARE, PREPARE, COMMIT and
@@ -49,13 +52,14 @@ type validatorMetrics struct {
 	valsAt        func(types.Height, types.Hash) (*validator.Set, error)
 	period        func(types.Height) time.Duration
 
-	mu     sync.Mutex
-	last   types.Height
-	setLen int               // members of the last head's set
-	heads  map[string]uint64 // header times by number, recent ones
-	seq    string            // the sequence of the node's current view
-	starts map[string]time.Time
-	seen   map[delayKey]bool
+	mu      sync.Mutex
+	last    types.Height      // the last head counted, or the head the node started on
+	started bool              // last is set
+	setLen  int               // members of the last head's set
+	heads   map[string]uint64 // header times by number, recent ones
+	seq     string            // the sequence of the node's current view
+	starts  map[string]time.Time
+	seen    map[delayKey]bool
 }
 
 // delayKey is one source's message of one code in one round.
@@ -63,6 +67,10 @@ type delayKey struct {
 	round, source string
 	code          uint64
 }
+
+// backfillMax is the number of blocks before an announced head counted
+// with it when the application announced only the last of a batch.
+const backfillMax = 256
 
 // headsKept is the number of header times kept for round-0 starts.
 const headsKept = 8
@@ -90,6 +98,9 @@ func (m *validatorMetrics) attach(chain types.ChainReader, valsAt func(types.Hei
 	defer m.mu.Unlock()
 	m.chain, m.valsAt, m.period = chain, valsAt, period
 	if h := chain.Head(); h != nil {
+		// The node's own head is not counted: its blocks were counted, if
+		// at all, by an earlier run. The blocks after it are.
+		m.last, m.started = h.Number, true
 		m.keepHead(h)
 		if vs, err := valsAt(h.Number.AddUint64(1), codec.BlockHash(h)); err == nil {
 			m.setLen = vs.Len()
@@ -179,9 +190,29 @@ func (m *validatorMetrics) head(h *types.Header) {
 	if m.chain == nil || m.valsAt == nil {
 		return
 	}
-	if !m.last.IsZero() && h.Number.Cmp(m.last) <= 0 {
+	if m.started && h.Number.Cmp(m.last) <= 0 {
 		return
 	}
+	// An application may announce only the last block of a batch it
+	// stored (the downloader): count the blocks between the last counted
+	// head and h too, oldest first, up to backfillMax of them.
+	hs := []*types.Header{h}
+	if m.started {
+		for cur := h; len(hs) <= backfillMax && cur.Number.Cmp(m.last.AddUint64(1)) > 0; {
+			p := m.chain.Header(cur.ParentHash, cur.Number.RefLow64()-1) //wbft:low64 HH-28
+			if p == nil {
+				break
+			}
+			hs, cur = append(hs, p), p
+		}
+	}
+	for i := len(hs) - 1; i >= 0; i-- {
+		m.countHead(hs[i])
+	}
+}
+
+// countHead counts the seals and missed proposals of one header.
+func (m *validatorMetrics) countHead(h *types.Header) {
 	x, err := codec.DecodeExtra(h)
 	if err != nil {
 		return
@@ -190,7 +221,7 @@ func (m *validatorMetrics) head(h *types.Header) {
 	if err != nil {
 		return
 	}
-	m.last = h.Number
+	m.last, m.started = h.Number, true
 	m.setLen = vs.Len()
 	m.keepHead(h)
 	m.count(vs, x.PreparedSeal, "prepared")
