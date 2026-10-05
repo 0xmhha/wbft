@@ -80,7 +80,9 @@ simulation)** covers:
   the snapshot of the last step) when gathered (`GaugeFunc`), counts sends left out
   by the recent cache (`wbft_send_suppressed_total`) and times the
   write-ahead log's fsyncs by method (`wbft_wal_fsync_seconds`, through
-  `wal.Options.Now` and `Synced`); `Node.Metrics()`
+  `wal.Options.Now` and `Synced`), privval refusals by message code
+  (`runner.Deps.Refused`) and parent snapshots missing from the authority
+  cache by context (`preprepare`, `header_only`, `build`); `Node.Metrics()`
   returns the registry for the application to serve or read.
 - `observe/logcat`: log levels by module (observe.md 7.1). A node logs each
   part under a fixed module name (`node`, `consensus.round`, `mempool`, ...)

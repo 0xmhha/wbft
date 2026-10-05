@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/0xmhha/wbft/app"
@@ -14,6 +15,7 @@ import (
 	"github.com/0xmhha/wbft/codec"
 	"github.com/0xmhha/wbft/consensus"
 	"github.com/0xmhha/wbft/consensus/runner"
+	"github.com/0xmhha/wbft/observe/metrics"
 	"github.com/0xmhha/wbft/observe/rejection"
 	"github.com/0xmhha/wbft/types"
 )
@@ -27,13 +29,55 @@ type chainView struct {
 	now   func() time.Time
 	rej   *rejection.Store // the rejected proposals (wbft_rejections)
 	log   *slog.Logger
+	// misses counts the parent snapshots the header rules did not find
+	// (wbft_authority_cache_misses_total); nil counts nothing.
+	misses *metrics.Counter
 }
 
 var _ runner.Chain = (*chainView)(nil)
 
-// env is the environment of the header rules.
-func (c *chainView) env() *header.Env {
-	return &header.Env{Config: c.cfg, Chain: c.a, BadBlock: c.a.IsBadBlock, PartB: c.a, Snapshots: c.snaps, Now: c.now}
+// env is the environment of the header rules; context names the
+// verification for the cache miss counter (preprepare, header_only), and
+// "" counts nothing (building, whose miss service.snapshot counts).
+func (c *chainView) env(context string) *header.Env {
+	return &header.Env{Config: c.cfg, Chain: c.a, BadBlock: c.a.IsBadBlock, PartB: c.a, Snapshots: c.snapshots(context), Now: c.now}
+}
+
+// snapshots is the snapshot cache as the header rules of one verification
+// read it.
+func (c *chainView) snapshots(context string) header.SnapshotReader {
+	if c.misses == nil || context == "" {
+		return c.snaps
+	}
+	return &countedSnaps{c: c.snaps, misses: c.misses, context: context}
+}
+
+// countedSnaps reads the snapshot cache for one verification and counts a
+// missing parent once, though the header rules look it up at two steps
+// (H15b, H21). VerifyHeaders reads it from its own goroutine.
+type countedSnaps struct {
+	c       *source.Cache
+	misses  *metrics.Counter
+	context string
+	mu      sync.Mutex
+	counted map[types.Hash]bool
+}
+
+func (s *countedSnaps) Get(hash types.Hash) (*source.AuthoritySnapshot, bool) {
+	snap, ok := s.c.Get(hash)
+	if ok && snap != nil {
+		return snap, ok
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.counted[hash] {
+		if s.counted == nil {
+			s.counted = map[types.Hash]bool{}
+		}
+		s.counted[hash] = true
+		s.misses.Inc(s.context)
+	}
+	return snap, ok
 }
 
 func (c *chainView) Head() *types.Header { return c.a.Head() }
@@ -45,7 +89,7 @@ func (c *chainView) ValidatorsAt(n types.Height, parent types.Hash) (*validator.
 // ValidateProposal verifies a proposal and records a rejection; a proposal
 // from the future is not rejected, the core waits for it.
 func (c *chainView) ValidateProposal(b *types.Block) (time.Duration, error) {
-	d, err := header.VerifyProposal(c.env(), b)
+	d, err := header.VerifyProposal(c.env("preprepare"), b)
 	if err != nil && !errors.Is(err, header.ErrFutureBlock) && c.rej != nil {
 		r := rejection.Record{Number: b.Header.Number.String(), Hash: "0x" + hex.EncodeToString(codec.BlockHash(b.Header).Bytes()),
 			Path: "preprepare", Time: c.now()}

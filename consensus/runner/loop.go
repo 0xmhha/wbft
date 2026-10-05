@@ -352,6 +352,9 @@ func (r *Runner) refused(sc *stepCtx, m *codec.Message, err error) {
 			return
 		}
 	}
+	if r.d.Refused != nil {
+		r.d.Refused(uint64(m.Code))
+	}
 	what := "privval_refusal"
 	if errors.Is(err, privval.ErrBelowSignFloor) {
 		what = "sign_floor_skip"
