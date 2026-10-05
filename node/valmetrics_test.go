@@ -2,10 +2,13 @@ package node
 
 import (
 	"encoding/hex"
+	"math"
 	"testing"
+	"time"
 
 	"github.com/0xmhha/wbft/chain/validator"
 	"github.com/0xmhha/wbft/codec"
+	"github.com/0xmhha/wbft/observe/event"
 	"github.com/0xmhha/wbft/observe/metrics"
 	"github.com/0xmhha/wbft/types"
 )
@@ -55,7 +58,7 @@ func TestValidatorMetrics(t *testing.T) {
 
 	reg := metrics.NewRegistry()
 	m := newValidatorMetrics(reg)
-	m.attach(chain, func(types.Height, types.Hash) (*validator.Set, error) { return vs, nil })
+	m.attach(chain, func(types.Height, types.Hash) (*validator.Set, error) { return vs, nil }, nil)
 	m.head(h1)
 	m.head(h2)
 	m.head(h2) // a repeated head is not counted again
@@ -93,7 +96,7 @@ func TestValidatorMetrics(t *testing.T) {
 }
 
 // TestValidatorMetricsLabelLimit records only "total" for a set above the
-// label limit.
+// label limit, and no message delay at all.
 func TestValidatorMetricsLabelLimit(t *testing.T) {
 	addrs := make([]types.Address, validatorLabelLimit+1)
 	for i := range addrs {
@@ -109,9 +112,16 @@ func TestValidatorMetricsLabelLimit(t *testing.T) {
 	}
 	reg := metrics.NewRegistry()
 	m := newValidatorMetrics(reg)
-	m.attach(headerChain{}, func(types.Height, types.Hash) (*validator.Set, error) { return vs, nil })
+	m.attach(headerChain{}, func(types.Height, types.Hash) (*validator.Set, error) { return vs, nil }, nil)
 	m.head(h)
+	// The delay histogram is off above the limit, "total" included.
+	m.observe(event.Record{Kind: event.RoundEnter, View: &event.View{Seq: "2", Round: "1"}}, event.Stamp{Wall: time.Unix(10, 0)})
+	m.observe(event.Record{Kind: event.MsgOutcome, View: &event.View{Seq: "2", Round: "1"},
+		Fields: map[string]any{"code": uint64(0x13), "source": "0x01"}}, event.Stamp{Wall: time.Unix(11, 0)})
 	for _, f := range reg.Gather() {
+		if f.Name == "wbft_validator_message_delay_seconds" && len(f.Samples) != 0 {
+			t.Fatalf("delays above the limit: %+v", f.Samples)
+		}
 		for _, s := range f.Samples {
 			if s.Labels["validator"] != "total" {
 				t.Fatalf("a series of %s above the limit", s.Labels["validator"])
@@ -119,6 +129,83 @@ func TestValidatorMetricsLabelLimit(t *testing.T) {
 			if f.Name == "wbft_validator_seals_total" && s.Value != 2 {
 				t.Fatalf("total %v", s.Value)
 			}
+		}
+	}
+}
+
+// fixedHead is a headerChain whose head is h.
+type fixedHead struct {
+	headerChain
+	h *types.Header
+}
+
+func (c fixedHead) Head() *types.Header { return c.h }
+
+// TestValidatorMessageDelay measures a source's first message of a code in
+// a view from the round's start: the parent's time plus the block period
+// for round 0, the node's ROUND_ENTER for a later round. Repeats, messages
+// the prefilter dropped and messages of another view are not recorded.
+func TestValidatorMessageDelay(t *testing.T) {
+	addrs := []types.Address{{0xa0}, {0xa1}, {0xa2}, {0xa3}}
+	vs, err := validator.NewSet(addrs, make([][]byte, 4), types.ProposerPolicy{ID: types.RoundRobin})
+	if err != nil {
+		t.Fatal(err)
+	}
+	parent := &types.Header{Number: types.HeightFromUint64(5), Time: 1000}
+	reg := metrics.NewRegistry()
+	m := newValidatorMetrics(reg)
+	m.attach(fixedHead{h: parent}, func(types.Height, types.Hash) (*validator.Set, error) { return vs, nil },
+		func(types.Height) time.Duration { return 2 * time.Second })
+	at := func(d time.Duration) event.Stamp { return event.Stamp{Wall: time.Unix(1000, 0).Add(d)} }
+	enter := func(round string, d time.Duration) {
+		m.observe(event.Record{Kind: event.RoundEnter, View: &event.View{Seq: "6", Round: round}}, at(d))
+	}
+	msg := func(seq, round string, code uint64, src int, check string, d time.Duration) {
+		f := map[string]any{"code": code, "source": "0x" + hex.EncodeToString(addrs[src][:])}
+		if check != "" {
+			f["check"] = check
+		}
+		m.observe(event.Record{Kind: event.MsgOutcome, View: &event.View{Seq: seq, Round: round}, Fields: f}, at(d))
+	}
+	enter("0", time.Second)                            // the start is 1000+2s, not this
+	msg("6", "0", 0x13, 1, "", 2300*time.Millisecond)  // 0.3 s
+	msg("6", "0", 0x13, 1, "", 3*time.Second)          // a repeat
+	msg("6", "0", 0x13, 2, "prefilter", 3*time.Second) // dropped before the core
+	msg("7", "0", 0x13, 2, "", 3*time.Second)          // ahead of the view
+	msg("6", "1", 0x13, 2, "", 3*time.Second)          // round 1 not entered yet
+	enter("1", 10*time.Second)
+	msg("6", "1", 0x14, 3, "", 14*time.Second) // 4 s
+	// Block 6 becomes the head at time 1020: round 0 of 7 starts at 1022.
+	h6 := &types.Header{Number: types.HeightFromUint64(6), Time: 1020}
+	if err := codec.SetExtra(h6, &types.WBFTExtra{}); err != nil {
+		t.Fatal(err)
+	}
+	m.head(h6)
+	m.observe(event.Record{Kind: event.RoundEnter, View: &event.View{Seq: "7", Round: "0"}}, at(21*time.Second))
+	msg("7", "0", 0x12, 0, "", 22500*time.Millisecond) // 0.5 s
+
+	type obs struct {
+		n   uint64
+		sum float64
+	}
+	got := map[string]obs{}
+	for _, f := range reg.Gather() {
+		if f.Name != "wbft_validator_message_delay_seconds" {
+			continue
+		}
+		for _, s := range f.Samples {
+			got[s.Labels["validator"]+"/"+s.Labels["code"]] = obs{s.Count, s.Sum}
+		}
+	}
+	a := func(i int) string { return "0x" + hex.EncodeToString(addrs[i][:]) }
+	want := map[string]obs{"total/0x13": {1, 0.3}, a(1) + "/0x13": {1, 0.3}, "total/0x14": {1, 4}, a(3) + "/0x14": {1, 4},
+		"total/0x12": {1, 0.5}, a(0) + "/0x12": {1, 0.5}}
+	if len(got) != len(want) {
+		t.Fatalf("series %v", got)
+	}
+	for k, w := range want {
+		if g := got[k]; g.n != w.n || math.Abs(g.sum-w.sum) > 1e-9 {
+			t.Errorf("%s = %+v, want %+v", k, g, w)
 		}
 	}
 }

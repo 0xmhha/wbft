@@ -181,10 +181,12 @@ func (s *service) OnNewHead(ev app.NewHead) {
 		s.n.emit(event.Record{Kind: event.Health, Fields: map[string]any{"what": "snapshot_missing_at_head",
 			"h": ev.Header.Number.String(), "hash": "0x" + hex.EncodeToString(hash.Bytes()), "path": ev.Path.String()}})
 	}
+	// Before the core hears of the head: the child's round-0 start is the
+	// head's time.
+	s.n.valMetrics.head(ev.Header)
 	if r := s.n.Runner(); r != nil {
 		r.NewHead(ev.Header)
 	}
-	s.n.valMetrics.head(ev.Header)
 }
 
 // OnSyncState records the synchronisation state; the node's sync loop
