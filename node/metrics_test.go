@@ -39,6 +39,10 @@ func TestNodeMetrics(t *testing.T) {
 		t.Fatalf("no fsync observed: %v", got)
 	}
 	// The validator's seals in the stored headers, counted at each new head.
+	// Its own messages, delivered to itself, measured from the round start.
+	if got["wbft_validator_message_delay_seconds"] == 0 {
+		t.Fatalf("no message delays: %v", got)
+	}
 	if got["wbft_validator_seals_total"] == 0 {
 		t.Fatalf("no validator seals: %v", got)
 	}
