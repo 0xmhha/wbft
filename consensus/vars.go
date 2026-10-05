@@ -158,6 +158,8 @@ type Snapshot struct {
 	PriorValidators *validator.Set
 	ExtraPrepare    []ExtraSealEntry
 	ExtraCommit     []ExtraSealEntry
+	// Backlog is the number of backlogged messages of all sources.
+	Backlog int
 }
 
 // ExtraSealEntry is one stored extra seal.
@@ -192,6 +194,9 @@ func (s *State) Snapshot() *Snapshot {
 	}
 	snap.ExtraPrepare = conv(s.extraPrepare)
 	snap.ExtraCommit = conv(s.extraCommit)
+	for _, q := range s.backlog { //wbft:unordered a sum
+		snap.Backlog += len(q.entries)
+	}
 	return snap
 }
 

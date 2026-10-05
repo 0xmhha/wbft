@@ -50,6 +50,10 @@ type Config struct {
 	// (observe.md 7.1); nil uses LogDefaults. An unknown module name
 	// refuses the start.
 	Log *logcat.Settings
+	// LogUnmapped lists log settings of the application that name no
+	// module (wbft-stablenet's --log.vmodule patterns of single files);
+	// they are recorded with the settings in force (LOG_CONFIG unmapped).
+	LogUnmapped []string
 }
 
 // LogDefaults are the log settings of a node whose Config.Log is nil: every

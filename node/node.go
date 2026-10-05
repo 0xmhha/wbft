@@ -466,10 +466,17 @@ func (n *Node) logConfig(a logcat.Applied) {
 	for name, lv := range a.Modules { //wbft:unordered the event writer sorts keys
 		modules[name] = lv.String()
 	}
-	n.emit(event.Record{Kind: event.LogConfig, Fields: map[string]any{"level": a.Base.String(), "modules": modules, "source": a.Source}})
+	f := map[string]any{"level": a.Base.String(), "modules": modules, "source": a.Source}
+	if len(n.cfg.LogUnmapped) > 0 {
+		f["unmapped"] = n.cfg.LogUnmapped
+	}
+	n.emit(event.Record{Kind: event.LogConfig, Fields: f})
 	r := slog.NewRecord(n.clock.Now(), slog.LevelInfo, "log settings", 0)
 	r.AddAttrs(slog.String("module", logcat.Node.Name()), slog.String("level", a.Base.String()), slog.Any("modules", modules),
 		slog.String("source", a.Source))
+	if len(n.cfg.LogUnmapped) > 0 {
+		r.AddAttrs(slog.Any("unmapped", n.cfg.LogUnmapped))
+	}
 	_ = n.logBase.Handle(context.Background(), r)
 }
 
@@ -806,6 +813,13 @@ func (n *Node) registerStateMetrics() {
 			return nil
 		}
 		return []metrics.Value{{Labels: []string{"executable"}, V: float64(s.ExecBytes)}, {Labels: []string{"queued"}, V: float64(s.QueuedBytes)}}
+	})
+	n.metrics.GaugeFunc("wbft_backlog_messages", "Messages the core keeps for a later view, of all sources.", nil, func() []metrics.Value {
+		r := n.Runner()
+		if r == nil {
+			return nil
+		}
+		return []metrics.Value{{V: float64(r.Snapshot().Backlog)}}
 	})
 	n.metrics.GaugeFunc("wbft_peer_inbound_queue_bytes", "Payload bytes waiting in the receive queues of all peers.", nil, func() []metrics.Value {
 		r := n.Runner()
