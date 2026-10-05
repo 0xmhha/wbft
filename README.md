@@ -85,7 +85,10 @@ simulation)** covers:
   cache by context (`preprepare`, `header_only`, `build`). A head announced
   before its snapshot and a PRE-PREPARE whose parent snapshot is missing
   are also HEALTH records (`snapshot_missing_at_head`,
-  `snapshot_missing_at_preprepare`); `Node.Metrics()`
+  `snapshot_missing_at_preprepare`). Each new head's header gives the
+  per-validator series `wbft_validator_seals_total{validator, type}` and
+  `wbft_validator_missed_proposals_total{validator}`, always under
+  `validator="total"` and per address for a set of at most 64; `Node.Metrics()`
   returns the registry for the application to serve or read.
 - `observe/logcat`: log levels by module (observe.md 7.1). A node logs each
   part under a fixed module name (`node`, `consensus.round`, `mempool`, ...)

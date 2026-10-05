@@ -38,6 +38,10 @@ func TestNodeMetrics(t *testing.T) {
 	if got["wbft_wal_fsync_seconds"] == 0 {
 		t.Fatalf("no fsync observed: %v", got)
 	}
+	// The validator's seals in the stored headers, counted at each new head.
+	if got["wbft_validator_seals_total"] == 0 {
+		t.Fatalf("no validator seals: %v", got)
+	}
 	if samples["wbft_backlog_messages"] != 1 {
 		t.Fatalf("backlog gauge: %d series", samples["wbft_backlog_messages"])
 	}
