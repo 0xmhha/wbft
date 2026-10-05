@@ -384,3 +384,16 @@ func (b *inbox) take() (consensus.Message, bool) {
 	}
 	return consensus.Message{}, false
 }
+
+// InboundBytes returns the payload bytes waiting in the per-peer receive
+// queues (the wbft_peer_inbound_queue_bytes metric).
+func (r *Runner) InboundBytes() int64 {
+	b := &r.inbox
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	var n int64
+	for _, p := range b.peers { //wbft:unordered a sum
+		n += p.bytes
+	}
+	return n
+}

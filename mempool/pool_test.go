@@ -293,3 +293,19 @@ func TestRegistry(t *testing.T) {
 		t.Fatalf("duplicate: %v", err)
 	}
 }
+
+// TestSizes counts executable and queued transactions and their bytes.
+func TestSizes(t *testing.T) {
+	p := newPool(t, Config{}, newHook(), nil)
+	mustAdd(t, p, tx(1, 0, 0), CodeOK, "")
+	mustAdd(t, p, tx(1, 1, 0), CodeOK, "")
+	mustAdd(t, p, tx(1, 3, 0), CodeOK, "") // gap at 2: queued
+	mustAdd(t, p, tx(2, 0, 0), CodeOK, "")
+	if s := p.Sizes(); s != (PoolSizes{ExecTxs: 3, ExecBytes: 9, QueuedTxs: 1, QueuedBytes: 3}) {
+		t.Fatalf("sizes %+v", s)
+	}
+	mustAdd(t, p, tx(1, 2, 0), CodeOK, "") // fills the gap
+	if s := p.Sizes(); s != (PoolSizes{ExecTxs: 5, ExecBytes: 15}) {
+		t.Fatalf("sizes after the gap %+v", s)
+	}
+}

@@ -128,6 +128,7 @@ func New(cfg Config, d Deps) (*Node, error) {
 	n.svc = &service{n: n}
 	n.metrics = metrics.NewRegistry()
 	n.eventMetrics = metrics.NewEventMetrics(n.metrics)
+	n.registerStateMetrics()
 	return n, nil
 }
 
@@ -366,7 +367,9 @@ func (n *Node) start(ctx context.Context) error {
 			}
 			out = recordedTransport{Transport: n.d.Transport, rec: rec}
 		}
-		if dedup, err = transport.NewDedup(out, transport.DedupOptions{Self: self}); err != nil {
+		suppressed := n.metrics.Counter("wbft_send_suppressed_total", "Sends left out because the peer's recent cache holds the message, by cause.", "cause")
+		if dedup, err = transport.NewDedup(out, transport.DedupOptions{Self: self,
+			Suppressed: func(c event.SendCause) { suppressed.Inc(string(c)) }}); err != nil {
 			return err
 		}
 	}
@@ -784,4 +787,41 @@ func (s *evidenceSink) Write(r event.Record, at event.Stamp) error {
 		return nil
 	}
 	return s.next.Write(r, at)
+}
+
+// registerStateMetrics registers the metrics read from the node's parts
+// when the registry is gathered (observe.md 5.1): the pool sizes and the
+// bytes waiting in the receive queues.
+func (n *Node) registerStateMetrics() {
+	n.metrics.GaugeFunc("wbft_mempool_txs", "Pooled transactions by list.", []string{"list"}, func() []metrics.Value {
+		s, ok := n.poolSizes()
+		if !ok {
+			return nil
+		}
+		return []metrics.Value{{Labels: []string{"executable"}, V: float64(s.ExecTxs)}, {Labels: []string{"queued"}, V: float64(s.QueuedTxs)}}
+	})
+	n.metrics.GaugeFunc("wbft_mempool_bytes", "Bytes of pooled transactions by list.", []string{"list"}, func() []metrics.Value {
+		s, ok := n.poolSizes()
+		if !ok {
+			return nil
+		}
+		return []metrics.Value{{Labels: []string{"executable"}, V: float64(s.ExecBytes)}, {Labels: []string{"queued"}, V: float64(s.QueuedBytes)}}
+	})
+	n.metrics.GaugeFunc("wbft_peer_inbound_queue_bytes", "Payload bytes waiting in the receive queues of all peers.", nil, func() []metrics.Value {
+		r := n.Runner()
+		if r == nil {
+			return nil
+		}
+		return []metrics.Value{{V: float64(r.InboundBytes())}}
+	})
+}
+
+func (n *Node) poolSizes() (mempool.PoolSizes, bool) {
+	n.mu.Lock()
+	p := n.pool
+	n.mu.Unlock()
+	if p == nil {
+		return mempool.PoolSizes{}, false
+	}
+	return p.Sizes(), true
 }

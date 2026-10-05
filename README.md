@@ -75,8 +75,10 @@ simulation)** covers:
   labels) and its Prometheus text export, on the standard library. A node
   derives the metrics its event records carry (height and round, round
   changes, timer expiries, messages by code and outcome, dropped inbound
-  messages, finalize durations, evidence); `Node.Metrics()` returns the
-  registry for the application to serve or read.
+  messages, finalize durations, evidence), reads the pool sizes and the
+  receive-queue bytes when gathered (`GaugeFunc`) and counts sends left out
+  by the recent cache (`wbft_send_suppressed_total`); `Node.Metrics()`
+  returns the registry for the application to serve or read.
 - `observe/logcat`: log levels by module (observe.md 7.1). A node logs each
   part under a fixed module name (`node`, `consensus.round`, `mempool`, ...)
   at the level of `Config.Log` (a base level and per-module exceptions,

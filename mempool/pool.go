@@ -629,3 +629,28 @@ func (p *TxPool) SubscribeNew(ch chan<- []types.Hash) func() {
 		delete(p.subs, id)
 	}
 }
+
+// PoolSizes are the sizes of the pool by list: executable transactions
+// (from each sender's state nonce without a gap) and queued ones.
+type PoolSizes struct {
+	ExecTxs, ExecBytes     int
+	QueuedTxs, QueuedBytes int
+}
+
+// Sizes returns the sizes of the pool (the wbft_mempool_txs and
+// wbft_mempool_bytes metrics).
+func (p *TxPool) Sizes() PoolSizes {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	var s PoolSizes
+	for _, l := range p.senders { //wbft:unordered sums
+		exec := l.executable()
+		for _, tx := range exec {
+			s.ExecTxs++
+			s.ExecBytes += tx.Meta.Size
+		}
+		s.QueuedTxs += len(l.byNonce) - len(exec)
+	}
+	s.QueuedBytes = p.bytes - s.ExecBytes
+	return s
+}

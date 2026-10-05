@@ -338,3 +338,22 @@ func TestGossipCauses(t *testing.T) {
 		t.Fatalf("sends %+v", tr.sends)
 	}
 }
+
+// TestSuppressedCount calls Suppressed for each peer left out, with or
+// without a CauseSender transport.
+func TestSuppressedCount(t *testing.T) {
+	self, v1, v2 := addr(0), addr(1), addr(2)
+	tr := &fakeTransport{peers: []types.Address{v1, v2}}
+	var got []event.SendCause
+	d, err := NewDedup(tr, DedupOptions{Self: self, Suppressed: func(c event.SendCause) { got = append(got, c) }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	vs := set(t, self, v1, v2)
+	payload := []byte{0xc1, 0x06}
+	d.Gossip(vs, 0x13, payload, event.CauseBroadcast)
+	d.Gossip(vs, 0x13, payload, event.CauseRetry) // both peers hold it now
+	if fmt.Sprint(got) != "[retry retry]" {
+		t.Fatalf("suppressed %v", got)
+	}
+}

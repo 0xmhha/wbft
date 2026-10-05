@@ -4,6 +4,7 @@ import (
 	"context"
 	"maps"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -106,6 +107,15 @@ func TestFourValidators(t *testing.T) {
 				t.Fatalf("node %d: block %d differs", i, num)
 			}
 		}
+	}
+	// Gossip left relays out for peers that held them, and the receive
+	// queue size is a metric.
+	var text strings.Builder
+	if err := nodes[0].Metrics().WriteText(&text); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(text.String(), "wbft_send_suppressed_total{cause=") || !strings.Contains(text.String(), "wbft_peer_inbound_queue_bytes ") {
+		t.Fatalf("network metrics:\n%s", text.String())
 	}
 	if err := nodes[0].Stop(); err != nil {
 		t.Fatal(err)
