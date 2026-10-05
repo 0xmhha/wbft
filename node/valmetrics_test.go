@@ -209,3 +209,97 @@ func TestValidatorMessageDelay(t *testing.T) {
 		}
 	}
 }
+
+// TestValidatorMetricsBatchedHeads counts the blocks an application stored
+// in a batch and did not announce (the downloader announces the last
+// one): after head 1, head 4 counts blocks 2, 3 and 4. A node that
+// starts on block 1 counts blocks 2 to 4 at its first head 4; one that
+// starts with no head counts only the head.
+func TestValidatorMetricsBatchedHeads(t *testing.T) {
+	addrs := []types.Address{{0xa0}, {0xa1}}
+	vs, err := validator.NewSet(addrs, make([][]byte, 2), types.ProposerPolicy{ID: types.RoundRobin})
+	if err != nil {
+		t.Fatal(err)
+	}
+	chain := headerChain{byHash: map[types.Hash]*types.Header{}}
+	var hs []*types.Header
+	parent := types.Hash{}
+	for n := uint64(0); n <= 4; n++ {
+		h := &types.Header{Number: types.HeightFromUint64(n), ParentHash: parent}
+		if err := codec.SetExtra(h, &types.WBFTExtra{CommittedSeal: seal(0)}); err != nil {
+			t.Fatal(err)
+		}
+		chain.byHash[codec.BlockHash(h)] = h
+		hs, parent = append(hs, h), codec.BlockHash(h)
+	}
+	committed := func(reg *metrics.Registry) float64 {
+		for _, f := range reg.Gather() {
+			for _, s := range f.Samples {
+				if f.Name == "wbft_validator_seals_total" && s.Labels["validator"] == "total" && s.Labels["type"] == "committed" {
+					return s.Value
+				}
+			}
+		}
+		return 0
+	}
+	valsAt := func(types.Height, types.Hash) (*validator.Set, error) { return vs, nil }
+
+	reg := metrics.NewRegistry()
+	m := newValidatorMetrics(reg)
+	m.attach(chain, valsAt, nil)
+	m.head(hs[1])
+	m.head(hs[4])
+	m.head(hs[4]) // announced again: counted once
+	if got := committed(reg); got != 4 {
+		t.Fatalf("committed seals after heads 1 and 4: %v, want 4", got)
+	}
+
+	reg = metrics.NewRegistry()
+	m = newValidatorMetrics(reg)
+	m.attach(fixedHead{headerChain: chain, h: hs[1]}, valsAt, nil)
+	m.head(hs[1]) // the start head itself is not counted
+	m.head(hs[4])
+	if got := committed(reg); got != 3 {
+		t.Fatalf("committed seals after starting on block 1: %v, want 3", got)
+	}
+
+	reg = metrics.NewRegistry()
+	m = newValidatorMetrics(reg)
+	m.attach(chain, valsAt, nil)
+	m.head(hs[4])
+	if got := committed(reg); got != 1 {
+		t.Fatalf("committed seals of the first head without a start head: %v, want 1", got)
+	}
+}
+
+// TestValidatorMetricsBackfillLimit counts at most backfillMax blocks
+// before an announced head, which itself is counted too.
+func TestValidatorMetricsBackfillLimit(t *testing.T) {
+	vs, err := validator.NewSet([]types.Address{{0xa0}}, make([][]byte, 1), types.ProposerPolicy{ID: types.RoundRobin})
+	if err != nil {
+		t.Fatal(err)
+	}
+	chain := headerChain{byHash: map[types.Hash]*types.Header{}}
+	var hs []*types.Header
+	parent := types.Hash{}
+	for n := uint64(0); n <= backfillMax+10; n++ {
+		h := &types.Header{Number: types.HeightFromUint64(n), ParentHash: parent}
+		if err := codec.SetExtra(h, &types.WBFTExtra{CommittedSeal: seal(0)}); err != nil {
+			t.Fatal(err)
+		}
+		chain.byHash[codec.BlockHash(h)] = h
+		hs, parent = append(hs, h), codec.BlockHash(h)
+	}
+	reg := metrics.NewRegistry()
+	m := newValidatorMetrics(reg)
+	m.attach(fixedHead{headerChain: chain, h: hs[0]}, func(types.Height, types.Hash) (*validator.Set, error) { return vs, nil }, nil)
+	m.head(hs[len(hs)-1])
+	for _, f := range reg.Gather() {
+		for _, s := range f.Samples {
+			if f.Name == "wbft_validator_seals_total" && s.Labels["validator"] == "total" && s.Labels["type"] == "committed" &&
+				s.Value != backfillMax+1 {
+				t.Fatalf("committed seals %v, want %d", s.Value, backfillMax+1)
+			}
+		}
+	}
+}
