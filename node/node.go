@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"path/filepath"
 	"sync"
+	"time"
 
 	"github.com/0xmhha/wbft/app"
 	"github.com/0xmhha/wbft/chain/validator/source"
@@ -78,7 +79,8 @@ type Node struct {
 	logBase  slog.Handler   // where the modules' log lines go
 	// eventMetrics derives metrics from the event records.
 	eventMetrics *metrics.EventMetrics
-	ring         *eventRing // the recent event records (wbft_events)
+	walFsync     *metrics.Histogram // wbft_wal_fsync_seconds
+	ring         *eventRing         // the recent event records (wbft_events)
 	r            *runner.Runner
 	pool         *mempool.TxPool
 	view         *chainView
@@ -129,6 +131,7 @@ func New(cfg Config, d Deps) (*Node, error) {
 	n.metrics = metrics.NewRegistry()
 	n.eventMetrics = metrics.NewEventMetrics(n.metrics)
 	n.registerStateMetrics()
+	n.walFsync = n.metrics.Histogram("wbft_wal_fsync_seconds", "Duration of the write-ahead log's fsyncs, by method.", fsyncBuckets, "method")
 	return n, nil
 }
 
@@ -295,7 +298,7 @@ func (n *Node) start(ctx context.Context) error {
 	n.mu.Lock()
 	n.evid = evid
 	n.mu.Unlock()
-	log, recov, err := wal.Open(n.fs, filepath.Join(n.cfg.DataDir, walDir), wal.Options{KeepHeights: 2})
+	log, recov, err := wal.Open(n.fs, filepath.Join(n.cfg.DataDir, walDir), wal.Options{KeepHeights: 2, Now: n.clock.Now, Synced: n.walSynced})
 	if err != nil {
 		return fmt.Errorf("node: write-ahead log: %w", err)
 	}
@@ -794,6 +797,14 @@ func (s *evidenceSink) Write(r event.Record, at event.Stamp) error {
 		return nil
 	}
 	return s.next.Write(r, at)
+}
+
+// fsyncBuckets are the buckets of wbft_wal_fsync_seconds, from 100µs.
+var fsyncBuckets = []float64{0.0001, 0.00025, 0.0005, 0.001, 0.0025, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 1}
+
+// walSynced records one fsync of the write-ahead log (wal.Options.Synced).
+func (n *Node) walSynced(method string, d time.Duration) {
+	n.walFsync.Observe(d.Seconds(), method)
 }
 
 // registerStateMetrics registers the metrics read from the node's parts

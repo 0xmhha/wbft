@@ -77,8 +77,10 @@ simulation)** covers:
   changes, timer expiries, messages by code and outcome, dropped inbound
   messages, finalize durations, evidence), reads the pool sizes, the
   receive-queue bytes and the core's backlog (`wbft_backlog_messages`, from
-  the snapshot of the last step) when gathered (`GaugeFunc`) and counts sends left out
-  by the recent cache (`wbft_send_suppressed_total`); `Node.Metrics()`
+  the snapshot of the last step) when gathered (`GaugeFunc`), counts sends left out
+  by the recent cache (`wbft_send_suppressed_total`) and times the
+  write-ahead log's fsyncs by method (`wbft_wal_fsync_seconds`, through
+  `wal.Options.Now` and `Synced`); `Node.Metrics()`
   returns the registry for the application to serve or read.
 - `observe/logcat`: log levels by module (observe.md 7.1). A node logs each
   part under a fixed module name (`node`, `consensus.round`, `mempool`, ...)

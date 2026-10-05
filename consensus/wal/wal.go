@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/0xmhha/wbft/internal/fsys"
 )
@@ -67,6 +68,12 @@ type Options struct {
 	// Header returns the records written at the start of every new segment
 	// before any other record, so that a segment can be read on its own.
 	Header func() []Record
+	// Now and Synced time the fsync of the segment file: Synced receives
+	// the method that synced (append_sync, sync, rotate, close) and the
+	// duration between two readings of Now, failed syncs included. Either
+	// nil turns the timing off.
+	Now    func() time.Time
+	Synced func(method string, d time.Duration)
 }
 
 // Position is the place of a record: the segment index and the byte offset
@@ -339,7 +346,7 @@ func (l *Log) rotate() error {
 	if err := l.flush(); err != nil {
 		return err
 	}
-	if err := l.f.Sync(); err != nil {
+	if err := l.fsync("rotate"); err != nil {
 		return err
 	}
 	if err := l.f.Close(); err != nil {
@@ -417,19 +424,30 @@ func (l *Log) AppendSync(r Record) (Position, error) {
 	if err != nil {
 		return pos, err
 	}
-	return pos, l.syncLocked()
+	return pos, l.syncLocked("append_sync")
 }
 
-func (l *Log) syncLocked() error {
+func (l *Log) syncLocked(method string) error {
 	if err := l.flush(); err != nil {
 		l.err = err
 		return err
 	}
-	if err := l.f.Sync(); err != nil {
+	if err := l.fsync(method); err != nil {
 		l.err = err
 		return err
 	}
 	return nil
+}
+
+// fsync syncs the segment file and reports its duration to Options.Synced.
+func (l *Log) fsync(method string) error {
+	if l.opt.Now == nil || l.opt.Synced == nil {
+		return l.f.Sync()
+	}
+	start := l.opt.Now()
+	err := l.f.Sync()
+	l.opt.Synced(method, l.opt.Now().Sub(start))
+	return err
 }
 
 // Flush writes the buffered records to the segment file without syncing it.
@@ -459,7 +477,7 @@ func (l *Log) Sync() error {
 	if l.err != nil {
 		return l.err
 	}
-	return l.syncLocked()
+	return l.syncLocked("sync")
 }
 
 // Close implements Writer.
@@ -472,7 +490,7 @@ func (l *Log) Close() error {
 	l.closed = true
 	err := l.err
 	if err == nil {
-		err = l.syncLocked()
+		err = l.syncLocked("close")
 	}
 	if cerr := l.f.Close(); err == nil {
 		err = cerr
