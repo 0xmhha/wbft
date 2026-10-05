@@ -2,14 +2,18 @@ package node
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/0xmhha/wbft/internal/fsys"
 	"github.com/0xmhha/wbft/observe/logcat"
+	"github.com/0xmhha/wbft/rpc"
 )
 
 // TestLogSettings starts a node with module levels: it records them in a
@@ -62,5 +66,61 @@ func TestLogSettings(t *testing.T) {
 	}
 	if err := n2.Start(context.Background()); !errors.Is(err, ErrStartRefused) {
 		t.Fatalf("unknown module at start: %v", err)
+	}
+}
+
+// TestLogLevelsRPC reads the settings with wbft_logLevels and changes them
+// with admin_wbftSetLogLevels: merge, removal by null, replace, and an
+// unknown module or level that changes nothing.
+func TestLogLevelsRPC(t *testing.T) {
+	key := testKey(0)
+	cj, g := testGenesis(t, key)
+	a := newTestApp(cj, g)
+	n := startNode(t, a, fsys.NewMem(), key, false, nil)
+	defer stop(t, n)
+	srv := httptest.NewServer(rpc.Handler(append(n.APIs(), n.AdminAPIs()...)))
+	defer srv.Close()
+	call := func(method, params string) (rpc.LogLevels, string) {
+		t.Helper()
+		resp, err := http.Post(srv.URL, "application/json", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"`+method+`","params":`+params+`}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		var out struct {
+			Result rpc.LogLevels
+			Error  *struct{ Message string }
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+			t.Fatal(err)
+		}
+		if out.Error != nil {
+			return out.Result, out.Error.Message
+		}
+		return out.Result, ""
+	}
+	got, e := call("wbft_logLevels", "[]")
+	if e != "" || got.Level != "info" || got.Source != "config" || got.Effective["consensus.round"] != "info" || got.At == "" {
+		t.Fatalf("initial %+v %s", got, e)
+	}
+	got, e = call("admin_wbftSetLogLevels", `[{"level":"warn","modules":{"consensus.round":"trace","mempool":"off"}}]`)
+	if e != "" || got.Level != "warn" || got.Modules["consensus.round"] != "trace" || got.Effective["node"] != "warn" || got.Source != "rpc" {
+		t.Fatalf("set %+v %s", got, e)
+	}
+	got, e = call("admin_wbftSetLogLevels", `[{"modules":{"mempool":null}}]`)
+	if e != "" || got.Level != "warn" || len(got.Modules) != 1 || got.Modules["consensus.round"] != "trace" {
+		t.Fatalf("remove %+v %s", got, e)
+	}
+	got, e = call("admin_wbftSetLogLevels", `[{"modules":{"wal":"debug"},"replace":true}]`)
+	if e != "" || len(got.Modules) != 1 || got.Modules["wal"] != "debug" {
+		t.Fatalf("replace %+v %s", got, e)
+	}
+	for _, bad := range []string{`[{"modules":{"nope":"info"}}]`, `[{"level":"loud"}]`} {
+		if _, e := call("admin_wbftSetLogLevels", bad); e == "" {
+			t.Fatalf("%s accepted", bad)
+		}
+	}
+	if got, _ := call("wbft_logLevels", "[]"); len(got.Modules) != 1 || got.Modules["wal"] != "debug" || got.Level != "warn" {
+		t.Fatalf("a refused request changed the settings: %+v", got)
 	}
 }
