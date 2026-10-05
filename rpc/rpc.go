@@ -36,6 +36,8 @@ type Backend interface {
 	Events(from uint64, limit int) []json.RawMessage
 	// Chain reads the application's chain (the istanbul namespace).
 	Chain() types.ChainReader
+	// LogLevels returns the log settings in force.
+	LogLevels() LogLevels
 }
 
 // NodeInfo describes the node.
@@ -107,7 +109,7 @@ func APIs(b Backend) []API {
 
 // Service is the wbft namespace: wbft_nodeInfo, wbft_consensusState,
 // wbft_peers, wbft_configAt, wbft_evidence, wbft_rejections,
-// wbft_headerCopy and wbft_events. It is read-only.
+// wbft_headerCopy, wbft_events and wbft_logLevels. It is read-only.
 type Service struct{ b Backend }
 
 // NodeInfo is wbft_nodeInfo.

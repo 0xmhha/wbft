@@ -21,6 +21,7 @@ func (f fakeBackend) NodeInfo() NodeInfo                               { return 
 func (f fakeBackend) ConsensusState() *consensus.Snapshot              { return nil }
 func (f fakeBackend) Peers() []transport.PeerInfo                      { return nil }
 func (f fakeBackend) ChainConfig() *types.Config                       { return f.cfg }
+func (f fakeBackend) LogLevels() LogLevels                             { return LogLevels{Level: "info"} }
 func (f fakeBackend) HeaderCopy(types.Hash) (*HeaderCopyResult, error) { return nil, nil }
 func (f fakeBackend) Events(uint64, int) []json.RawMessage             { return nil }
 func (f fakeBackend) Chain() types.ChainReader                         { return nil }

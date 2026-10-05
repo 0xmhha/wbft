@@ -82,7 +82,9 @@ simulation)** covers:
   at the level of `Config.Log` (a base level and per-module exceptions,
   `off` to `trace`); an unknown module refuses the start. A disabled call
   makes no record. The settings in force go to a `LOG_CONFIG` event and a
-  log line at start and on `Node.SetLogLevels`.
+  log line at start and on `Node.SetLogLevels`; `wbft_logLevels` reads them,
+  and `admin_wbftSetLogLevels` (`Node.AdminAPIs`, for IPC or an
+  authenticated endpoint only) changes them.
 - `conformance/stepdriver`: the driver of the steps vectors, which a
   transport adapter can reuse with its own frame stage, and `RunTrace`, which
   replays a message journal through the core (`cmd/wbft-replay`).

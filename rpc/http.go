@@ -92,6 +92,16 @@ func Handler(apis []API) http.Handler {
 				}
 				return s.ConfigAt(h)
 			}
+			methods[a.Namespace+"_logLevels"] = none(func() any { return s.LogLevels() })
+		}
+		if s, ok := a.Service.(*AdminService); ok {
+			methods[a.Namespace+"_wbftSetLogLevels"] = func(params []json.RawMessage) (any, error) {
+				var req SetLogLevelsRequest
+				if len(params) != 1 || json.Unmarshal(params[0], &req) != nil {
+					return nil, errParams
+				}
+				return s.WbftSetLogLevels(&req)
+			}
 		}
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
