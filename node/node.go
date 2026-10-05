@@ -486,8 +486,10 @@ func (n *Node) logConfig(a logcat.Applied) {
 		f["unmapped"] = n.cfg.LogUnmapped
 	}
 	n.emit(event.Record{Kind: event.LogConfig, Fields: f})
-	r := slog.NewRecord(n.clock.Now(), slog.LevelInfo, "log settings", 0)
-	r.AddAttrs(slog.String("module", logcat.Node.Name()), slog.String("level", a.Base.String()), slog.Any("modules", modules),
+	le := logcat.LogConfigEntry()
+	r := slog.NewRecord(n.clock.Now(), le.Level, le.Msg, 0)
+	// base_level, not level: a JSON line's own level is under "level".
+	r.AddAttrs(slog.String("module", le.Module.Name()), slog.String("base_level", a.Base.String()), slog.Any("modules", modules),
 		slog.String("source", a.Source))
 	if len(n.cfg.LogUnmapped) > 0 {
 		r.AddAttrs(slog.Any("unmapped", n.cfg.LogUnmapped))
@@ -625,6 +627,7 @@ func (n *Node) improvements() []rpc.Improvement {
 
 func (n *Node) startFields(act runner.HandshakeAction, recov wal.Recovery) map[string]any {
 	f := map[string]any{"impl": "wbft", "mode": n.mode(), "handshake": handshakeName(act), "improvements": n.improvements(),
+		"log_profile":  logcat.ProfileID(),
 		"wal_recovery": map[string]any{"records": recov.Records, "torn_bytes": recov.TornBytes, "corrupted": len(recov.Corrupted)}}
 	if n.floor != nil {
 		f["sign_floor"] = map[string]any{"height": n.floor.String()}

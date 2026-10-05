@@ -58,6 +58,9 @@ type NodeInfo struct {
 	// build ("cgo").
 	Version string `json:"version"`
 	Build   string `json:"build"`
+	// LogProfile is the ID of the inspector's log profile of the node's
+	// log lines (logcat.BuildProfile).
+	LogProfile string `json:"logProfile"`
 	// Improvements are the enabled improvements, each with where it was
 	// turned on.
 	Improvements []Improvement `json:"improvements"`

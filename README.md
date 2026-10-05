@@ -106,7 +106,11 @@ simulation)** covers:
   log line at start and on `Node.SetLogLevels`, with the application's
   settings that name no module (`Config.LogUnmapped`, field `unmapped`); `wbft_logLevels` reads them,
   and `admin_wbftSetLogLevels` (`Node.AdminAPIs`, for IPC or an
-  authenticated endpoint only) changes them.
+  authenticated endpoint only) changes them. `logcat.BuildProfile` (and
+  `cmd/wbft-logprofile`) gives the inspector's log profile: which line
+  (message, level, module) is which event kind, for logs received without
+  the event stream; its ID, `wbft@<digest>`, is `wbft_nodeInfo.logProfile`
+  and `NODE_START.log_profile`.
 - `conformance/stepdriver`: the driver of the steps vectors, which a
   transport adapter can reuse with its own frame stage, and `RunTrace`, which
   replays a message journal through the core (`cmd/wbft-replay`).
@@ -177,7 +181,7 @@ and the lint rules below enforce the direction.
 | Node | `node`, `app`, `mempool`, `rpc`, `storage` | `node`, `app`, `mempool`, `rpc`, `storage/kv` | Node assembly, application boundary, transaction pool, RPC, key-value store |
 | Examples | `examples` | `examples/kvstore`, `examples/kvstore/cmd/wbft-kvstore` | An example application and its command for local networks |
 | Conformance | `conformance` | `conformance/stepdriver`, `conformance/sim` | The step driver for vectors and traces, the deterministic simulator |
-| Commands | `cmd` | `cmd/wbft-vector-adapter`, `cmd/wbft-replay`, `cmd/wbft-journal` | Conformance vector adapter, journal replay helper, journal inspection and pruning |
+| Commands | `cmd` | `cmd/wbft-vector-adapter`, `cmd/wbft-replay`, `cmd/wbft-journal`, `cmd/wbft-logprofile` | Conformance vector adapter, journal replay helper, journal inspection and pruning, inspector log profile |
 
 `internal` holds helpers that are not part of the API: `internal/refsort`
 (the reference-compatible sort), `internal/fsys` (the file system interface
