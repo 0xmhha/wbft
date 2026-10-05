@@ -8,7 +8,9 @@ import (
 	"math/rand/v2"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
+	"time"
 
 	"github.com/0xmhha/wbft/internal/fsys"
 )
@@ -347,5 +349,60 @@ func TestClosedAndTooLarge(t *testing.T) {
 	}
 	if _, err := Encode(Record{Body: make([]byte, MaxRecordBytes+1)}); !errors.Is(err, ErrTooLarge) {
 		t.Fatalf("too large: %v", err)
+	}
+}
+
+// TestSyncTiming reports every fsync of a segment file with its method and
+// the duration between two readings of Options.Now, and none without it.
+func TestSyncTiming(t *testing.T) {
+	fs := fsys.NewMem()
+	var at time.Time
+	type synced struct {
+		method string
+		d      time.Duration
+	}
+	var got []synced
+	opt := Options{SegmentBytes: 256,
+		Now:    func() time.Time { at = at.Add(time.Millisecond); return at },
+		Synced: func(m string, d time.Duration) { got = append(got, synced{m, d}) }}
+	l, _ := mustOpen(t, fs, "wal", opt)
+	if _, err := l.AppendSync(rec(1)); err != nil {
+		t.Fatal(err)
+	}
+	if err := l.Sync(); err != nil {
+		t.Fatal(err)
+	}
+	for !l.WouldRotate(rec(40)) {
+		if _, err := l.Append(rec(40)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := l.Append(rec(40)); err != nil {
+		t.Fatal(err)
+	}
+	if err := l.Close(); err != nil {
+		t.Fatal(err)
+	}
+	var methods []string
+	for _, s := range got {
+		if s.d != time.Millisecond {
+			t.Fatalf("duration %v of %s", s.d, s.method)
+		}
+		methods = append(methods, s.method)
+	}
+	if !slices.Equal(methods, []string{"append_sync", "sync", "rotate", "close"}) {
+		t.Fatalf("methods %v", methods)
+	}
+
+	got = nil
+	l, _ = mustOpen(t, fs, "wal2", Options{Synced: opt.Synced})
+	if _, err := l.AppendSync(rec(1)); err != nil {
+		t.Fatal(err)
+	}
+	if err := l.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("timed without Now: %v", got)
 	}
 }

@@ -33,6 +33,11 @@ func TestNodeMetrics(t *testing.T) {
 		t.Fatalf("metrics %v", got)
 	}
 	// The backlog gauge is read from the core's snapshot: one series.
+	// A validator syncs its write-ahead log before it sends its own
+	// messages.
+	if got["wbft_wal_fsync_seconds"] == 0 {
+		t.Fatalf("no fsync observed: %v", got)
+	}
 	if samples["wbft_backlog_messages"] != 1 {
 		t.Fatalf("backlog gauge: %d series", samples["wbft_backlog_messages"])
 	}
