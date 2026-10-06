@@ -16,8 +16,9 @@ import (
 type crash struct{}
 
 // TestSignFloorCrash crashes a node with a taken-over key before and after
-// its sign floor reaches the disk. The restarted node sets or keeps the
-// floor and signs nothing at H_app + 1.
+// its sign floor reaches the disk. The restarted node sets the floor (the
+// crash came before it was durable) or keeps it (after), and signs nothing
+// at H_app + 1.
 func TestSignFloorCrash(t *testing.T) {
 	key := testKey(0)
 	cj, g := testGenesis(t, key)
@@ -27,7 +28,7 @@ func TestSignFloorCrash(t *testing.T) {
 	if err := n.Stop(); err != nil {
 		t.Fatal(err)
 	}
-	for _, point := range []string{faultpoint.PrivvalBeforePersist, faultpoint.PrivvalAfterPersist} {
+	for point, status := range map[string]string{faultpoint.PrivvalBeforePersist: "set", faultpoint.PrivvalAfterPersist: "kept"} { //wbft:unordered independent subtests
 		t.Run(point, func(t *testing.T) {
 			fs := fsys.NewMem()
 			n, err := New(Config{DataDir: "/data", TakeoverGuard: true}, Deps{App: a, Authority: a, fs: fs, key: key,
@@ -51,7 +52,7 @@ func TestSignFloorCrash(t *testing.T) {
 				_ = n.Start(context.Background())
 			}()
 			fs.Crash(rand.New(rand.NewPCG(1, 2)))
-			checkTakeover(t, a, fs, key)
+			checkTakeover(t, a, fs, key, status)
 		})
 	}
 }

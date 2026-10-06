@@ -120,13 +120,42 @@ func TestSignFloorNode(t *testing.T) {
 
 	t.Run("taken-over key", func(t *testing.T) {
 		// The same key on a new data directory: the sign state is empty.
-		checkTakeover(t, a, fsys.NewMem(), key)
+		checkTakeover(t, a, fsys.NewMem(), key, "set")
+	})
+
+	t.Run("cleared without the guard", func(t *testing.T) {
+		// A takeover halted the chain at the floor (a single validator, so
+		// more than F). A restart with the guard keeps the floor; one
+		// without it clears the floor, as nothing was signed above it, and
+		// the chain goes on (consensus-core.md 10.5 3., node-compat.md 4.4).
+		fs := fsys.NewMem()
+		head := a.Head().Number
+		checkTakeover(t, a, fs, key, "set")
+		want := `"sign_floor":{"height":"` + head.AddUint64(1).String() + `","status":"%s"}`
+
+		ev := &syncBuffer{}
+		n := startNode(t, a, fs, key, true, ev)
+		waitEvent(t, ev, fmt.Sprintf(want, "kept"), 20*time.Second)
+		if f, ok := n.SignFloor(); !ok || f.Cmp(head.AddUint64(1)) != 0 {
+			t.Fatalf("kept floor %v %v", f, ok)
+		}
+		stop(t, n)
+
+		ev = &syncBuffer{}
+		n = startNode(t, a, fs, key, false, ev)
+		defer stop(t, n)
+		waitEvent(t, ev, fmt.Sprintf(want, "cleared"), 20*time.Second)
+		if f, ok := n.SignFloor(); ok {
+			t.Fatalf("floor %s left after the restart without the guard", f)
+		}
+		a.waitHead(t, head.RefLow64()+2, 20*time.Second) //wbft:low64 HH-60
 	})
 }
 
 // checkTakeover starts a node with an empty sign state on the chain of a,
-// and requires the floor at head + 1 and no signature at head + 1.
-func checkTakeover(t *testing.T, a *testApp, fs fsys.FS, key []byte) {
+// and requires the floor at head + 1, reported with status, and no
+// signature at head + 1.
+func checkTakeover(t *testing.T, a *testApp, fs fsys.FS, key []byte, status string) {
 	t.Helper()
 	ev := &syncBuffer{}
 	head := a.Head().Number
@@ -136,6 +165,7 @@ func checkTakeover(t *testing.T, a *testApp, fs fsys.FS, key []byte) {
 	if !ok || f.Cmp(head.AddUint64(1)) != 0 {
 		t.Fatalf("floor %v %v, want %s", f, ok, head.AddUint64(1))
 	}
+	waitEvent(t, ev, `"sign_floor":{"height":"`+head.AddUint64(1).String()+`","status":"`+status+`"}`, 20*time.Second)
 	// The single validator is the proposer of head + 1; it refuses to sign
 	// there, so the chain stays at head.
 	waitEvent(t, ev, `"what":"sign_floor_skip"`, 20*time.Second)

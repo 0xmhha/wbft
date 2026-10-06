@@ -87,7 +87,8 @@ type Node struct {
 	r            *runner.Runner
 	pool         *mempool.TxPool
 	view         *chainView
-	floor        *types.Height // the sign floor this start set or kept
+	floor        *types.Height // the sign floor this start set or kept, or the one it cleared
+	floorState   string        // set, kept or cleared (consensus-core.md 10.5; NODE_START sign_floor.status as the simulator writes it)
 	done         chan struct{} // closed by Stop; ends the node's goroutines
 	wg           sync.WaitGroup
 
@@ -580,9 +581,26 @@ func (n *Node) openSigner(head *types.Header) error {
 	n.signer = s
 	n.mu.Unlock()
 	if h, ok := s.SignFloor(); ok {
-		n.floor = &h
+		n.floor, n.floorState = &h, "kept"
 	}
-	if !n.cfg.TakeoverGuard || head.Number.IsZero() {
+	if !n.cfg.TakeoverGuard {
+		// Without the guard a floor that no signature followed is cleared
+		// (consensus-core.md 10.5 3.): the way to restart a network that a
+		// takeover of more than F validators halted (node-compat.md 4.4).
+		if n.floor == nil {
+			return nil
+		}
+		if err := s.ClearSignFloor(); err != nil {
+			if errors.Is(err, privval.ErrSignStateNotEmpty) {
+				return nil // a signature was recorded: the floor is below it
+			}
+			return fmt.Errorf("node: clear sign floor: %w", err)
+		}
+		n.floorState = "cleared"
+		n.log.Warn("sign floor cleared: the takeover guard is off", "floor", n.floor.String())
+		return nil
+	}
+	if head.Number.IsZero() {
 		return nil
 	}
 	if !s.Empty() {
@@ -596,7 +614,7 @@ func (n *Node) openSigner(head *types.Header) error {
 		}
 		return fmt.Errorf("node: sign floor: %w", err)
 	}
-	n.floor = &f
+	n.floor, n.floorState = &f, "set"
 	return nil
 }
 
@@ -629,8 +647,9 @@ func (n *Node) startFields(act runner.HandshakeAction, recov wal.Recovery) map[s
 	f := map[string]any{"impl": "wbft", "mode": n.mode(), "handshake": handshakeName(act), "improvements": n.improvements(),
 		"log_profile":  logcat.ProfileID(),
 		"wal_recovery": map[string]any{"records": recov.Records, "torn_bytes": recov.TornBytes, "corrupted": len(recov.Corrupted)}}
+	f["sign_floor"] = nil
 	if n.floor != nil {
-		f["sign_floor"] = map[string]any{"height": n.floor.String()}
+		f["sign_floor"] = map[string]any{"height": n.floor.String(), "status": n.floorState}
 	}
 	f["validator"] = n.signer != nil
 	return f
