@@ -437,6 +437,36 @@ type gnode struct {
 	t     *testing.T
 	mu    *sync.Mutex
 	dec   map[uint64]types.Hash
+	// hdr holds the decided headers of all nodes by number (under mu), for
+	// syncTo.
+	hdr map[uint64]*types.Header
+}
+
+// syncTo stores the next decided block above the head, if another node
+// decided it, and reports the new head: the application's block import
+// that lets a node behind its peers catch up (a node misses the messages
+// of a height when its engine is not yet running, and the senders' recent
+// caches leave them out of retries). It returns whether the head moved.
+func (g *gnode) syncTo() bool {
+	g.chain.mu.Lock()
+	next := g.chain.head.Number.Big().Uint64() + 1
+	g.chain.mu.Unlock()
+	g.mu.Lock()
+	h := g.hdr[next]
+	g.mu.Unlock()
+	if h == nil {
+		return false
+	}
+	g.chain.mu.Lock()
+	moved := h.ParentHash == codec.BlockHash(g.chain.head)
+	if moved {
+		g.chain.head = h
+	}
+	g.chain.mu.Unlock()
+	if moved {
+		g.r.NewHead(h)
+	}
+	return moved
 }
 
 // ReadyToBuild builds a block on the head after the wait and submits it.
@@ -463,6 +493,7 @@ func (g *gnode) FinalizeBlock(b *types.Block, _ types.Round) error {
 		g.t.Errorf("disagreement at %d", n)
 	}
 	g.dec[n] = codec.BlockHash(b.Header)
+	g.hdr[n] = b.Header
 	g.mu.Unlock()
 	g.chain.mu.Lock()
 	if b.Header.Number.Cmp(g.chain.head.Number.AddUint64(1)) == 0 {
@@ -523,6 +554,7 @@ func TestGoroutineRunners(t *testing.T) {
 	k := newKeys(t, 4)
 	var mu sync.Mutex
 	dec := map[uint64]types.Hash{}
+	hdr := map[uint64]*types.Header{}
 	clock := SystemClock()
 	rt := &router{}
 	var nodes []*gnode
@@ -530,7 +562,7 @@ func TestGoroutineRunners(t *testing.T) {
 		pol := uint64(0)
 		cfg := types.NewConfig(types.WBFTParams{RequestTimeoutSeconds: 1, EpochLength: 1 << 40, ProposerPolicy: &pol}, nil, types.GenesisInit{}, nil)
 		g := &gnode{chain: &fakeChain{head: block(t, 9, 0, k.addrs[3], types.Hash{}).Header, vs: k.vs, clock: clock,
-			future: map[types.Hash]time.Duration{}, bad: map[types.Hash]bool{}}, i: i, k: k, t: t, mu: &mu, dec: dec}
+			future: map[types.Hash]time.Duration{}, bad: map[types.Hash]bool{}}, i: i, k: k, t: t, mu: &mu, dec: dec, hdr: hdr}
 		dd, _ := transport.NewDedup(&routeNet{rt: rt, self: k.addrs[i], all: k.addrs}, transport.DedupOptions{Self: k.addrs[i]})
 		r, err := New(Config{Core: consensus.Options{Config: cfg, Self: k.addrs[i], Improvements: consensus.RestartSafety}, Workers: 2},
 			Deps{Chain: g.chain, App: g, Transport: dd, Signer: mustSigner(t, k, i), Clock: clock})
@@ -559,6 +591,11 @@ func TestGoroutineRunners(t *testing.T) {
 		}
 		if time.Now().After(deadline) {
 			t.Fatal("no progress")
+		}
+		// A node that fell behind (it was not yet running when its peers
+		// sent a height) catches up by block import, one block per tick.
+		for _, g := range nodes {
+			g.syncTo()
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
