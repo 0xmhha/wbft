@@ -132,7 +132,9 @@ Milestone **W3a (node and application interface)** is in progress:
   response types and the error values.
 - `node`: the node assembly. `Start` reads the application's `Info`, parses
   and checks the chain configuration, opens the write-ahead log and the sign
-  state, sets the sign floor of a taken-over key (`TakeoverGuard`), runs the
+  state, sets the sign floor of a taken-over key (`TakeoverGuard`; without
+  it a floor no signature followed is cleared, and `NODE_START.sign_floor`
+  reports `set`, `kept` or `cleared`), runs the
   start-up handshake with the application head (finalizing a decided block
   again when needed), loads the authority snapshot of the head and starts the
   core at head + 1 with the restart-safety rules. A validator keeps a
