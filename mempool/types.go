@@ -18,7 +18,9 @@ type AdmissionHook interface {
 }
 
 // RecheckScoper is an optional AdmissionHook extension that limits the
-// recheck after a new head to some senders.
+// recheck after a new head to some senders. Scope also sees every update,
+// so a hook can implement it only to observe the updates: a nil list
+// rechecks every sender, and an empty non-nil list rechecks none.
 type RecheckScoper interface {
 	Scope(u BlockUpdate) []types.Address
 }

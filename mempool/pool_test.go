@@ -208,6 +208,58 @@ func TestUpdateAndRecheck(t *testing.T) {
 	}
 }
 
+// scopedHook limits the recheck to the senders in scope (nil: every
+// sender) and counts the updates it saw.
+type scopedHook struct {
+	*testHook
+	scope   []types.Address
+	updates int
+}
+
+func (h *scopedHook) Scope(BlockUpdate) []types.Address {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.updates++
+	return h.scope
+}
+
+// TestRecheckScope: a scoper's nil list rechecks every sender (a hook may
+// implement Scope only to see the updates), an empty list none, and a list
+// only the senders in it.
+func TestRecheckScope(t *testing.T) {
+	for _, c := range []struct {
+		name  string
+		scope []types.Address
+		kept  []byte // senders left after the recheck
+	}{
+		{"nil", nil, []byte{}},
+		{"empty", []types.Address{}, []byte{1, 2}},
+		{"one", []types.Address{addr(2)}, []byte{1}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			h := &scopedHook{testHook: newHook(), scope: c.scope}
+			p := newPool(t, Config{}, h, nil)
+			mustAdd(t, p, tx(1, 0, 0), CodeOK, "")
+			mustAdd(t, p, tx(2, 0, 0), CodeOK, "")
+			h.set(func(h *testHook) { h.banned[addr(1)] = true; h.banned[addr(2)] = true })
+			if err := p.Update(context.Background(), BlockUpdate{}); err != nil {
+				t.Fatal(err)
+			}
+			// A local addition queues behind the recheck.
+			mustAdd(t, p, tx(3, 0, 0), CodeOK, "")
+			kept := []byte{}
+			for _, s := range []byte{1, 2} {
+				if k, _ := h.TxKey(tx(s, 0, 0)); p.Has(k) {
+					kept = append(kept, s)
+				}
+			}
+			if string(kept) != string(c.kept) || h.updates != 1 {
+				t.Fatalf("kept senders %v, want %v; %d updates seen", kept, c.kept, h.updates)
+			}
+		})
+	}
+}
+
 func TestLimits(t *testing.T) {
 	h := newHook()
 	p := newPool(t, Config{MaxTxs: 2, MaxPerSender: 2}, h, nil)

@@ -439,7 +439,8 @@ func (p *TxPool) recheck() {
 		if u != nil {
 			if sc, ok := p.hook.(RecheckScoper); ok {
 				senders = sc.Scope(*u)
-			} else {
+			}
+			if senders == nil {
 				senders = slices.SortedFunc(maps.Keys(p.senders), types.Address.Cmp)
 			}
 		}
