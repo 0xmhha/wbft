@@ -437,9 +437,12 @@ func (p *TxPool) recheck() {
 		p.update = nil
 		var senders []types.Address
 		if u != nil {
+			scope := RecheckScope{All: true}
 			if sc, ok := p.hook.(RecheckScoper); ok {
-				senders = sc.Scope(*u)
-			} else {
+				scope = sc.Scope(*u)
+			}
+			senders = scope.Senders
+			if scope.All {
 				senders = slices.SortedFunc(maps.Keys(p.senders), types.Address.Cmp)
 			}
 		}
@@ -467,7 +470,8 @@ func (p *TxPool) recheckSenders(senders []types.Address, gen uint64) {
 			if stale {
 				return
 			}
-			resp := p.hook.CheckTx(p.ctx, CheckRequest{Tx: tx.Tx, Key: tx.Key, Kind: CheckRecheck, Origin: origin(tx.Local)})
+			prev := tx.Meta
+			resp := p.hook.CheckTx(p.ctx, CheckRequest{Tx: tx.Tx, Key: tx.Key, Kind: CheckRecheck, Origin: origin(tx.Local), Prev: &prev})
 			p.mu.Lock()
 			switch {
 			case p.byKey[tx.Key] != tx:

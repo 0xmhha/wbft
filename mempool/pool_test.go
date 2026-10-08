@@ -208,6 +208,100 @@ func TestUpdateAndRecheck(t *testing.T) {
 	}
 }
 
+// scopedHook limits the recheck to scope and counts the updates it saw.
+type scopedHook struct {
+	*testHook
+	scope   RecheckScope
+	updates int
+}
+
+func (h *scopedHook) Scope(BlockUpdate) RecheckScope {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.updates++
+	return h.scope
+}
+
+// TestRecheckScope: a scoper rechecks every sender with All, none with an
+// empty scope (also a nil list) and only the listed senders otherwise.
+func TestRecheckScope(t *testing.T) {
+	for _, c := range []struct {
+		name  string
+		scope RecheckScope
+		kept  []byte // senders left after the recheck
+	}{
+		{"all", RecheckScope{All: true}, []byte{}},
+		{"none", RecheckScope{}, []byte{1, 2}},
+		{"empty", RecheckScope{Senders: []types.Address{}}, []byte{1, 2}},
+		{"one", RecheckScope{Senders: []types.Address{addr(2)}}, []byte{1}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			h := &scopedHook{testHook: newHook(), scope: c.scope}
+			p := newPool(t, Config{}, h, nil)
+			mustAdd(t, p, tx(1, 0, 0), CodeOK, "")
+			mustAdd(t, p, tx(2, 0, 0), CodeOK, "")
+			h.set(func(h *testHook) { h.banned[addr(1)] = true; h.banned[addr(2)] = true })
+			if err := p.Update(context.Background(), BlockUpdate{}); err != nil {
+				t.Fatal(err)
+			}
+			// A local addition queues behind the recheck.
+			mustAdd(t, p, tx(3, 0, 0), CodeOK, "")
+			kept := []byte{}
+			for _, s := range []byte{1, 2} {
+				if k, _ := h.TxKey(tx(s, 0, 0)); p.Has(k) {
+					kept = append(kept, s)
+				}
+			}
+			if string(kept) != string(c.kept) || h.updates != 1 {
+				t.Fatalf("kept senders %v, want %v; %d updates seen", kept, c.kept, h.updates)
+			}
+		})
+	}
+}
+
+// metaHook answers each check with a gas limit that counts the checks, so
+// the admission meta can be told from a recheck's.
+type metaHook struct{ *testHook }
+
+func (h metaHook) CheckTx(ctx context.Context, req CheckRequest) CheckResponse {
+	r := h.testHook.CheckTx(ctx, req)
+	h.mu.Lock()
+	r.Meta.GasLimit = uint64(len(h.checks))
+	h.mu.Unlock()
+	return r
+}
+
+// TestRecheckPrev: a recheck carries the meta of the admission (not that of
+// an earlier recheck); a first check carries none.
+func TestRecheckPrev(t *testing.T) {
+	h := metaHook{newHook()}
+	p := newPool(t, Config{}, h, nil)
+	mustAdd(t, p, tx(1, 0, 0), CodeOK, "")
+	for i := range 2 {
+		if err := p.Update(context.Background(), BlockUpdate{}); err != nil {
+			t.Fatal(err)
+		}
+		mustAdd(t, p, tx(byte(2+i), 0, 0), CodeOK, "") // queues behind the recheck
+	}
+	h.set(func(h *testHook) {
+		var prevs []uint64
+		for _, c := range h.checks {
+			switch {
+			case c.Kind == CheckNew && c.Prev != nil:
+				t.Fatalf("first check of %v carries %+v", c.Tx, *c.Prev)
+			case c.Kind == CheckRecheck && c.Tx[0] == 1:
+				if c.Prev == nil || c.Prev.Sender != addr(1) {
+					t.Fatalf("recheck without the admission meta: %+v", c.Prev)
+				}
+				prevs = append(prevs, c.Prev.GasLimit)
+			}
+		}
+		if len(prevs) != 2 || prevs[0] != 1 || prevs[1] != 1 {
+			t.Fatalf("recheck gas limits of the kept meta %v, want [1 1] (the admission)", prevs)
+		}
+	})
+}
+
 func TestLimits(t *testing.T) {
 	h := newHook()
 	p := newPool(t, Config{MaxTxs: 2, MaxPerSender: 2}, h, nil)

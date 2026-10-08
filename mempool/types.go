@@ -18,9 +18,17 @@ type AdmissionHook interface {
 }
 
 // RecheckScoper is an optional AdmissionHook extension that limits the
-// recheck after a new head to some senders.
+// recheck after a new head to some senders. Without it every sender is
+// rechecked.
 type RecheckScoper interface {
-	Scope(u BlockUpdate) []types.Address
+	Scope(u BlockUpdate) RecheckScope
+}
+
+// RecheckScope is the senders to recheck after an update: every sender
+// when All is set, otherwise those in Senders (none when it is empty).
+type RecheckScope struct {
+	All     bool
+	Senders []types.Address
 }
 
 // CheckKind tells a first check from a recheck after a new head.
@@ -47,6 +55,12 @@ type CheckRequest struct {
 	Key    types.Hash
 	Kind   CheckKind
 	Origin Origin
+	// Prev is, on a recheck, the meta the pool kept from the transaction's
+	// admission, so that what a hook fixes at admission (such as
+	// OrderHints.CachedTip) lives with the pooled transaction and not in
+	// the hook. It is nil on a first check. A recheck does not replace
+	// it: the pool keeps the admission meta. The hook must not modify it.
+	Prev *TxMeta
 }
 
 // CheckCode is the verdict of CheckTx.
