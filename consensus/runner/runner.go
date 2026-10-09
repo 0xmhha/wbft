@@ -160,6 +160,7 @@ var (
 	ErrNotRunning = errors.New("runner: not running")
 	ErrHalted     = errors.New("runner: consensus halted")
 	ErrStartPoint = errors.New("runner: start height is not the head + 1")
+	ErrClosed     = errors.New("runner: closed")
 )
 
 // queued is one input with where it came from.
@@ -237,6 +238,7 @@ type Runner struct {
 	ctl      chan ctlReq
 	notify   chan struct{}
 	started  bool
+	closed   bool // Close ran: the loop is gone and Start is refused
 	stopLoop chan struct{}
 	loopDone sync.WaitGroup
 	randMu   sync.Mutex
@@ -389,6 +391,9 @@ func (r *Runner) PeerConnected(a types.Address) {
 func (r *Runner) Start(ctx context.Context, from types.Height) error {
 	r.ctlMu.Lock()
 	defer r.ctlMu.Unlock()
+	if r.closed {
+		return ErrClosed
+	}
 	if r.running.Load() {
 		return ErrRunning
 	}
@@ -425,8 +430,15 @@ func (r *Runner) Stop() error {
 	return r.onLoop(func() error { r.stopEngine("operator"); return nil })
 }
 
-// Close stops the engine if it runs and ends the runner's goroutines.
+// Close stops the engine if it runs and ends the runner's goroutines. A
+// later Start returns ErrClosed: it would hand its work to the loop that is
+// gone and wait for it forever (a node whose sync loop restarts the engine
+// while the node stops). Close refuses Start before it stops the engine, so
+// no Start slips in between.
 func (r *Runner) Close() error {
+	r.ctlMu.Lock()
+	r.closed = true
+	r.ctlMu.Unlock()
 	if r.running.Load() {
 		_ = r.Stop()
 	}
