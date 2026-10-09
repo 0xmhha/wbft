@@ -685,3 +685,39 @@ func TestHeadCheckTransient(t *testing.T) {
 		t.Fatalf("core at %s", v.View.Sequence)
 	}
 }
+
+// TestStartAfterClose refuses a Start that comes after Close. The loop is
+// gone, so the Start used to wait for it forever: a node whose sync loop
+// restarted the engine while the node stopped hung in its Stop.
+func TestStartAfterClose(t *testing.T) {
+	k := newKeys(t, 4)
+	var mu sync.Mutex
+	pol := uint64(0)
+	cfg := types.NewConfig(types.WBFTParams{RequestTimeoutSeconds: 1, EpochLength: 1 << 40, ProposerPolicy: &pol}, nil, types.GenesisInit{}, nil)
+	g := &gnode{chain: &fakeChain{head: block(t, 9, 0, k.addrs[3], types.Hash{}).Header, vs: k.vs, clock: SystemClock(),
+		future: map[types.Hash]time.Duration{}, bad: map[types.Hash]bool{}}, k: k, t: t, mu: &mu,
+		dec: map[uint64]types.Hash{}, hdr: map[uint64]*types.Header{}}
+	dd, _ := transport.NewDedup(&routeNet{rt: &router{}, self: k.addrs[0], all: k.addrs}, transport.DedupOptions{Self: k.addrs[0]})
+	r, err := New(Config{Core: consensus.Options{Config: cfg, Self: k.addrs[0], Improvements: consensus.RestartSafety}, Workers: 2},
+		Deps{Chain: g.chain, App: g, Transport: dd, Signer: mustSigner(t, k, 0), Clock: SystemClock()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	g.r = r
+	if err := r.Start(context.Background(), types.HeightFromUint64(10)); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Close(); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- r.Start(context.Background(), types.HeightFromUint64(10)) }()
+	select {
+	case err := <-done:
+		if !errors.Is(err, ErrClosed) {
+			t.Fatalf("Start after Close: %v, want ErrClosed", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Start after Close did not return")
+	}
+}
