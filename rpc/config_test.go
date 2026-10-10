@@ -10,6 +10,7 @@ import (
 
 	"github.com/0xmhha/wbft/consensus"
 	"github.com/0xmhha/wbft/observe/evidence"
+	"github.com/0xmhha/wbft/observe/participation"
 	"github.com/0xmhha/wbft/observe/rejection"
 	"github.com/0xmhha/wbft/p2p/transport"
 	"github.com/0xmhha/wbft/types"
@@ -27,6 +28,9 @@ func (f fakeBackend) Events(uint64, int) []json.RawMessage             { return 
 func (f fakeBackend) Chain() types.ChainReader                         { return nil }
 func (f fakeBackend) Rejections(from, to *big.Int) ([]rejection.Record, error) {
 	return []rejection.Record{{Number: to.String()}}, nil
+}
+func (f fakeBackend) Participation(from, to *big.Int) ([]participation.Record, error) {
+	return []participation.Record{{Height: from.String(), Gap: true}}, nil
 }
 func (f fakeBackend) Evidence(from, to *big.Int) ([]evidence.Record, error) {
 	return []evidence.Record{{Height: from.String()}}, nil
