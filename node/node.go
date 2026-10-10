@@ -452,6 +452,7 @@ func (n *Node) openJournal(core consensus.Options, runID string) (*journal.FileW
 	if n.cfg.Journal.MaxBytes != 0 {
 		opt.MaxBytes = n.cfg.Journal.MaxBytes
 	}
+	opt.Observer = newJournalMetrics(n.metrics)
 	n.mu.Lock()
 	info := n.info
 	n.mu.Unlock()
@@ -466,8 +467,35 @@ func (n *Node) openJournal(core consensus.Options, runID string) (*journal.FileW
 	n.mu.Lock()
 	n.journal = jw
 	n.mu.Unlock()
+	n.metrics.GaugeFunc("wbft_journal_bytes", "Total size of the message journal's segment files.", nil, func() []metrics.Value {
+		b, err := jw.Bytes()
+		if err != nil {
+			return nil
+		}
+		return []metrics.Value{{V: float64(b)}}
+	})
 	return jw, nil
 }
+
+// journalMetrics are the journal metrics of observe.md 11.5 but
+// wbft_journal_bytes, which is read when the registry is gathered.
+type journalMetrics struct {
+	records, dropped, truncated, pruned *metrics.Counter
+}
+
+func newJournalMetrics(r *metrics.Registry) *journalMetrics {
+	return &journalMetrics{
+		records:   r.Counter("wbft_journal_records_total", "Records written to the message journal, by kind (not counting the header records each segment repeats).", "kind"),
+		dropped:   r.Counter("wbft_journal_dropped_total", "Journal records dropped because the writer's queue was full."),
+		truncated: r.Counter("wbft_journal_truncated_total", "Received frames journaled without their payload (too large to keep)."),
+		pruned:    r.Counter("wbft_journal_pruned_segments_total", "Journal segments removed by the retention rules."),
+	}
+}
+
+func (m *journalMetrics) Written(k journal.Kind) { m.records.Inc(k.String()) }
+func (m *journalMetrics) Dropped(journal.Kind)   { m.dropped.Inc() }
+func (m *journalMetrics) Truncated()             { m.truncated.Inc() }
+func (m *journalMetrics) Pruned(n int)           { m.pruned.Add(float64(n)) }
 
 // Logger returns a logger of module m (logcat.Register for application
 // modules, before the node is made) that writes where the node's lines go,
