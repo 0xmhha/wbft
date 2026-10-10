@@ -293,3 +293,47 @@ func TestExportBundle(t *testing.T) {
 	}
 	runJSON(t, fs, 2, nil, "export", "--dir", "/j", "--out", "/b.tar")
 }
+
+// TestExportOfferOutcomes links an outcome decided while a frame was
+// offered to that frame, journaled after it, and the core's outcome of an
+// earlier copy from the same peer to that copy, although the second copy
+// came in between; a frame the receiver did not take is not a target.
+func TestExportOfferOutcomes(t *testing.T) {
+	fs := fsys.NewMem()
+	jw, err := journal.Open(journal.Options{FS: fs, Dir: "/j", Synchronous: true}, journal.Identity{Self: nodeA, Run: "r"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := []byte{0xc1, 0x0b}
+	k := codec.DedupKey(p)
+	in := func(offer string, hits *journal.DedupHits) {
+		jw.Put(journal.Record{Body: &journal.MsgRec{Dir: journal.In, PeerIdx: 1, Code: 0x13, WireCode: 0x13, Payload: p, DedupKey: k,
+			Offer: offer, Engine: "running", Dedup: hits}})
+	}
+	jw.Put(journal.Record{Body: &journal.PeerRec{PeerIdx: 1, Addr: peerB, Event: "attached"}})
+	in("queued", &journal.DedupHits{}) // the first copy, queued
+	jw.Put(journal.Record{Body: &journal.OutcomeRec{Code: 0x13, Peer: peerB, DedupKey: k, Outcome: "DROP_SILENT", Check: "prefilter",
+		Row: -1, Reason: "duplicate", Via: "direct", AtOffer: true}}) // the second copy's, before its frame
+	in("queued", &journal.DedupHits{Known: true, PeerRecent: true}) // seq 4: the second copy
+	in("queue_full", nil)                                           // seq 5: not taken
+	jw.Put(journal.Record{Body: &journal.OutcomeRec{Code: 0x13, Peer: peerB, DedupKey: k, Outcome: "ACCEPT", Check: "PROCESS",
+		Row: 3, Via: "direct"}}) // the core's, of the first copy
+	if err := jw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	var res exportResult
+	runJSON(t, fs, 0, &res, "export", "--dir", "/j", "--out", "/out", "--format", "r01")
+	of := map[string]any{}
+	var frames []any // seq of the received frames in order
+	for _, r := range readFrames(t, fs, "/out/frames-r.jsonl") {
+		switch r["type"] {
+		case "outcome":
+			of[r["outcome"].(string)] = r["of"]
+		case "frame":
+			frames = append(frames, r["seq"])
+		}
+	}
+	if len(frames) != 3 || of["ACCEPT"] != frames[0] || of["DROP_SILENT"] != frames[1] || res.Unlinked != 0 {
+		t.Fatalf("links %v, unlinked %d; frames %v: want ACCEPT of the first, DROP_SILENT of the second", of, res.Unlinked, frames)
+	}
+}

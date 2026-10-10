@@ -9,6 +9,7 @@ import (
 	"math/big"
 	"os"
 	"path/filepath"
+	"slices"
 	"time"
 
 	"github.com/0xmhha/wbft/consensus/wal"
@@ -33,9 +34,13 @@ import (
 // received bytes unchanged. A frame the node kept without its payload (too large) has its size,
 // no payload_sha256 and a zero dedup_key. A conn record carries the times of
 // the record before it, since peer
-// records have no times of their own. An outcome the core journaled before
-// the adapter journaled its frame follows the frame in the file and keeps
-// its own (lower) seq; one whose frame does not come within
+// records have no times of their own. An outcome is linked to a received
+// frame the receiver took (offer queued) from the same peer with the same
+// key: one decided while the frame was offered (AtOffer: a known key, the
+// engine not running) to the next such frame, any other to the last one
+// not settled that way, or to the next one when there is none yet. An
+// outcome journaled before its frame follows the frame in the file and
+// keeps its own (lower) seq; one whose frame does not come within
 // outcomeLinkWindow records has "of": null.
 
 // r01Version is the format version of the records (field v).
@@ -73,9 +78,10 @@ type linkKey struct {
 
 // pendingOutcome is an outcome journaled before its frame.
 type pendingOutcome struct {
-	key  linkKey
-	rec  map[string]any
-	left int // records it may still wait
+	key     linkKey
+	rec     map[string]any
+	left    int  // records it may still wait
+	atOffer bool // decided while the frame was offered (journal AtOffer)
 }
 
 // r01Writer turns the records of one journal into R-01 files.
@@ -377,25 +383,38 @@ func (w *r01Writer) msg(seq uint64, b *journal.MsgRec) error {
 	if b.Dir == journal.In && b.DedupKey != (types.Hash{}) {
 		w.lastIn[b.DedupKey] = seq
 	}
-	if p := w.peers[b.PeerIdx]; b.Dir == journal.In && p != nil {
-		k := linkKey{peer: p.Addr, key: b.DedupKey}
-		w.last[k] = seq
-		// Outcomes journaled before this frame belong to it; they follow it
-		// in the file and keep their own seq.
-		kept := w.wait[:0]
-		for _, o := range w.wait {
-			if o.key != k {
-				kept = append(kept, o)
-				continue
-			}
-			o.rec["of"] = seq
-			if err := w.write(o.rec); err != nil {
-				return err
-			}
+	if p := w.peers[b.PeerIdx]; b.Dir == journal.In && b.Offer == transport.OfferQueued && p != nil {
+		if err := w.link(linkKey{peer: p.Addr, key: b.DedupKey}, seq); err != nil {
+			return err
 		}
-		w.wait = kept
 	}
 	return w.tick()
+}
+
+// link gives the waiting outcomes of k to the received frame seq, which the
+// receiver took. An outcome decided while the frame was offered settles
+// it: that outcome alone is the frame's, and the frame is not a target of
+// later outcomes. Otherwise the outcomes the core journaled before the
+// frame belong to it, and so do later ones until the next copy. Linked
+// outcomes follow the frame in the file and keep their own seq.
+func (w *r01Writer) link(k linkKey, seq uint64) error {
+	settled := slices.IndexFunc(w.wait, func(o *pendingOutcome) bool { return o.key == k && o.atOffer })
+	kept := w.wait[:0]
+	for i, o := range w.wait {
+		if o.key != k || (settled >= 0 && i != settled) {
+			kept = append(kept, o)
+			continue
+		}
+		o.rec["of"] = seq
+		if err := w.write(o.rec); err != nil {
+			return err
+		}
+	}
+	w.wait = kept
+	if settled < 0 {
+		w.last[k] = seq
+	}
+	return nil
 }
 
 func (w *r01Writer) outcome(seq uint64, b *journal.OutcomeRec) error {
@@ -423,11 +442,11 @@ func (w *r01Writer) outcome(seq uint64, b *journal.OutcomeRec) error {
 		r["of"] = b.Of
 	case b.Via == "self": // the node's own message: no frame was received
 		r["of"] = nil
-	case w.last[k] != 0:
+	case !b.AtOffer && w.last[k] != 0:
 		r["of"] = w.last[k]
 	default:
 		r["of"] = nil
-		w.wait = append(w.wait, &pendingOutcome{key: k, rec: r, left: outcomeLinkWindow})
+		w.wait = append(w.wait, &pendingOutcome{key: k, rec: r, left: outcomeLinkWindow, atOffer: b.AtOffer})
 		return w.tick()
 	}
 	if err := w.write(r); err != nil {
