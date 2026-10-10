@@ -44,7 +44,12 @@ import (
 // outcome journaled before its frame follows the frame in the file and
 // keeps its own (lower) seq; one whose frame does not come within
 // outcomeLinkWindow records has "of": null, and a relay whose frame does not
-// come within that window has no relay_of.
+// come within that window has no relay_of. A closed conn record carries who
+// closed the stream (by: self, peer, unknown; unknown when the journal does
+// not say) and, when the node did, the cause; a close for one received
+// frame (cause frame or engine_stopped) has "of": the frame of that peer
+// whose outcome was DISCONNECT. That frame or its outcome may be journaled
+// after the close, which then waits for it like an outcome.
 
 // r01Version is the format version of the records (field v).
 const r01Version = 1
@@ -88,6 +93,14 @@ type pendingOutcome struct {
 	atOffer bool // decided while the frame was offered (journal AtOffer)
 }
 
+// pendingClose is a close for a received frame whose DISCONNECT was not
+// journaled yet.
+type pendingClose struct {
+	peer types.Address
+	rec  map[string]any
+	left int // records it may still wait
+}
+
 // pendingRelay is a relay journaled before the frame it relays.
 type pendingRelay struct {
 	key  types.Hash
@@ -112,9 +125,11 @@ type r01Writer struct {
 	peers  map[uint32]*journal.PeerRec
 	on     map[uint32]bool // attached peers (segment headers repeat them)
 	last   map[linkKey]uint64
-	lastIn map[types.Hash]uint64 // the last received frame of a message, from any peer
-	wait   []*pendingOutcome     // in journal order
-	relays []*pendingRelay       // in journal order
+	lastIn map[types.Hash]uint64    // the last received frame of a message, from any peer
+	wait   []*pendingOutcome        // in journal order
+	relays []*pendingRelay          // in journal order
+	closes []*pendingClose          // in journal order
+	disc   map[types.Address]uint64 // the last frame of a peer that ended DISCONNECT, not yet named by a close
 	saved  map[string]bool
 }
 
@@ -225,6 +240,7 @@ func (w *r01Writer) openRun(s *journal.SegmentRec) error {
 	w.file, w.node, w.head = f, s.Self, nil
 	w.peers, w.on = map[uint32]*journal.PeerRec{}, map[uint32]bool{}
 	w.last, w.wait, w.relays, w.lastIn = map[linkKey]uint64{}, nil, nil, map[types.Hash]uint64{}
+	w.closes, w.disc = nil, map[types.Address]uint64{}
 	w.run = &exportRun{Run: s.Run, File: name}
 	w.res.Runs = append(w.res.Runs, w.run)
 	return nil
@@ -250,6 +266,12 @@ func (w *r01Writer) closeRun() error {
 		w.res.Unlinked++
 	}
 	w.relays = nil
+	for _, p := range w.closes {
+		if err := w.write(p.rec); err != nil {
+			return err
+		}
+	}
+	w.closes = nil
 	err := w.file.Close()
 	w.file = nil
 	return err
@@ -270,6 +292,17 @@ func (w *r01Writer) tick() error {
 		w.res.Unlinked++
 	}
 	w.relays = relays
+	closes := w.closes[:0]
+	for _, p := range w.closes {
+		if p.left--; p.left > 0 {
+			closes = append(closes, p)
+			continue
+		}
+		if err := w.write(p.rec); err != nil {
+			return err
+		}
+	}
+	w.closes = closes
 	kept := w.wait[:0]
 	for _, p := range w.wait {
 		if p.left--; p.left > 0 {
@@ -339,11 +372,45 @@ func (w *r01Writer) peer(seq uint64, b *journal.PeerRec) error {
 		delete(w.on, b.PeerIdx)
 		r["event"] = "closed"
 		r["reason"] = b.Reason
+		r["by"] = transport.ClosedByUnknown
+		if b.By != "" {
+			r["by"] = b.By
+		}
+		if b.By == transport.ClosedBySelf {
+			r["cause"] = b.Cause
+		}
 	}
 	if !w.inRange() {
 		return nil
 	}
+	if r["event"] == "istanbul_attached" {
+		delete(w.disc, b.Addr)
+		return w.write(r)
+	}
+	if b.By == transport.ClosedBySelf && (b.Cause == transport.CloseFrame || b.Cause == transport.CloseEngineStopped) {
+		if seq := w.disc[b.Addr]; seq != 0 {
+			r["of"] = seq
+		} else {
+			w.closes = append(w.closes, &pendingClose{peer: b.Addr, rec: r, left: outcomeLinkWindow})
+			return nil
+		}
+	}
+	delete(w.disc, b.Addr)
 	return w.write(r)
+}
+
+// disconnected notes that the frame seq of peer ended DISCONNECT and gives
+// it to the first close waiting for one.
+func (w *r01Writer) disconnected(peer types.Address, seq uint64) error {
+	for i, p := range w.closes {
+		if p.peer == peer {
+			p.rec["of"] = seq
+			w.closes = append(w.closes[:i], w.closes[i+1:]...)
+			return w.write(p.rec)
+		}
+	}
+	w.disc[peer] = seq
+	return nil
 }
 
 // inOutcome is the R-01 outcome of a received frame from the journal's
@@ -420,6 +487,11 @@ func (w *r01Writer) msg(seq uint64, b *journal.MsgRec) error {
 			return err
 		}
 	}
+	if p := w.peers[b.PeerIdx]; b.Dir == journal.In && b.Offer == transport.OfferFrameDisconnect && p != nil {
+		if err := w.disconnected(p.Addr, seq); err != nil {
+			return err
+		}
+	}
 	if p := w.peers[b.PeerIdx]; b.Dir == journal.In && b.Offer == transport.OfferQueued && p != nil {
 		if err := w.link(linkKey{peer: p.Addr, key: b.DedupKey}, seq); err != nil {
 			return err
@@ -463,6 +535,11 @@ func (w *r01Writer) link(k linkKey, seq uint64) error {
 		if err := w.write(o.rec); err != nil {
 			return err
 		}
+		if o.rec["outcome"] == string(event.Disconnect) {
+			if err := w.disconnected(k.peer, seq); err != nil {
+				return err
+			}
+		}
 	}
 	w.wait = kept
 	if settled < 0 {
@@ -498,6 +575,15 @@ func (w *r01Writer) outcome(seq uint64, b *journal.OutcomeRec) error {
 		r["of"] = nil
 	case !b.AtOffer && w.last[k] != 0:
 		r["of"] = w.last[k]
+		if b.Outcome == event.Disconnect {
+			if err := w.write(r); err != nil {
+				return err
+			}
+			if err := w.disconnected(b.Peer, w.last[k]); err != nil {
+				return err
+			}
+			return w.tick()
+		}
 	default:
 		r["of"] = nil
 		w.wait = append(w.wait, &pendingOutcome{key: k, rec: r, left: outcomeLinkWindow, atOffer: b.AtOffer})

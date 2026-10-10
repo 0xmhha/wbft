@@ -22,7 +22,8 @@ type Transport interface {
 	PeerEvents() <-chan PeerEvent
 	// Peers returns the peers whose istanbul stream is attached.
 	Peers() []PeerInfo
-	// Disconnect closes the connection to peer.
+	// Disconnect closes the connection to peer; reason is one of the Close
+	// causes when the caller has one.
 	Disconnect(peer types.Address, reason string)
 }
 

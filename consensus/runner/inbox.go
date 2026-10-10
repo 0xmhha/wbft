@@ -87,7 +87,7 @@ func (b *inbox) Offer(in transport.Inbound) bool {
 		if transport.StoppedEngineAction(sync) == transport.FrameDisconnect {
 			r.prefilter(in, nil, event.Disconnect, "engine_stopped", true)
 			if r.d.Net != nil {
-				r.d.Net.Disconnect(in.Peer, "consensus message while the engine is stopped")
+				r.d.Net.Disconnect(in.Peer, transport.CloseEngineStopped)
 			}
 		} else {
 			r.prefilter(in, nil, event.DropSilent, "engine_stopped", true)
@@ -156,7 +156,7 @@ func (b *inbox) overflow(a types.Address, now time.Duration) {
 	if disconnect {
 		r.emit(event.Record{Kind: event.Health, Fields: map[string]any{"what": "peer_inbound_disconnect", "peer": hexAddr(a)}}, nil)
 		if r.d.Net != nil {
-			r.d.Net.Disconnect(a, "receive queue overflow")
+			r.d.Net.Disconnect(a, transport.CloseQueueOverflow)
 		}
 	}
 }

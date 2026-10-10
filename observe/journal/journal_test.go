@@ -419,3 +419,30 @@ func TestOutcomeAtOffer(t *testing.T) {
 		t.Fatalf("record without AtOffer %+v", got)
 	}
 }
+
+// TestPeerClose round-trips who closed a stream and why, and decodes a peer
+// record written before records carried them.
+func TestPeerClose(t *testing.T) {
+	body, err := encodeBody(Record{Body: &PeerRec{PeerIdx: 2, Event: "closed", Reason: "frame stage", By: "self", Cause: "frame"}}, 7)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := decodeBody(KindPeer, body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := r.Body.(*PeerRec); got.By != "self" || got.Cause != "frame" || got.Reason != "frame stage" || got.PeerIdx != 2 {
+		t.Fatalf("decoded %+v", got)
+	}
+	old, err := rlp.Encode(&peerRLPNoClose{Format: Format, JSeq: 8, PeerIdx: 3, Event: "closed", Reason: "read"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err = decodeBody(KindPeer, old)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := r.Body.(*PeerRec); got.By != "" || got.Cause != "" || got.Reason != "read" || got.PeerIdx != 3 || r.JSeq != 8 {
+		t.Fatalf("record without By and Cause %+v", got)
+	}
+}
