@@ -385,6 +385,19 @@ func (n *Node) start(ctx context.Context) error {
 			out = recordedTransport{Transport: n.d.Transport, rec: rec}
 		}
 		suppressed := n.metrics.Counter("wbft_send_suppressed_total", "Sends left out because the peer's recent cache holds the message, by cause.", "cause")
+		hits := n.metrics.Counter("wbft_dedup_hits_total", "Received messages whose key was already in a dedup cache, by cache (known, peer_recent).", "cache")
+		record := inbound
+		inbound = func(peer types.Address, known, peerRecent bool) {
+			if known {
+				hits.Inc("known")
+			}
+			if peerRecent {
+				hits.Inc("peer_recent")
+			}
+			if record != nil {
+				record(peer, known, peerRecent)
+			}
+		}
 		if dedup, err = transport.NewDedup(out, transport.DedupOptions{Self: self,
 			Suppressed: func(c event.SendCause) { suppressed.Inc(string(c)) }, Inbound: inbound}); err != nil {
 			return err

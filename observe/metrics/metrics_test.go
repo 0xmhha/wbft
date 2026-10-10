@@ -2,9 +2,11 @@ package metrics
 
 import (
 	"bytes"
+	"math"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/0xmhha/wbft/observe/event"
 )
@@ -146,6 +148,48 @@ func TestEventMetrics(t *testing.T) {
 		"wbft_evidence_total kind=double_sign":                     1,
 	} {
 		if got[k] != v {
+			t.Errorf("%s = %v, want %v", k, got[k], v)
+		}
+	}
+}
+
+// TestEventPhases measures the consecutive phases of a view from the event
+// times, the import of a block after the next view has started, the state
+// gauge and slot overwrites; a quorum in a view whose PRE-PREPARE was not
+// accepted is not a phase.
+func TestEventPhases(t *testing.T) {
+	r := NewRegistry()
+	m := NewEventMetrics(r)
+	ms := func(n int) event.Stamp { return event.Stamp{Mono: time.Duration(n) * time.Millisecond} }
+	v5, v6 := &event.View{Seq: "5", Round: "0"}, &event.View{Seq: "6", Round: "1"}
+	obs := func(k event.Kind, v *event.View, f map[string]any, at int) {
+		m.Observe(event.Record{Kind: k, View: v, Fields: f}, ms(at))
+	}
+	obs(event.RoundEnter, v5, map[string]any{"cause": "new_head"}, 0) // the clock may start at 0
+	obs(event.PreprepareAccept, v5, nil, 10)
+	obs(event.StateChange, v5, map[string]any{"from": "AcceptRequest", "to": "Preprepared"}, 10)
+	obs(event.Quorum, v5, map[string]any{"what": "PREPARE"}, 30)
+	obs(event.Quorum, v5, map[string]any{"what": "PREPARE"}, 35) // a later report of the same quorum
+	obs(event.Quorum, v5, map[string]any{"what": "COMMIT"}, 60)
+	obs(event.StateChange, v5, map[string]any{"from": "Prepared", "to": "Committed"}, 60)
+	obs(event.FinalizeHandover, nil, map[string]any{"number": "5"}, 70)
+	obs(event.RoundEnter, v6, map[string]any{"cause": "timeout"}, 75)
+	obs(event.NewHead, nil, map[string]any{"number": "5"}, 100)
+	obs(event.Quorum, v6, map[string]any{"what": "PREPARE"}, 120) // no PRE-PREPARE accepted in view 6/1
+	obs(event.MsgOutcome, nil, map[string]any{"code": uint64(0x13), "outcome": "DROP_SILENT", "check": "prefilter", "reason": "overwritten"}, 130)
+	got := values(t, r)
+	for k, v := range map[string]float64{
+		"wbft_phase_seconds phase=preprepare sum":            0.010,
+		"wbft_phase_seconds phase=prepare_quorum sum":        0.020,
+		"wbft_phase_seconds phase=commit_quorum sum":         0.030,
+		"wbft_phase_seconds phase=commit sum":                0.010,
+		"wbft_phase_seconds phase=import sum":                0.030,
+		"wbft_phase_seconds phase=prepare_quorum count":      1,
+		"wbft_consensus_state":                               3,
+		"wbft_inbound_slot_overwrites_total code=0x13":       1,
+		"wbft_peer_inbound_dropped_total reason=overwritten": 1,
+	} {
+		if math.Abs(got[k]-v) > 1e-9 {
 			t.Errorf("%s = %v, want %v", k, got[k], v)
 		}
 	}
