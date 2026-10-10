@@ -31,7 +31,9 @@ import (
 // not running, has no dedup), and the engine state the node had when it
 // recorded the frame. A relay's relay_of is
 // the last received frame with the same dedup key, since a relay sends the
-// received bytes unchanged. A frame the node kept without its payload (too large) has its size,
+// received bytes unchanged; a relay the node journaled before the frame it
+// relays (the core can accept and relay a message before the receiver
+// journals it) follows that frame in the file and keeps its own seq. A frame the node kept without its payload (too large) has its size,
 // no payload_sha256 and a zero dedup_key. A conn record carries the times of
 // the record before it, since peer
 // records have no times of their own. An outcome is linked to a received
@@ -41,7 +43,8 @@ import (
 // not settled that way, or to the next one when there is none yet. An
 // outcome journaled before its frame follows the frame in the file and
 // keeps its own (lower) seq; one whose frame does not come within
-// outcomeLinkWindow records has "of": null.
+// outcomeLinkWindow records has "of": null, and a relay whose frame does not
+// come within that window has no relay_of.
 
 // r01Version is the format version of the records (field v).
 const r01Version = 1
@@ -66,7 +69,8 @@ type exportResult struct {
 	Payloads int64        `json:"payloads"` // payload files written
 	// Unlinked counts outcome records whose received frame was not found
 	// (of is null); outcomes of the node's own messages (via self) have no
-	// frame and are not counted.
+	// frame and are not counted. Relays whose received frame was not found
+	// (no relay_of) are counted too.
 	Unlinked int64 `json:"unlinked"`
 }
 
@@ -82,6 +86,13 @@ type pendingOutcome struct {
 	rec     map[string]any
 	left    int  // records it may still wait
 	atOffer bool // decided while the frame was offered (journal AtOffer)
+}
+
+// pendingRelay is a relay journaled before the frame it relays.
+type pendingRelay struct {
+	key  types.Hash
+	rec  map[string]any
+	left int // records it may still wait
 }
 
 // r01Writer turns the records of one journal into R-01 files.
@@ -103,6 +114,7 @@ type r01Writer struct {
 	last   map[linkKey]uint64
 	lastIn map[types.Hash]uint64 // the last received frame of a message, from any peer
 	wait   []*pendingOutcome     // in journal order
+	relays []*pendingRelay       // in journal order
 	saved  map[string]bool
 }
 
@@ -212,14 +224,14 @@ func (w *r01Writer) openRun(s *journal.SegmentRec) error {
 	}
 	w.file, w.node, w.head = f, s.Self, nil
 	w.peers, w.on = map[uint32]*journal.PeerRec{}, map[uint32]bool{}
-	w.last, w.wait, w.lastIn = map[linkKey]uint64{}, nil, map[types.Hash]uint64{}
+	w.last, w.wait, w.relays, w.lastIn = map[linkKey]uint64{}, nil, nil, map[types.Hash]uint64{}
 	w.run = &exportRun{Run: s.Run, File: name}
 	w.res.Runs = append(w.res.Runs, w.run)
 	return nil
 }
 
-// closeRun writes the outcomes still waiting for their frame and closes the
-// file of the run.
+// closeRun writes the outcomes and relays still waiting for their frame and
+// closes the file of the run.
 func (w *r01Writer) closeRun() error {
 	if w.file == nil {
 		return nil
@@ -231,14 +243,33 @@ func (w *r01Writer) closeRun() error {
 		w.res.Unlinked++
 	}
 	w.wait = nil
+	for _, p := range w.relays {
+		if err := w.write(p.rec); err != nil {
+			return err
+		}
+		w.res.Unlinked++
+	}
+	w.relays = nil
 	err := w.file.Close()
 	w.file = nil
 	return err
 }
 
-// tick ages the outcomes waiting for their frame and writes, unlinked,
-// those that waited too long.
+// tick ages the outcomes and relays waiting for their frame and writes,
+// unlinked, those that waited too long.
 func (w *r01Writer) tick() error {
+	relays := w.relays[:0]
+	for _, p := range w.relays {
+		if p.left--; p.left > 0 {
+			relays = append(relays, p)
+			continue
+		}
+		if err := w.write(p.rec); err != nil {
+			return err
+		}
+		w.res.Unlinked++
+	}
+	w.relays = relays
 	kept := w.wait[:0]
 	for _, p := range w.wait {
 		if p.left--; p.left > 0 {
@@ -375,6 +406,9 @@ func (w *r01Writer) msg(seq uint64, b *journal.MsgRec) error {
 		case b.Cause == event.CauseRelay && w.lastIn[b.DedupKey] != 0:
 			// A relay sends the received bytes unchanged: the same key.
 			r["relay_of"] = w.lastIn[b.DedupKey]
+		case b.Cause == event.CauseRelay && b.DedupKey != (types.Hash{}):
+			w.relays = append(w.relays, &pendingRelay{key: b.DedupKey, rec: r, left: outcomeLinkWindow})
+			return w.tick()
 		}
 	}
 	if err := w.write(r); err != nil {
@@ -382,6 +416,9 @@ func (w *r01Writer) msg(seq uint64, b *journal.MsgRec) error {
 	}
 	if b.Dir == journal.In && b.DedupKey != (types.Hash{}) {
 		w.lastIn[b.DedupKey] = seq
+		if err := w.relayed(b.DedupKey, seq); err != nil {
+			return err
+		}
 	}
 	if p := w.peers[b.PeerIdx]; b.Dir == journal.In && b.Offer == transport.OfferQueued && p != nil {
 		if err := w.link(linkKey{peer: p.Addr, key: b.DedupKey}, seq); err != nil {
@@ -389,6 +426,23 @@ func (w *r01Writer) msg(seq uint64, b *journal.MsgRec) error {
 		}
 	}
 	return w.tick()
+}
+
+// relayed gives the waiting relays of key to the received frame seq.
+func (w *r01Writer) relayed(key types.Hash, seq uint64) error {
+	kept := w.relays[:0]
+	for _, p := range w.relays {
+		if p.key != key {
+			kept = append(kept, p)
+			continue
+		}
+		p.rec["relay_of"] = seq
+		if err := w.write(p.rec); err != nil {
+			return err
+		}
+	}
+	w.relays = kept
+	return nil
 }
 
 // link gives the waiting outcomes of k to the received frame seq, which the
