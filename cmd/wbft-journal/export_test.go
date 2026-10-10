@@ -363,6 +363,49 @@ func TestExportCloses(t *testing.T) {
 	}
 }
 
+// TestExportBacklogOutcome links an outcome the core decided later from its
+// backlog, which has no peer, to the received frame of its key the core
+// checked first, not to a later copy dropped as a duplicate.
+func TestExportBacklogOutcome(t *testing.T) {
+	fs := fsys.NewMem()
+	jw, err := journal.Open(journal.Options{FS: fs, Dir: "/j", Synchronous: true}, journal.Identity{Self: nodeA, Run: "r"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := []byte{0xc1, 0x0d}
+	k := codec.DedupKey(p)
+	peerC := types.Address{0xcc}
+	jw.Put(journal.Record{Body: &journal.PeerRec{PeerIdx: 1, Addr: peerB, Event: "attached"}})
+	jw.Put(journal.Record{Body: &journal.PeerRec{PeerIdx: 2, Addr: peerC, Event: "attached"}})
+	jw.Put(journal.Record{Body: &journal.MsgRec{Dir: journal.In, PeerIdx: 1, Code: 0x14, WireCode: 0x14, Payload: p, DedupKey: k,
+		Offer: "queued", Engine: "running", Dedup: &journal.DedupHits{}}}) // seq 4: the first copy
+	jw.Put(journal.Record{Body: &journal.OutcomeRec{Code: 0x14, Peer: peerB, DedupKey: k, Outcome: "IGNORE", Check: "FUTURE",
+		Row: 5, Via: "direct"}}) // kept in the backlog
+	jw.Put(journal.Record{Body: &journal.OutcomeRec{Code: 0x14, Peer: peerC, DedupKey: k, Outcome: "DROP_SILENT", Check: "prefilter",
+		Row: -1, Reason: "duplicate", Via: "direct", AtOffer: true}})
+	jw.Put(journal.Record{Body: &journal.MsgRec{Dir: journal.In, PeerIdx: 2, Code: 0x14, WireCode: 0x14, Payload: p, DedupKey: k,
+		Offer: "queued", Engine: "running", Dedup: &journal.DedupHits{Known: true}}}) // seq 7: a duplicate
+	jw.Put(journal.Record{Body: &journal.OutcomeRec{Code: 0x14, DedupKey: k, Outcome: "ACCEPT", Check: "PROCESS",
+		Row: 3, Via: "backlog"}}) // replayed from the backlog, no peer
+	jw.Put(journal.Record{Body: &journal.OutcomeRec{Code: 0x14, DedupKey: codec.DedupKey([]byte{0xc0}), Outcome: "ACCEPT",
+		Check: "PROCESS", Row: 3, Via: "backlog"}}) // a key no frame of the run has
+	if err := jw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	var res exportResult
+	runJSON(t, fs, 0, &res, "export", "--dir", "/j", "--out", "/out", "--format", "r01")
+	var got []string
+	for _, r := range readFrames(t, fs, "/out/frames-r.jsonl") {
+		if r["type"] == "outcome" {
+			got = append(got, fmt.Sprintf("%v %v of %v", r["outcome"], r["via"], r["of"]))
+		}
+	}
+	want := []string{"IGNORE direct of 4", "DROP_SILENT direct of 7", "ACCEPT backlog of 4", "ACCEPT backlog of <nil>"}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") || res.Unlinked != 1 {
+		t.Fatalf("outcomes\n%s\nwant\n%s\nunlinked %d", strings.Join(got, "\n"), strings.Join(want, "\n"), res.Unlinked)
+	}
+}
+
 // TestExportBundle writes a bundle file with its manifest and does not
 // overwrite an existing file.
 func TestExportBundle(t *testing.T) {

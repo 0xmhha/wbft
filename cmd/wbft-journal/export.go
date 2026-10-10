@@ -41,6 +41,9 @@ import (
 // key: one decided while the frame was offered (AtOffer: a known key, the
 // engine not running) to the next such frame, any other to the last one
 // not settled that way, or to the next one when there is none yet. An
+// outcome of a message the core processed later from its backlog (via
+// backlog) has no peer: it is linked to the received frame of the same key
+// that the core checked first (the frame it kept in the backlog). An
 // outcome journaled before its frame follows the frame in the file and
 // keeps its own (lower) seq; one whose frame does not come within
 // outcomeLinkWindow records has "of": null, and a relay whose frame does not
@@ -130,6 +133,7 @@ type r01Writer struct {
 	relays []*pendingRelay          // in journal order
 	closes []*pendingClose          // in journal order
 	disc   map[types.Address]uint64 // the last frame of a peer that ended DISCONNECT, not yet named by a close
+	core   map[types.Hash]uint64    // the received frame of a key the core checked first (a direct core outcome)
 	saved  map[string]bool
 }
 
@@ -240,7 +244,7 @@ func (w *r01Writer) openRun(s *journal.SegmentRec) error {
 	w.file, w.node, w.head = f, s.Self, nil
 	w.peers, w.on = map[uint32]*journal.PeerRec{}, map[uint32]bool{}
 	w.last, w.wait, w.relays, w.lastIn = map[linkKey]uint64{}, nil, nil, map[types.Hash]uint64{}
-	w.closes, w.disc = nil, map[types.Address]uint64{}
+	w.closes, w.disc, w.core = nil, map[types.Address]uint64{}, map[types.Hash]uint64{}
 	w.run = &exportRun{Run: s.Run, File: name}
 	w.res.Runs = append(w.res.Runs, w.run)
 	return nil
@@ -399,6 +403,14 @@ func (w *r01Writer) peer(seq uint64, b *journal.PeerRec) error {
 	return w.write(r)
 }
 
+// checked notes the received frame seq of key that the core checked, the
+// first one for the key.
+func (w *r01Writer) checked(key types.Hash, seq uint64) {
+	if _, ok := w.core[key]; !ok {
+		w.core[key] = seq
+	}
+}
+
 // disconnected notes that the frame seq of peer ended DISCONNECT and gives
 // it to the first close waiting for one.
 func (w *r01Writer) disconnected(peer types.Address, seq uint64) error {
@@ -532,6 +544,9 @@ func (w *r01Writer) link(k linkKey, seq uint64) error {
 			continue
 		}
 		o.rec["of"] = seq
+		if o.rec["via"] == "direct" && o.rec["check"] != "prefilter" {
+			w.checked(k.key, seq)
+		}
 		if err := w.write(o.rec); err != nil {
 			return err
 		}
@@ -573,8 +588,19 @@ func (w *r01Writer) outcome(seq uint64, b *journal.OutcomeRec) error {
 		r["of"] = b.Of
 	case b.Via == "self": // the node's own message: no frame was received
 		r["of"] = nil
+	case b.Via == "backlog" && b.Peer == (types.Address{}):
+		// The core replays a backlog message without its peer.
+		r["of"] = nil
+		if f := w.core[b.DedupKey]; f != 0 {
+			r["of"] = f
+		} else {
+			w.res.Unlinked++
+		}
 	case !b.AtOffer && w.last[k] != 0:
 		r["of"] = w.last[k]
+		if b.Via == "direct" && b.Check != "prefilter" {
+			w.checked(b.DedupKey, w.last[k])
+		}
 		if b.Outcome == event.Disconnect {
 			if err := w.write(r); err != nil {
 				return err
