@@ -6,6 +6,7 @@ import (
 	"math/big"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -106,7 +107,8 @@ func TestWriteReadSegments(t *testing.T) {
 
 func TestGapOnOverflow(t *testing.T) {
 	fs := fsys.NewMem()
-	w, err := Open(Options{FS: fs, Dir: "/j", QueueRecords: 1}, ident())
+	obs := &countObserver{}
+	w, err := Open(Options{FS: fs, Dir: "/j", QueueRecords: 1, Observer: obs}, ident())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -144,6 +146,64 @@ func TestGapOnOverflow(t *testing.T) {
 	}
 	if len(gaps) == 0 || int(dropped)+steps != 10 {
 		t.Fatalf("gaps %v, steps %d", gaps, steps)
+	}
+	obs.mu.Lock()
+	defer obs.mu.Unlock()
+	if obs.dropped != int(dropped) || obs.written[KindStep] != steps {
+		t.Fatalf("observer: %d dropped, %d steps written; the journal has %d dropped, %d steps", obs.dropped, obs.written[KindStep], dropped, steps)
+	}
+}
+
+// countObserver counts what a journal writer reports.
+type countObserver struct {
+	mu                         sync.Mutex
+	written                    map[Kind]int
+	dropped, truncated, pruned int
+}
+
+func (o *countObserver) Written(k Kind) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if o.written == nil {
+		o.written = map[Kind]int{}
+	}
+	o.written[k]++
+}
+func (o *countObserver) Dropped(Kind) { o.mu.Lock(); o.dropped++; o.mu.Unlock() }
+func (o *countObserver) Truncated()   { o.mu.Lock(); o.truncated++; o.mu.Unlock() }
+func (o *countObserver) Pruned(n int) { o.mu.Lock(); o.pruned += n; o.mu.Unlock() }
+
+// TestObserver reports the written records by kind, frames kept without
+// their payload, and the segments the writer prunes; Bytes is the size of
+// the segment files.
+func TestObserver(t *testing.T) {
+	fs := fsys.NewMem()
+	obs := &countObserver{}
+	w, err := Open(Options{FS: fs, Dir: "/j", SegmentBytes: 400, KeepHeights: 5, Synchronous: true, Observer: obs}, ident())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for h := uint64(1); h <= 30; h++ {
+		w.NoteHead(types.HeightFromUint64(h))
+		for i := 0; i < 3; i++ {
+			w.Put(Record{Body: step(h*10 + uint64(i))})
+		}
+	}
+	w.Put(Record{Body: &MsgRec{Dir: In, Code: 0x12, Payload: []byte{1}, Offer: "queued"}})
+	w.Put(Record{Body: &MsgRec{Dir: In, Code: 0x12, Size: 20 << 20, Offer: "frame_disconnect"}})
+	segs, _ := wal.Segments(fs, "/j")
+	var size int64
+	for _, s := range segs {
+		size += s.Size
+	}
+	if b, err := w.Bytes(); err != nil || b != size {
+		t.Fatalf("Bytes %d %v, want %d", b, err, size)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if obs.written[KindStep] != 90 || obs.written[KindMsg] != 2 || obs.truncated != 1 || obs.pruned == 0 || obs.dropped != 0 {
+		t.Fatalf("observer: written %v, truncated %d, pruned %d, dropped %d", obs.written, obs.truncated, obs.pruned, obs.dropped)
 	}
 }
 

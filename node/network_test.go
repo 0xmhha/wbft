@@ -117,12 +117,13 @@ func TestFourValidators(t *testing.T) {
 	if !strings.Contains(text.String(), "wbft_send_suppressed_total{cause=") || !strings.Contains(text.String(), "wbft_peer_inbound_queue_bytes ") {
 		t.Fatalf("network metrics:\n%s", text.String())
 	}
-	// Received copies hit the known cache, and every phase of a view was
-	// measured.
+	// Received copies hit the known cache, every phase of a view was
+	// measured, and the journal reports its size and records.
 	for _, want := range []string{`wbft_dedup_hits_total{cache="known"}`, "wbft_consensus_state ",
 		`wbft_phase_seconds_count{phase="preprepare"}`, `wbft_phase_seconds_count{phase="prepare_quorum"}`,
 		`wbft_phase_seconds_count{phase="commit_quorum"}`, `wbft_phase_seconds_count{phase="commit"}`,
-		`wbft_phase_seconds_count{phase="import"}`} {
+		`wbft_phase_seconds_count{phase="import"}`, "wbft_journal_bytes ", `wbft_journal_records_total{kind="step"}`,
+		`wbft_journal_records_total{kind="msg"}`} {
 		if !strings.Contains(text.String(), want) {
 			t.Fatalf("no %s in the network metrics:\n%s", want, text.String())
 		}

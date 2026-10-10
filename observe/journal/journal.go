@@ -46,6 +46,24 @@ type Options struct {
 	// Synchronous writes every record in the caller's goroutine, in Put
 	// order, without a queue. The deterministic simulator uses it.
 	Synchronous bool
+	// Observer, when set, is told what the writer does (the journal
+	// metrics, observe.md 11.5). Its methods must not block.
+	Observer Observer
+}
+
+// Observer is told what a journal writer does.
+type Observer interface {
+	// Written reports a record put to the journal and written to a
+	// segment; the header records each new segment repeats are not
+	// reported.
+	Written(k Kind)
+	// Dropped reports a record dropped because the queue was full.
+	Dropped(k Kind)
+	// Truncated reports a msg record written without its payload (the
+	// frame was too large to keep).
+	Truncated()
+	// Pruned reports n segments removed by the retention rules.
+	Pruned(n int)
 }
 
 // DefaultEnabled is the default of the node setting that turns the journal
@@ -243,6 +261,9 @@ func (w *FileWriter) Put(r Record) {
 		}
 		w.dropMono[1] = monoOf(r)
 		w.dropped[k]++
+		if w.opt.Observer != nil {
+			w.opt.Observer.Dropped(k)
+		}
 		return
 	}
 	w.queue = append(w.queue, r)
@@ -379,6 +400,12 @@ func (w *FileWriter) write(r Record) {
 	}
 	w.jseq++
 	w.stats.counts[k.String()]++
+	if o := w.opt.Observer; o != nil {
+		o.Written(k)
+		if m, ok := r.Body.(*MsgRec); ok && m.Size > uint64(len(m.Payload)) {
+			o.Truncated()
+		}
+	}
 }
 
 // Err returns the first write error; writing stops after it.
@@ -419,7 +446,23 @@ func (w *FileWriter) prune() {
 	if w.head == nil {
 		return
 	}
-	_, _ = Prune(w.fs, w.opt.Dir, *w.head, w.opt, w.seg)
+	res, _ := Prune(w.fs, w.opt.Dir, *w.head, w.opt, w.seg)
+	if w.opt.Observer != nil && len(res.Removed) > 0 {
+		w.opt.Observer.Pruned(len(res.Removed))
+	}
+}
+
+// Bytes returns the total size of the journal's segment files.
+func (w *FileWriter) Bytes() (int64, error) {
+	segs, err := wal.Segments(w.fs, w.opt.Dir)
+	if err != nil {
+		return 0, err
+	}
+	var n int64
+	for _, s := range segs {
+		n += s.Size
+	}
+	return n, nil
 }
 
 // PruneResult reports what Prune removed.
