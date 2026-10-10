@@ -330,3 +330,32 @@ func TestMsgDedup(t *testing.T) {
 		t.Fatalf("record without dedup %+v", got)
 	}
 }
+
+// TestOutcomeAtOffer keeps the AtOffer mark of an outcome record and still
+// reads a record written before records had it.
+func TestOutcomeAtOffer(t *testing.T) {
+	for _, at := range []bool{false, true} {
+		body, err := encodeBody(Record{Body: &OutcomeRec{Code: 0x13, Outcome: "DROP_SILENT", Check: "prefilter", Row: -1, Reason: "duplicate", Via: "direct", AtOffer: at}}, 7)
+		if err != nil {
+			t.Fatal(err)
+		}
+		r, err := decodeBody(KindOutcome, body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := r.Body.(*OutcomeRec); got.AtOffer != at || got.Reason != "duplicate" || got.Row != -1 {
+			t.Fatalf("decoded %+v, want AtOffer %v", got, at)
+		}
+	}
+	old, err := rlp.Encode(&outcomeRLPNoAtOffer{Format: Format, JSeq: 8, Code: 0x13, Outcome: "ACCEPT", Check: "PROCESS", Row: 4, Via: "direct"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := decodeBody(KindOutcome, old)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := r.Body.(*OutcomeRec); got.AtOffer || got.Outcome != "ACCEPT" || got.Row != 3 || r.JSeq != 8 {
+		t.Fatalf("record without AtOffer %+v", got)
+	}
+}

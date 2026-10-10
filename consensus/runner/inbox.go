@@ -85,12 +85,12 @@ func (b *inbox) Offer(in transport.Inbound) bool {
 	if !r.running.Load() {
 		sync := r.d.Synchronising != nil && r.d.Synchronising()
 		if transport.StoppedEngineAction(sync) == transport.FrameDisconnect {
-			r.prefilter(in, nil, event.Disconnect, "engine_stopped")
+			r.prefilter(in, nil, event.Disconnect, "engine_stopped", true)
 			if r.d.Net != nil {
 				r.d.Net.Disconnect(in.Peer, "consensus message while the engine is stopped")
 			}
 		} else {
-			r.prefilter(in, nil, event.DropSilent, "engine_stopped")
+			r.prefilter(in, nil, event.DropSilent, "engine_stopped", true)
 		}
 		return true
 	}
@@ -105,7 +105,7 @@ func (b *inbox) Offer(in transport.Inbound) bool {
 	b.mu.Unlock()
 	// The key enters the known cache only for a message that was queued.
 	if r.d.Transport != nil && r.d.Transport.SeenInbound(in.Peer, in.Code, in.Payload) {
-		r.prefilter(in, nil, event.DropSilent, "duplicate")
+		r.prefilter(in, nil, event.DropSilent, "duplicate", true)
 		return true
 	}
 	b.mu.Lock()
@@ -250,11 +250,11 @@ func (b *inbox) check(in transport.Inbound) {
 		if errors.Is(err, ecdsa.ErrUnauthorizedAddress) {
 			reason = "membership"
 		}
-		r.prefilter(in, nil, event.Ignore, reason)
+		r.prefilter(in, nil, event.Ignore, reason, false)
 		return
 	}
 	if snap != nil && snap.Running && outsideWindow(snap, code, v.Msg.View) {
-		r.prefilter(in, v, event.Ignore, "window")
+		r.prefilter(in, v, event.Ignore, "window", false)
 		return
 	}
 	digest, hasDigest := voteDigest(v.Msg)
@@ -284,13 +284,13 @@ func (b *inbox) check(in transport.Inbound) {
 		b.mu.Unlock()
 	case s.dedup == dedup:
 		b.mu.Unlock()
-		r.prefilter(in, v, event.DropSilent, "duplicate")
+		r.prefilter(in, v, event.DropSilent, "duplicate", false)
 		return
 	default:
 		old := *s
 		s.in, s.dedup, s.digest, s.sig = in, dedup, digest, v.Msg.Signature
 		b.mu.Unlock()
-		r.prefilter(old.in, nil, event.DropSilent, "overwritten")
+		r.prefilter(old.in, nil, event.DropSilent, "overwritten", false)
 		if hasDigest && old.digest != digest {
 			kind := "equivocation"
 			if code == codec.CodePreprepare && v.Msg.View.Round.IsZero() {
@@ -335,8 +335,10 @@ func outsideWindow(snap *consensus.Snapshot, code codec.Code, mv types.View) boo
 	return consensus.CheckMessage(next, consensus.AcceptRequest, types.Round{}, code, mv) == consensus.TooFar
 }
 
-// prefilter records a message that did not reach the core.
-func (r *Runner) prefilter(in transport.Inbound, v *consensus.Verified, outcome event.OutcomeClass, reason string) {
+// prefilter records a message that did not reach the core; atOffer marks
+// one settled while the transport offered it, before the adapter journaled
+// its frame.
+func (r *Runner) prefilter(in transport.Inbound, v *consensus.Verified, outcome event.OutcomeClass, reason string, atOffer bool) {
 	key := codec.DedupKey(in.Payload)
 	f := map[string]any{"code": in.Code, "check": "prefilter", "outcome": outcome, "row": nil, "reason": reason,
 		"via": "direct", "peer": hexAddr(in.Peer), "dedup_key": hexHash(key)}
@@ -348,7 +350,7 @@ func (r *Runner) prefilter(in transport.Inbound, v *consensus.Verified, outcome 
 	r.emit(event.Record{Kind: event.MsgOutcome, View: view, Fields: f}, nil)
 	if r.d.Journal != nil {
 		r.d.Journal.Put(journal.Record{Body: &journal.OutcomeRec{Code: in.Code, Peer: in.Peer, DedupKey: key, Outcome: outcome,
-			Check: "prefilter", Row: -1, Reason: reason, Via: "direct"}})
+			Check: "prefilter", Row: -1, Reason: reason, Via: "direct", AtOffer: atOffer}})
 	}
 }
 
