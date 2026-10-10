@@ -49,6 +49,10 @@ type DedupOptions struct {
 	// Suppressed, when set, is called for each send left out because the
 	// peer's recent cache holds the message (wbft_send_suppressed_total).
 	Suppressed func(cause event.SendCause)
+	// Inbound, when set, is called for each received message SeenInbound
+	// checks, with whether its key was in the known cache and in the
+	// recent cache of peer before the check (R-01 frame.dedup).
+	Inbound func(peer types.Address, known, peerRecent bool)
 
 	// The fields below are reserved for optional behaviours of a later
 	// milestone and must be left at their zero values.
@@ -114,13 +118,18 @@ func (d *Dedup) SeenInbound(peer types.Address, code uint64, payload []byte) (du
 	_ = code // the reference key has no code
 	key := codec.DedupKey(payload)
 	d.mu.Lock()
-	defer d.mu.Unlock()
-	d.peerCache(peer).Add(key, struct{}{})
-	if _, ok := d.known.Get(key); ok {
-		return true
+	m := d.peerCache(peer)
+	recent := m.Contains(key)
+	m.Add(key, struct{}{})
+	_, dup = d.known.Get(key)
+	if !dup {
+		d.known.Add(key, struct{}{})
 	}
-	d.known.Add(key, struct{}{})
-	return false
+	d.mu.Unlock()
+	if d.opt.Inbound != nil {
+		d.opt.Inbound(peer, dup, recent)
+	}
+	return dup
 }
 
 // Broadcast sends an own message to the validators of vs: nothing when the

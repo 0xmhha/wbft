@@ -125,8 +125,9 @@ func TestFourValidators(t *testing.T) {
 
 // checkFrameJournal checks the msg and peer records of a node's journal:
 // every peer was attached with its own index, the stopped peer was closed,
-// messages were received and written with a cause, and every msg record
-// carries the dedup key of its payload.
+// messages were received and written with a cause, every msg record
+// carries the dedup key of its payload, and received frames carry their
+// dedup cache hits: some new, some already known (relayed copies).
 func checkFrameJournal(t *testing.T, mem *fsys.Mem, peers []types.Address, stopped types.Address) {
 	t.Helper()
 	recs, err := journal.ReadAll(mem, "/data/journal")
@@ -152,6 +153,15 @@ func checkFrameJournal(t *testing.T, mem *fsys.Mem, peers []types.Address, stopp
 				t.Fatalf("msg record %+v", b)
 			}
 			count[b.Dir+" "+b.Offer+b.Write]++
+			switch {
+			case b.Dedup == nil:
+			case b.Dir != journal.In || b.Offer != transport.OfferQueued:
+				t.Fatalf("dedup hits on a frame the node did not check: %+v", b)
+			case b.Dedup.Known:
+				count["dedup known"]++
+			default:
+				count["dedup new"]++
+			}
 			if b.Dir == journal.Out {
 				if b.Cause == "" {
 					t.Fatalf("sent msg record without a cause: %+v", b)
@@ -171,7 +181,7 @@ func checkFrameJournal(t *testing.T, mem *fsys.Mem, peers []types.Address, stopp
 		t.Fatal("no closed record of the stopped peer")
 	}
 	t.Logf("node 0 journal: %v", count)
-	for _, k := range []string{"in queued", "out ok", "cause broadcast"} {
+	for _, k := range []string{"in queued", "out ok", "cause broadcast", "dedup new", "dedup known"} {
 		if count[k] == 0 {
 			t.Fatalf("no %q msg records: %v", k, count)
 		}

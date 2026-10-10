@@ -25,9 +25,10 @@ import (
 //	<out>/frames-<run>.jsonl
 //	<out>/payloads/<ab>/<sha256>
 //
-// The journal does not hold the hits of the two dedup caches, so frame
-// records carry none. A received frame carries the engine state the node
-// had when it recorded the frame. A relay's relay_of is
+// A received frame carries the hits of the two dedup caches when the node
+// checked it (a frame it did not queue, or received while the engine was
+// not running, has no dedup), and the engine state the node had when it
+// recorded the frame. A relay's relay_of is
 // the last received frame with the same dedup key, since a relay sends the
 // received bytes unchanged. A frame the node kept without its payload (too large) has its size,
 // no payload_sha256 and a zero dedup_key. A conn record carries the times of
@@ -351,6 +352,9 @@ func (w *r01Writer) msg(seq uint64, b *journal.MsgRec) error {
 		r["outcome"] = inOutcome(b.Offer)
 		if b.Engine != "" {
 			r["engine"] = b.Engine
+		}
+		if b.Dedup != nil {
+			r["dedup"] = map[string]bool{"known_hit": b.Dedup.Known, "peer_recent_hit": b.Dedup.PeerRecent}
 		}
 	} else {
 		if b.Write != "" && b.Write != transport.WriteOK {

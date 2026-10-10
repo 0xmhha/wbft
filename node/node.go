@@ -374,8 +374,10 @@ func (n *Node) start(ctx context.Context) error {
 	var dedup *transport.Dedup
 	if n.d.Transport != nil {
 		out := n.d.Transport
+		var inbound func(types.Address, bool, bool)
 		if jw != nil {
 			rec := newFrameRecorder(jw, n.clock, n.wireOffset())
+			inbound = rec.inbound
 			rec.engine = n.engineState
 			if o, ok := n.d.Transport.(transport.Observed); ok {
 				o.SetFrameObserver(rec)
@@ -384,7 +386,7 @@ func (n *Node) start(ctx context.Context) error {
 		}
 		suppressed := n.metrics.Counter("wbft_send_suppressed_total", "Sends left out because the peer's recent cache holds the message, by cause.", "cause")
 		if dedup, err = transport.NewDedup(out, transport.DedupOptions{Self: self,
-			Suppressed: func(c event.SendCause) { suppressed.Inc(string(c)) }}); err != nil {
+			Suppressed: func(c event.SendCause) { suppressed.Inc(string(c)) }, Inbound: inbound}); err != nil {
 			return err
 		}
 	}

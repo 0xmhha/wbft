@@ -122,10 +122,44 @@ type MsgRec struct {
 	// was recorded: running, stopped or syncing; empty when unknown.
 	Engine   string
 	DedupKey types.Hash
-	Offer    string          // In only: queued, queue_full, frame_ignore, frame_disconnect
-	Cause    event.SendCause // Out only
-	RelayOf  uint64          // Out only: jseq of the received message, 0 if none
-	Write    string          // Out only: ok, error, not_attached
+	// Dedup holds the hits of the two dedup caches when the node checked a
+	// received frame against them; nil when it did not (the frame was not
+	// queued, or the engine was not running).
+	Dedup   *DedupHits
+	Offer   string          // In only: queued, queue_full, frame_ignore, frame_disconnect
+	Cause   event.SendCause // Out only
+	RelayOf uint64          // Out only: jseq of the received message, 0 if none
+	Write   string          // Out only: ok, error, not_attached
+}
+
+// DedupHits are the hits of a received frame's key in the dedup caches
+// (R-01 frame.dedup): the known cache, and the recent cache of the peer it
+// came from, before the frame's key was added.
+type DedupHits struct {
+	Known      bool
+	PeerRecent bool
+}
+
+// rlpDedup encodes h as 0 (not checked) or 1 | known<<1 | peer_recent<<2.
+func rlpDedup(h *DedupHits) uint64 {
+	if h == nil {
+		return 0
+	}
+	v := uint64(1)
+	if h.Known {
+		v |= 2
+	}
+	if h.PeerRecent {
+		v |= 4
+	}
+	return v
+}
+
+func dedupOf(v uint64) *DedupHits {
+	if v == 0 {
+		return nil
+	}
+	return &DedupHits{Known: v&2 != 0, PeerRecent: v&4 != 0}
 }
 
 // OutcomeRec is what the node did with a received message; the values are
@@ -228,6 +262,28 @@ type peerRLP struct {
 }
 
 type msgRLP struct {
+	Format   uint64
+	JSeq     uint64
+	Dir      string
+	PeerIdx  uint64
+	Mono     uint64
+	WallNs   uint64
+	Code     uint64
+	WireCode uint64
+	Payload  []byte
+	DedupKey types.Hash
+	Offer    string
+	Cause    string
+	RelayOf  uint64
+	Write    string
+	Size     uint64
+	Engine   string
+	Dedup    uint64 // rlpDedup
+}
+
+// msgRLPNoDedup is a msg record written before records carried the dedup
+// cache hits; it still decodes.
+type msgRLPNoDedup struct {
 	Format   uint64
 	JSeq     uint64
 	Dir      string
@@ -366,7 +422,8 @@ func encodeBody(r Record, jseq uint64) ([]byte, error) {
 	case *MsgRec:
 		return rlp.Encode(&msgRLP{Format: Format, JSeq: jseq, Dir: b.Dir, PeerIdx: uint64(b.PeerIdx), Mono: uint64(int64(b.Mono)),
 			WallNs: uint64(b.WallNs), Code: b.Code, WireCode: b.WireCode, Payload: bytesOrEmpty(b.Payload), DedupKey: b.DedupKey,
-			Offer: b.Offer, Cause: string(b.Cause), RelayOf: b.RelayOf, Write: b.Write, Size: b.Size, Engine: b.Engine})
+			Offer: b.Offer, Cause: string(b.Cause), RelayOf: b.RelayOf, Write: b.Write, Size: b.Size, Engine: b.Engine,
+			Dedup: rlpDedup(b.Dedup)})
 	case *OutcomeRec:
 		return rlp.Encode(&outcomeRLP{Format: Format, JSeq: jseq, Of: b.Of, Code: b.Code, Peer: b.Peer, DedupKey: b.DedupKey,
 			Outcome: string(b.Outcome), Check: b.Check, Row: uint64(b.Row + 1), Reason: b.Reason, ErrorClass: b.ErrorClass,
@@ -437,9 +494,15 @@ func decodeBody(k Kind, body []byte) (Record, error) {
 	case KindMsg:
 		var w msgRLP
 		if err := rlp.DecodeStrict(body, &w); err != nil {
+			var noDedup msgRLPNoDedup
 			var noEngine msgRLPNoEngine
 			var noSize msgRLPNoSize
 			switch {
+			case rlp.DecodeStrict(body, &noDedup) == nil:
+				w = msgRLP{Format: noDedup.Format, JSeq: noDedup.JSeq, Dir: noDedup.Dir, PeerIdx: noDedup.PeerIdx, Mono: noDedup.Mono,
+					WallNs: noDedup.WallNs, Code: noDedup.Code, WireCode: noDedup.WireCode, Payload: noDedup.Payload,
+					DedupKey: noDedup.DedupKey, Offer: noDedup.Offer, Cause: noDedup.Cause, RelayOf: noDedup.RelayOf,
+					Write: noDedup.Write, Size: noDedup.Size, Engine: noDedup.Engine}
 			case rlp.DecodeStrict(body, &noEngine) == nil:
 				w = msgRLP{Format: noEngine.Format, JSeq: noEngine.JSeq, Dir: noEngine.Dir, PeerIdx: noEngine.PeerIdx, Mono: noEngine.Mono,
 					WallNs: noEngine.WallNs, Code: noEngine.Code, WireCode: noEngine.WireCode, Payload: noEngine.Payload,
@@ -456,7 +519,8 @@ func decodeBody(k Kind, body []byte) (Record, error) {
 		}
 		return Record{Kind: k, JSeq: w.JSeq, Body: &MsgRec{Dir: w.Dir, PeerIdx: uint32(w.PeerIdx), Mono: time.Duration(int64(w.Mono)),
 			WallNs: int64(w.WallNs), Code: w.Code, WireCode: w.WireCode, Payload: w.Payload, DedupKey: w.DedupKey, Offer: w.Offer,
-			Cause: event.SendCause(w.Cause), RelayOf: w.RelayOf, Write: w.Write, Size: w.Size, Engine: w.Engine}}, nil
+			Cause: event.SendCause(w.Cause), RelayOf: w.RelayOf, Write: w.Write, Size: w.Size, Engine: w.Engine,
+			Dedup: dedupOf(w.Dedup)}}, nil
 	case KindOutcome:
 		var w outcomeRLP
 		if err := rlp.DecodeStrict(body, &w); err != nil {

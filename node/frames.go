@@ -27,6 +27,10 @@ type frameRecorder struct {
 	// write; it is cleared when it grows past maxPendingCauses (writes
 	// that never come, on a closed connection).
 	causes map[sendKey]event.SendCause
+	// hits holds the dedup cache hits of the frame a peer's read loop is
+	// offering, until the adapter reports that frame (Received follows
+	// Offer in the same loop).
+	hits map[types.Address]journal.DedupHits
 }
 
 // sendKey is one message to one peer.
@@ -49,7 +53,8 @@ type stampClock interface {
 var _ stampClock = runner.Clock(nil)
 
 func newFrameRecorder(jw journal.Writer, clock stampClock, offset uint64) *frameRecorder {
-	return &frameRecorder{jw: jw, clock: clock, offset: offset, index: map[types.Address]uint32{}, causes: map[sendKey]event.SendCause{}}
+	return &frameRecorder{jw: jw, clock: clock, offset: offset, index: map[types.Address]uint32{}, causes: map[sendKey]event.SendCause{},
+		hits: map[types.Address]journal.DedupHits{}}
 }
 
 func (f *frameRecorder) peerIdx(peer types.Address) uint32 {
@@ -75,10 +80,24 @@ func (f *frameRecorder) Received(peer types.Address, code uint64, size int, payl
 	if f.engine != nil {
 		m.Engine = f.engine()
 	}
+	f.mu.Lock()
+	if h, ok := f.hits[peer]; ok {
+		m.Dedup = &h
+		delete(f.hits, peer)
+	}
+	f.mu.Unlock()
 	if size > len(payload) { // the payload was not kept: its key is unknown
 		m.Size, m.DedupKey = uint64(size), types.Hash{}
 	}
 	f.jw.Put(journal.Record{Body: m})
+}
+
+// inbound keeps the dedup cache hits of the frame peer's read loop is
+// offering (transport.DedupOptions.Inbound).
+func (f *frameRecorder) inbound(peer types.Address, known, peerRecent bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.hits[peer] = journal.DedupHits{Known: known, PeerRecent: peerRecent}
 }
 
 // Wrote implements transport.FrameObserver.

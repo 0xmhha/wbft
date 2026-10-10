@@ -172,6 +172,32 @@ func TestSeenInbound(t *testing.T) {
 	}
 }
 
+// TestSeenInboundHits reports the hits of each received message in the two
+// caches before its key was added: a peer's recent cache also holds the keys
+// sent to it, and the known cache the node's own gossip.
+func TestSeenInboundHits(t *testing.T) {
+	self, v1, v2 := addr(0), addr(1), addr(2)
+	var got []string
+	d, err := NewDedup(&fakeTransport{peers: []types.Address{v1, v2}}, DedupOptions{Self: self,
+		Inbound: func(peer types.Address, known, peerRecent bool) {
+			name := map[types.Address]string{v1: "1", v2: "2"}[peer]
+			got = append(got, fmt.Sprintf("%s:%v:%v", name, known, peerRecent))
+		}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, b := []byte{0xc1, 0x01}, []byte{0xc1, 0x02}
+	d.SeenInbound(v1, 0x13, a) // new
+	d.SeenInbound(v2, 0x13, a) // known from v1
+	d.SeenInbound(v1, 0x13, a) // known, and v1 sent it before
+	d.Gossip(set(t, self, v1, v2), 0x14, b, event.CauseBroadcast)
+	d.SeenInbound(v2, 0x14, b) // the node sent it to v2
+	want := []string{"1:false:false", "2:true:false", "1:true:true", "2:true:true"}
+	if fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("hits %v, want %v", got, want)
+	}
+}
+
 func TestGossipTargets(t *testing.T) {
 	self, v1, v2, v3, other := addr(0), addr(1), addr(2), addr(3), addr(9)
 	tr := &fakeTransport{peers: []types.Address{v3, other, v1, self, v2}}

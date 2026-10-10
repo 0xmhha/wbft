@@ -127,6 +127,26 @@ func TestFrameRecorderEngine(t *testing.T) {
 	}
 }
 
+// TestFrameRecorderDedup puts the dedup cache hits on the received frame of
+// the peer they were reported for, once: a frame the node did not check has
+// none.
+func TestFrameRecorderDedup(t *testing.T) {
+	jw := &memJournal{}
+	rec := newFrameRecorder(jw, fixedClock{}, 0)
+	p1, p2 := types.Address{1}, types.Address{2}
+	rec.inbound(p1, true, false)
+	rec.Received(p2, 0x13, 1, []byte{1}, transport.OfferQueueFull)
+	rec.Received(p1, 0x13, 1, []byte{1}, transport.OfferQueued)
+	rec.Received(p1, 0x13, 1, []byte{2}, transport.OfferQueueFull)
+	var got []string
+	for _, r := range jw.recs {
+		got = append(got, fmt.Sprint(r.Body.(*journal.MsgRec).Dedup))
+	}
+	if want := []string{"<nil>", "&{true false}", "<nil>"}; fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("dedup %q, want %q", got, want)
+	}
+}
+
 // TestEngineState follows the runner and the application's
 // synchronisation.
 func TestEngineState(t *testing.T) {

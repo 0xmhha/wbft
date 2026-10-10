@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -240,7 +241,7 @@ func TestExportRelayOf(t *testing.T) {
 	jw.Put(journal.Record{Body: &journal.PeerRec{PeerIdx: 1, Addr: peerB, Event: "attached"}})
 	jw.Put(journal.Record{Body: &journal.PeerRec{PeerIdx: 2, Addr: types.Address{0xcc}, Event: "attached"}})
 	jw.Put(journal.Record{Body: &journal.MsgRec{Dir: journal.In, PeerIdx: 1, Code: 0x13, WireCode: 0x13, Payload: p, DedupKey: k, Offer: "queued",
-		Engine: "running"}})
+		Engine: "running", Dedup: &journal.DedupHits{PeerRecent: true}}})
 	jw.Put(journal.Record{Body: &journal.MsgRec{Dir: journal.Out, PeerIdx: 2, Code: 0x13, WireCode: 0x13, Payload: p, DedupKey: k, Write: "ok",
 		Cause: event.CauseRelay}})
 	jw.Put(journal.Record{Body: &journal.MsgRec{Dir: journal.Out, PeerIdx: 2, Code: 0x13, WireCode: 0x13, Payload: p, DedupKey: k, Write: "ok",
@@ -257,6 +258,9 @@ func TestExportRelayOf(t *testing.T) {
 	in, relay, own, sup := recs[2], recs[3], recs[4], recs[5]
 	if in["engine"] != "running" || relay["engine"] != nil {
 		t.Fatalf("engine state: in %v, out %v", in["engine"], relay["engine"])
+	}
+	if fmt.Sprint(in["dedup"]) != "map[known_hit:false peer_recent_hit:true]" || relay["dedup"] != nil {
+		t.Fatalf("dedup: in %v, out %v", in["dedup"], relay["dedup"])
 	}
 	if relay["cause"] != "relay" || relay["relay_of"] != in["seq"] {
 		t.Fatalf("relay %v of %v", relay, in)
