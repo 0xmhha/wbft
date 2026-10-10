@@ -2,6 +2,7 @@ package journal
 
 import (
 	"bytes"
+	"fmt"
 	"math/big"
 	"path/filepath"
 	"strings"
@@ -297,5 +298,35 @@ func TestMsgEngine(t *testing.T) {
 	}
 	if got := r.Body.(*MsgRec); got.Engine != "" || got.Size != 20<<20 || r.JSeq != 4 {
 		t.Fatalf("record without engine %+v", got)
+	}
+}
+
+// TestMsgDedup keeps the dedup cache hits of a msg record, none when the
+// frame was not checked, and still reads a record written before records
+// had them.
+func TestMsgDedup(t *testing.T) {
+	for _, h := range []*DedupHits{nil, {}, {Known: true}, {PeerRecent: true}, {Known: true, PeerRecent: true}} {
+		body, err := encodeBody(Record{Body: &MsgRec{Dir: In, Code: 0x13, Payload: []byte{1}, Dedup: h, Offer: "queued"}}, 5)
+		if err != nil {
+			t.Fatal(err)
+		}
+		r, err := decodeBody(KindMsg, body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := r.Body.(*MsgRec).Dedup; fmt.Sprint(got) != fmt.Sprint(h) {
+			t.Fatalf("dedup %v, want %v", got, h)
+		}
+	}
+	old, err := rlp.Encode(&msgRLPNoDedup{Format: Format, JSeq: 6, Dir: In, Code: 0x13, Payload: []byte{1}, Offer: "queued", Engine: "running"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := decodeBody(KindMsg, old)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := r.Body.(*MsgRec); got.Dedup != nil || got.Engine != "running" || r.JSeq != 6 {
+		t.Fatalf("record without dedup %+v", got)
 	}
 }
