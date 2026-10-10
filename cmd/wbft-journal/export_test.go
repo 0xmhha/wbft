@@ -273,6 +273,43 @@ func TestExportRelayOf(t *testing.T) {
 	}
 }
 
+// TestExportRelayBeforeReceipt links a relay journaled before the frame it
+// relays to that frame and writes it after the frame; a relay of a message
+// never received has no relay_of and is counted as unlinked.
+func TestExportRelayBeforeReceipt(t *testing.T) {
+	fs := fsys.NewMem()
+	jw, err := journal.Open(journal.Options{FS: fs, Dir: "/j", Synchronous: true}, journal.Identity{Self: nodeA, Run: "r"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, q := []byte{0xc1, 0x0a}, []byte{0xc1, 0x0b}
+	k := codec.DedupKey(p)
+	jw.Put(journal.Record{Body: &journal.PeerRec{PeerIdx: 1, Addr: peerB, Event: "attached"}})
+	jw.Put(journal.Record{Body: &journal.PeerRec{PeerIdx: 2, Addr: types.Address{0xcc}, Event: "attached"}})
+	jw.Put(journal.Record{Body: &journal.MsgRec{Dir: journal.Out, PeerIdx: 2, Code: 0x13, WireCode: 0x13, Payload: p, DedupKey: k, Write: "ok",
+		Cause: event.CauseRelay}})
+	jw.Put(journal.Record{Body: &journal.MsgRec{Dir: journal.Out, PeerIdx: 2, Code: 0x13, WireCode: 0x13, Payload: q, DedupKey: codec.DedupKey(q), Write: "ok",
+		Cause: event.CauseRelay}})
+	jw.Put(journal.Record{Body: &journal.MsgRec{Dir: journal.In, PeerIdx: 1, Code: 0x13, WireCode: 0x13, Payload: p, DedupKey: k, Offer: "queued",
+		Engine: "running", Dedup: &journal.DedupHits{}}})
+	if err := jw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	var res exportResult
+	runJSON(t, fs, 0, &res, "export", "--dir", "/j", "--out", "/out", "--format", "r01")
+	recs := readFrames(t, fs, "/out/frames-r.jsonl")
+	if len(recs) != 5 || res.Unlinked != 1 {
+		t.Fatalf("records %v, unlinked %d", recs, res.Unlinked)
+	}
+	in, relay, lost := recs[2], recs[3], recs[4]
+	if in["dir"] != "in" || relay["cause"] != "relay" || relay["relay_of"] != in["seq"] || relay["seq"].(float64) >= in["seq"].(float64) {
+		t.Fatalf("relay %v of %v", relay, in)
+	}
+	if lost["cause"] != "relay" || lost["relay_of"] != nil || lost["dedup_key"] == relay["dedup_key"] {
+		t.Fatalf("relay of a message not received: %v", lost)
+	}
+}
+
 // TestExportBundle writes a bundle file with its manifest and does not
 // overwrite an existing file.
 func TestExportBundle(t *testing.T) {
