@@ -46,6 +46,8 @@ type Config struct {
 	Standalone bool
 	// Journal configures the message journal of a validator.
 	Journal JournalConfig
+	// Participation configures the participation records of the node.
+	Participation ParticipationConfig
 	// Log is the base log level and the levels of single modules
 	// (observe.md 7.1); nil uses LogDefaults. An unknown module name
 	// refuses the start.
@@ -71,6 +73,18 @@ type JournalConfig struct {
 	// of journal.DefaultOptions (100000 heights, 8 GiB).
 	KeepHeights uint64
 	MaxBytes    int64
+}
+
+// ParticipationConfig configures the participation records (package
+// observe/participation, participation.md) in DataDir/participation: who
+// proposed, sent and sealed what in each round of a height, served by
+// wbft_participation. Every node keeps them unless Disabled is set; a node
+// whose core does not run records what the headers tell.
+type ParticipationConfig struct {
+	Disabled bool
+	// KeepHeights is the number of heights kept; zero keeps
+	// participation.DefaultKeepHeights (100000).
+	KeepHeights uint64
 }
 
 // MempoolConfig configures the transaction pool of a node.

@@ -184,6 +184,9 @@ func (s *service) OnNewHead(ev app.NewHead) {
 	// Before the core hears of the head: the child's round-0 start is the
 	// head's time.
 	s.n.valMetrics.head(ev.Header)
+	if p := s.n.participation(); p != nil {
+		p.Head(ev.Header)
+	}
 	if r := s.n.Runner(); r != nil {
 		r.NewHead(ev.Header)
 	}

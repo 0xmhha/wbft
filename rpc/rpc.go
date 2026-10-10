@@ -6,6 +6,7 @@ import (
 
 	"github.com/0xmhha/wbft/consensus"
 	"github.com/0xmhha/wbft/observe/evidence"
+	"github.com/0xmhha/wbft/observe/participation"
 	"github.com/0xmhha/wbft/observe/rejection"
 	"github.com/0xmhha/wbft/p2p/transport"
 	"github.com/0xmhha/wbft/types"
@@ -29,6 +30,9 @@ type Backend interface {
 	// Rejections returns the rejected blocks and proposals of the block
 	// numbers from..to.
 	Rejections(from, to *big.Int) ([]rejection.Record, error)
+	// Participation returns the participation record of every height
+	// from..to, a gap record for a height the node does not hold.
+	Participation(from, to *big.Int) ([]participation.Record, error)
 	// HeaderCopy returns this node's copy of the header with hash, or nil.
 	HeaderCopy(hash types.Hash) (*HeaderCopyResult, error)
 	// Events returns at most limit recent event records whose seq is at

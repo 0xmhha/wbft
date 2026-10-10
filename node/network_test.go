@@ -2,7 +2,9 @@ package node
 
 import (
 	"context"
+	"fmt"
 	"maps"
+	"math/big"
 	"slices"
 	"strings"
 	"testing"
@@ -132,6 +134,43 @@ func TestFourValidators(t *testing.T) {
 		t.Fatal(err)
 	}
 	checkFrameJournal(t, mems[0], addrs[1:], addrs[n-1])
+	checkParticipation(t, nodes[0], addrs[0], addrs[n-1], h)
+}
+
+// checkParticipation checks the participation records of a stopped node
+// for the heights 1..h+2 (wbft_participation): the node's core saw each,
+// its own commit is there, a quorum sealed each, and the validator stopped
+// after h neither sent nor sealed at h+2.
+func checkParticipation(t *testing.T, nd *Node, self, stopped types.Address, h uint64) {
+	t.Helper()
+	recs, err := (backend{nd}).Participation(new(big.Int).SetUint64(1), new(big.Int).SetUint64(h+2))
+	if err != nil {
+		t.Fatal(err)
+	}
+	hex := func(a types.Address) string { return "0x" + fmt.Sprintf("%x", a[:]) }
+	for _, r := range recs {
+		if r.Gap || r.Source != "local" {
+			t.Fatalf("height %s: %+v", r.Height, r)
+		}
+		sealed, own := 0, false
+		for _, v := range r.Validators {
+			if v.Round != r.Round {
+				continue
+			}
+			if v.SealedCommitted {
+				sealed++
+			}
+			if v.Validator == hex(self) {
+				own = v.Commit != nil && v.Commit.Via == "self"
+			}
+			if r.Height == new(big.Int).SetUint64(h+2).String() && v.Validator == hex(stopped) && (v.Prepare != nil || v.SealedCommitted) {
+				t.Fatalf("height %s: the stopped validator took part: %+v", r.Height, v)
+			}
+		}
+		if sealed < 3 || !own {
+			t.Fatalf("height %s: %d committed sealers, own commit %v: %+v", r.Height, sealed, own, r.Validators)
+		}
+	}
 }
 
 // checkFrameJournal checks the msg and peer records of a node's journal:

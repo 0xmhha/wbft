@@ -350,6 +350,39 @@ func TestRPC(t *testing.T) {
 		evOut.Result[0]["code"] != float64(2) || !strings.Contains(ev.String(), `"kind":"EVIDENCE"`) {
 		t.Fatalf("wbft_evidence %+v", evOut.Result)
 	}
+	// wbft_participation: height 1 is recorded once head 2 is in; a range
+	// above MaxRange heights is refused.
+	a.waitHead(t, 2, 20*time.Second)
+	ranged := func(params string) (out struct {
+		Result []map[string]any
+		Error  map[string]any
+	}) {
+		resp, err := http.Post(srv.URL, "application/json", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"wbft_participation","params":`+params+`}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+			t.Fatal(err)
+		}
+		return out
+	}
+	for deadline := time.Now().Add(5 * time.Second); ; {
+		p := ranged(`["1","0x1"]`)
+		if len(p.Result) == 1 && p.Result[0]["gap"] == nil {
+			if p.Result[0]["source"] != "local" || p.Result[0]["round"] != "0" || len(p.Result[0]["validators"].([]any)) != 1 {
+				t.Fatalf("wbft_participation %+v", p.Result)
+			}
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("wbft_participation: height 1 not recorded: %+v", p)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if p := ranged(`["1","1025"]`); p.Error == nil {
+		t.Fatalf("wbft_participation over 1024 heights: %+v", p)
+	}
 	if st := call("wbft_consensusState")["result"].(map[string]any); st["running"] != true {
 		t.Fatalf("consensusState %v", st)
 	}

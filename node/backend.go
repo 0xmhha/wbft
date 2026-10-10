@@ -3,6 +3,7 @@ package node
 import (
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"maps"
 	"math/big"
 	"runtime/debug"
@@ -12,6 +13,7 @@ import (
 	"github.com/0xmhha/wbft/consensus"
 	"github.com/0xmhha/wbft/observe/evidence"
 	"github.com/0xmhha/wbft/observe/logcat"
+	"github.com/0xmhha/wbft/observe/participation"
 	"github.com/0xmhha/wbft/observe/rejection"
 	"github.com/0xmhha/wbft/p2p/transport"
 	"github.com/0xmhha/wbft/rpc"
@@ -119,6 +121,14 @@ func (b backend) Rejections(from, to *big.Int) ([]rejection.Record, error) {
 		return []rejection.Record{}, nil
 	}
 	return s.Range(from, to)
+}
+
+func (b backend) Participation(from, to *big.Int) ([]participation.Record, error) {
+	p := b.n.participation()
+	if p == nil {
+		return nil, errors.New("node: the node keeps no participation records")
+	}
+	return p.Range(from, to)
 }
 
 func (b backend) HeaderCopy(hash types.Hash) (*rpc.HeaderCopyResult, error) {

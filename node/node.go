@@ -24,6 +24,7 @@ import (
 	"github.com/0xmhha/wbft/observe/journal"
 	"github.com/0xmhha/wbft/observe/logcat"
 	"github.com/0xmhha/wbft/observe/metrics"
+	"github.com/0xmhha/wbft/observe/participation"
 	"github.com/0xmhha/wbft/observe/rejection"
 	"github.com/0xmhha/wbft/p2p/transport"
 	"github.com/0xmhha/wbft/rpc"
@@ -36,6 +37,7 @@ const (
 	journalDir   = "journal"
 	evidenceDir  = "evidence"
 	rejectionDir = "rejections"
+	partDir      = "participation"
 	privvalDir   = "privval"
 	stateFile    = "state"
 )
@@ -73,7 +75,8 @@ type Node struct {
 	ev       *event.Writer
 	evid     *evidence.Store
 	rej      *rejection.Store
-	paths    *headPaths // the paths of recent heads (wbft_headerCopy)
+	part     *participation.Recorder // nil when disabled
+	paths    *headPaths              // the paths of recent heads (wbft_headerCopy)
 	metrics  *metrics.Registry
 	levels   *logcat.Levels // log levels by module
 	logBase  slog.Handler   // where the modules' log lines go
@@ -83,6 +86,7 @@ type Node struct {
 	refusals     *metrics.Counter   // wbft_privval_refusals_total
 	cacheMisses  *metrics.Counter   // wbft_authority_cache_misses_total
 	valMetrics   *validatorMetrics  // wbft_validator_*
+	partDropped  *metrics.Counter   // wbft_participation_write_dropped_total
 	ring         *eventRing         // the recent event records (wbft_events)
 	r            *runner.Runner
 	pool         *mempool.TxPool
@@ -139,6 +143,8 @@ func New(cfg Config, d Deps) (*Node, error) {
 	n.cacheMisses = n.metrics.Counter("wbft_authority_cache_misses_total",
 		"Authority snapshots of a parent missing from the cache, once per parent and verification, by context.", "context")
 	n.valMetrics = newValidatorMetrics(n.metrics)
+	n.partDropped = n.metrics.Counter("wbft_participation_write_dropped_total",
+		"Participation inputs dropped because the recorder's queue was full, and records that could not be built or written.")
 	n.walFsync = n.metrics.Histogram("wbft_wal_fsync_seconds", "Duration of the write-ahead log's fsyncs, by method.", fsyncBuckets, "method")
 	return n, nil
 }
@@ -300,6 +306,21 @@ func (n *Node) start(ctx context.Context) error {
 	ev := event.NewWriter(out, self, runID)
 	ev.Observe(n.eventMetrics.Observe)
 	ev.Observe(n.valMetrics.observe)
+	if !n.cfg.Participation.Disabled {
+		part, err := participation.Open(n.fs, filepath.Join(n.cfg.DataDir, partDir), participation.Options{
+			KeepHeights: n.cfg.Participation.KeepHeights, Chain: n.d.App, ValidatorsAt: n.view.ValidatorsAt,
+			Period: func(h types.Height) time.Duration {
+				return time.Duration(cfg.ConfigAt(h).BlockPeriodSeconds) * time.Second //nolint:gosec // seconds of a config
+			},
+			Dropped: func() { n.partDropped.Inc() }, Log: n.Logger(logcat.Observe)})
+		if err != nil {
+			return fmt.Errorf("node: participation store: %w", err)
+		}
+		n.mu.Lock()
+		n.part = part
+		n.mu.Unlock()
+		ev.Observe(part.Consume)
+	}
 	n.mu.Lock() // AppEvents reads it from other goroutines
 	n.ev = ev
 	n.mu.Unlock()
@@ -781,7 +802,17 @@ func (n *Node) close() error {
 	if n.journal != nil {
 		errs = append(errs, n.journal.Close())
 	}
+	if n.part != nil {
+		n.part.Close()
+	}
 	return errors.Join(errs...)
+}
+
+// participation returns the participation recorder, or nil.
+func (n *Node) participation() *participation.Recorder {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	return n.part
 }
 
 // running reports whether the node is started and not stopped.

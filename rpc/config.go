@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/0xmhha/wbft/observe/evidence"
+	"github.com/0xmhha/wbft/observe/participation"
 	"github.com/0xmhha/wbft/observe/rejection"
 	"github.com/0xmhha/wbft/types"
 )
@@ -123,6 +124,16 @@ func (s *Service) Rejections(from, to HeightArg) ([]rejection.Record, error) {
 		return nil, err
 	}
 	return s.b.Rejections(from.v, to.v)
+}
+
+// Participation is wbft_participation(from, to): the participation record
+// of every height from..to, at most MaxRange heights (participation.md 5).
+// A height the node did not record comes back as a gap.
+func (s *Service) Participation(from, to HeightArg) ([]participation.Record, error) {
+	if err := checkRange(from, to); err != nil {
+		return nil, err
+	}
+	return s.b.Participation(from.v, to.v)
 }
 
 // SealCopy is a seal of a header copy: the indices of the sealers in the
