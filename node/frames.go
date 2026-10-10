@@ -130,9 +130,16 @@ func (f *frameRecorder) Attached(peer types.Address, remote string) {
 	f.jw.Put(journal.Record{Body: &journal.PeerRec{PeerIdx: f.peerIdx(peer), Addr: peer, Remote: remote, Event: "attached"}})
 }
 
-// Closed implements transport.FrameObserver.
+// Closed implements transport.FrameObserver, for a transport that does not
+// say who closed the stream.
 func (f *frameRecorder) Closed(peer types.Address, reason string) {
 	f.jw.Put(journal.Record{Body: &journal.PeerRec{PeerIdx: f.peerIdx(peer), Addr: peer, Event: "closed", Reason: reason}})
+}
+
+// ClosedWith implements transport.CloseObserver.
+func (f *frameRecorder) ClosedWith(peer types.Address, c transport.Close) {
+	f.jw.Put(journal.Record{Body: &journal.PeerRec{PeerIdx: f.peerIdx(peer), Addr: peer, Event: "closed", Reason: c.Reason,
+		By: c.By, Cause: c.Cause}})
 }
 
 // recordedTransport records the sends a transport does not attempt: a peer

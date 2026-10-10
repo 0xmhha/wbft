@@ -27,6 +27,59 @@ type FrameObserver interface {
 	Closed(peer types.Address, reason string)
 }
 
+// CloseObserver is implemented by a FrameObserver that records who closed
+// a peer's stream and why (journal peer closed, R-01 conn closed.by and
+// .cause). A transport that knows calls ClosedWith instead of Closed.
+type CloseObserver interface {
+	ClosedWith(peer types.Address, c Close)
+}
+
+// Close is how a peer's stream ended: who closed it (one of the ClosedBy
+// values), and, when the node did, why (one of the Close causes); Reason is
+// the transport's own text.
+type Close struct {
+	By, Cause, Reason string
+}
+
+// Who closed a peer's stream.
+const (
+	ClosedBySelf    = "self"    // the node
+	ClosedByPeer    = "peer"    // the peer (end of stream)
+	ClosedByUnknown = "unknown" // the transport cannot tell
+)
+
+// Why the node closed a peer's stream. Disconnect callers pass one of them
+// as the reason.
+const (
+	CloseFrame         = "frame"          // the frame stage, for one frame (WBFT-NET-013, -021)
+	CloseEngineStopped = "engine_stopped" // a consensus message while the engine was stopped (WBFT-NET-020, -027)
+	CloseQueueOverflow = "queue_overflow" // the peer's receive queue overflowed
+	CloseReplaced      = "replaced"       // a newer stream of the same peer
+	CloseWriteError    = "write_error"
+	CloseShutdown      = "shutdown"
+	CloseOther         = "other"
+)
+
+// CloseCause returns the cause a Disconnect reason names: the reason when
+// it is one of the Close causes, CloseOther otherwise.
+func CloseCause(reason string) string {
+	switch reason {
+	case CloseFrame, CloseEngineStopped, CloseQueueOverflow, CloseReplaced, CloseWriteError, CloseShutdown:
+		return reason
+	}
+	return CloseOther
+}
+
+// ReportClosed reports a stream's end to o: through ClosedWith when o
+// records who closed it, else through Closed with the reason.
+func ReportClosed(o FrameObserver, peer types.Address, c Close) {
+	if co, ok := o.(CloseObserver); ok {
+		co.ClosedWith(peer, c)
+		return
+	}
+	o.Closed(peer, c.Reason)
+}
+
 // Observed is implemented by a transport that reports its frames. The node
 // installs its observer before it connects the receiver.
 type Observed interface {

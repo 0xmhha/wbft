@@ -310,6 +310,59 @@ func TestExportRelayBeforeReceipt(t *testing.T) {
 	}
 }
 
+// TestExportCloses writes who closed each stream and links a close for one
+// received frame to the frame that ended DISCONNECT: after the frame for the
+// frame stage, and, for the stopped engine, after the frame its outcome
+// (journaled first, like the close) belongs to. A close the journal has no
+// By for reads unknown.
+func TestExportCloses(t *testing.T) {
+	fs := fsys.NewMem()
+	jw, err := journal.Open(journal.Options{FS: fs, Dir: "/j", Synchronous: true}, journal.Identity{Self: nodeA, Run: "r"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := []byte{0xc1, 0x0c}
+	k := codec.DedupKey(p)
+	attach := func() { jw.Put(journal.Record{Body: &journal.PeerRec{PeerIdx: 1, Addr: peerB, Event: "attached"}}) }
+	closed := func(by, cause string) {
+		jw.Put(journal.Record{Body: &journal.PeerRec{PeerIdx: 1, Addr: peerB, Event: "closed", Reason: "x", By: by, Cause: cause}})
+	}
+	attach()
+	jw.Put(journal.Record{Body: &journal.MsgRec{Dir: journal.In, PeerIdx: 1, Code: 0x12, WireCode: 0x12, Payload: nil, Offer: "frame_disconnect"}}) // seq 3
+	closed("self", "frame")
+	attach()
+	jw.Put(journal.Record{Body: &journal.OutcomeRec{Code: 0x13, Peer: peerB, DedupKey: k, Outcome: "DISCONNECT", Check: "prefilter",
+		Row: -1, Reason: "engine_stopped", Via: "direct", AtOffer: true}})
+	closed("self", "engine_stopped")
+	jw.Put(journal.Record{Body: &journal.MsgRec{Dir: journal.In, PeerIdx: 1, Code: 0x13, WireCode: 0x13, Payload: p, DedupKey: k,
+		Offer: "queued", Engine: "stopped"}}) // seq 8
+	attach()
+	closed("peer", "")
+	attach()
+	closed("", "")
+	if err := jw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	runJSON(t, fs, 0, nil, "export", "--dir", "/j", "--out", "/out", "--format", "r01")
+	var got []string
+	for _, r := range readFrames(t, fs, "/out/frames-r.jsonl") {
+		switch {
+		case r["type"] == "conn" && r["event"] == "closed":
+			got = append(got, fmt.Sprintf("closed by %v cause %v of %v", r["by"], r["cause"], r["of"]))
+		case r["type"] == "frame":
+			got = append(got, fmt.Sprintf("frame %v %v", r["seq"], r["outcome"]))
+		}
+	}
+	want := []string{
+		"frame 3 DISCONNECT", "closed by self cause frame of 3",
+		"frame 8 PENDING", "closed by self cause engine_stopped of 8",
+		"closed by peer cause <nil> of <nil>", "closed by unknown cause <nil> of <nil>",
+	}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("records\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	}
+}
+
 // TestExportBundle writes a bundle file with its manifest and does not
 // overwrite an existing file.
 func TestExportBundle(t *testing.T) {

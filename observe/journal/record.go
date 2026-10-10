@@ -98,6 +98,9 @@ type PeerRec struct {
 	Remote  string
 	Event   string // "attached" or "closed"
 	Reason  string
+	// By and Cause of a closed stream: who closed it and, when the node
+	// did, why (transport.Close). Empty when the transport did not say.
+	By, Cause string
 }
 
 // Directions of MsgRec.
@@ -256,6 +259,21 @@ type segmentRLP struct {
 }
 
 type peerRLP struct {
+	Format  uint64
+	JSeq    uint64
+	PeerIdx uint64
+	Addr    types.Address
+	NodeID  []byte
+	Remote  string
+	Event   string
+	Reason  string
+	By      string
+	Cause   string
+}
+
+// peerRLPNoClose is a peer record written before records carried By and
+// Cause; it still decodes.
+type peerRLPNoClose struct {
 	Format  uint64
 	JSeq    uint64
 	PeerIdx uint64
@@ -449,7 +467,7 @@ func encodeBody(r Record, jseq uint64) ([]byte, error) {
 			BacklogLimit: b.Core.BacklogLimit, Profile: b.Core.Profile, EngineRun: b.EngineRun})
 	case *PeerRec:
 		return rlp.Encode(&peerRLP{Format: Format, JSeq: jseq, PeerIdx: uint64(b.PeerIdx), Addr: b.Addr, NodeID: bytesOrEmpty(b.NodeID),
-			Remote: b.Remote, Event: b.Event, Reason: b.Reason})
+			Remote: b.Remote, Event: b.Event, Reason: b.Reason, By: b.By, Cause: b.Cause})
 	case *MsgRec:
 		return rlp.Encode(&msgRLP{Format: Format, JSeq: jseq, Dir: b.Dir, PeerIdx: uint64(b.PeerIdx), Mono: uint64(int64(b.Mono)),
 			WallNs: uint64(b.WallNs), Code: b.Code, WireCode: b.WireCode, Payload: bytesOrEmpty(b.Payload), DedupKey: b.DedupKey,
@@ -516,12 +534,17 @@ func decodeBody(k Kind, body []byte) (Record, error) {
 	case KindPeer:
 		var w peerRLP
 		if err := rlp.DecodeStrict(body, &w); err != nil {
-			return fail(err)
+			var old peerRLPNoClose
+			if rlp.DecodeStrict(body, &old) != nil {
+				return fail(err)
+			}
+			w = peerRLP{Format: old.Format, JSeq: old.JSeq, PeerIdx: old.PeerIdx, Addr: old.Addr, NodeID: old.NodeID,
+				Remote: old.Remote, Event: old.Event, Reason: old.Reason}
 		}
 		if err := check(w.Format); err != nil {
 			return fail(err)
 		}
-		return Record{Kind: k, JSeq: w.JSeq, Body: &PeerRec{PeerIdx: uint32(w.PeerIdx), Addr: w.Addr, NodeID: w.NodeID, Remote: w.Remote, Event: w.Event, Reason: w.Reason}}, nil
+		return Record{Kind: k, JSeq: w.JSeq, Body: &PeerRec{PeerIdx: uint32(w.PeerIdx), Addr: w.Addr, NodeID: w.NodeID, Remote: w.Remote, Event: w.Event, Reason: w.Reason, By: w.By, Cause: w.Cause}}, nil
 	case KindMsg:
 		var w msgRLP
 		if err := rlp.DecodeStrict(body, &w); err != nil {

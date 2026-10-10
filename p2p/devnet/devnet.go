@@ -201,7 +201,7 @@ func (t *Transport) Close() error {
 	}
 	t.mu.Unlock()
 	for _, c := range conns {
-		t.drop(c, "closed")
+		t.drop(c, transport.Close{By: transport.ClosedBySelf, Cause: transport.CloseShutdown, Reason: "closed"})
 	}
 	t.wg.Wait()
 	return err
@@ -286,7 +286,7 @@ func (t *Transport) Disconnect(peer types.Address, reason string) {
 	c := t.peers[peer]
 	t.mu.Unlock()
 	if c != nil {
-		t.drop(c, reason)
+		t.drop(c, transport.Close{By: transport.ClosedBySelf, Cause: transport.CloseCause(reason), Reason: reason})
 	}
 }
 
@@ -400,7 +400,7 @@ func (t *Transport) run(peer types.Address, nc net.Conn) {
 	t.peers[peer] = c
 	t.mu.Unlock()
 	if old != nil {
-		t.drop(old, "replaced")
+		t.drop(old, transport.Close{By: transport.ClosedBySelf, Cause: transport.CloseReplaced, Reason: "replaced"})
 	}
 	if o := t.observer(); o != nil {
 		o.Attached(peer, nc.RemoteAddr().String())
@@ -411,8 +411,7 @@ func (t *Transport) run(peer types.Address, nc net.Conn) {
 		defer close(done)
 		t.writeLoop(c)
 	}()
-	t.readLoop(c)
-	t.drop(c, "read")
+	t.drop(c, t.readLoop(c))
 	<-done
 }
 
@@ -425,7 +424,7 @@ func (t *Transport) event(e transport.PeerEvent) {
 }
 
 // drop closes a connection once and removes it from the table.
-func (t *Transport) drop(c *conn, reason string) {
+func (t *Transport) drop(c *conn, how transport.Close) {
 	c.once.Do(func() {
 		close(c.gone)
 		_ = c.c.Close()
@@ -437,9 +436,9 @@ func (t *Transport) drop(c *conn, reason string) {
 		t.mu.Unlock()
 		if removed {
 			if o := t.observer(); o != nil {
-				o.Closed(c.peer, reason)
+				transport.ReportClosed(o, c.peer, how)
 			}
-			t.log.Debug("peer disconnected", "peer", c.peer, "reason", reason)
+			t.log.Debug("peer disconnected", "peer", c.peer, "by", how.By, "cause", how.Cause, "reason", how.Reason)
 			t.event(transport.PeerEvent{Addr: c.peer, Attached: false})
 		}
 	})
@@ -468,12 +467,12 @@ func (t *Transport) writeLoop(c *conn) {
 				o.Wrote(c.peer, f.code, f.payload, res)
 			}
 			if err != nil {
-				t.drop(c, "write")
+				t.drop(c, writeClose)
 				return
 			}
 			if len(c.out) == 0 {
 				if err := w.Flush(); err != nil {
-					t.drop(c, "write")
+					t.drop(c, writeClose)
 					return
 				}
 			}
@@ -481,29 +480,46 @@ func (t *Transport) writeLoop(c *conn) {
 	}
 }
 
-func (t *Transport) readLoop(c *conn) {
+var writeClose = transport.Close{By: transport.ClosedBySelf, Cause: transport.CloseWriteError, Reason: "write"}
+
+// readLoop reads frames until the connection ends and returns how it ended:
+// the peer closed it (end of stream), the read failed (unknown: a close of
+// the node's own may have caused it), or a frame made the node close it.
+func (t *Transport) readLoop(c *conn) transport.Close {
 	r := bufio.NewReader(c.c)
+	ended := func(err error) transport.Close {
+		if errors.Is(err, io.EOF) {
+			return transport.Close{By: transport.ClosedByPeer, Reason: "read: " + err.Error()}
+		}
+		return transport.Close{By: transport.ClosedByUnknown, Reason: "read: " + err.Error()}
+	}
+	frame := func(reason string) transport.Close {
+		return transport.Close{By: transport.ClosedBySelf, Cause: transport.CloseFrame, Reason: reason}
+	}
 	for {
 		ch, err := r.ReadByte()
 		if err != nil {
-			return
+			return ended(err)
 		}
 		code, err := binary.ReadUvarint(r)
 		if err != nil {
-			return
+			return ended(err)
 		}
 		size, err := binary.ReadUvarint(r)
-		if err != nil || size > maxFrame {
-			return
+		if err != nil {
+			return ended(err)
+		}
+		if size > maxFrame {
+			return frame("frame over the transport limit")
 		}
 		payload := make([]byte, size)
 		if _, err := io.ReadFull(r, payload); err != nil {
-			return
+			return ended(err)
 		}
 		switch ch {
 		case chanConsensus:
 			if !t.deliver(c.peer, code, payload) {
-				return
+				return frame("frame stage")
 			}
 		case chanApp:
 			t.mu.Lock()
@@ -513,7 +529,7 @@ func (t *Transport) readLoop(c *conn) {
 				h(c.peer, code, payload)
 			}
 		default:
-			return
+			return transport.Close{By: transport.ClosedBySelf, Cause: transport.CloseOther, Reason: "unknown channel"}
 		}
 	}
 }

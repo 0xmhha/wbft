@@ -211,6 +211,13 @@ func (o *obs) Closed(peer types.Address, reason string) {
 	o.add(fmt.Sprintf("closed %x %s", peer[:1], reason))
 }
 
+// closeObs also takes who closed a stream.
+type closeObs struct{ obs }
+
+func (o *closeObs) ClosedWith(peer types.Address, c transport.Close) {
+	o.add(fmt.Sprintf("closed %x by %s cause %s", peer[:1], c.By, c.Cause))
+}
+
 // wait returns the reports once all of want are among them.
 func (o *obs) wait(t *testing.T, want ...string) []string {
 	t.Helper()
@@ -238,10 +245,10 @@ func (o *obs) wait(t *testing.T, want ...string) []string {
 
 // TestFrameObserver: the transport reports every consensus frame it reads
 // with what it did with it, every consensus frame it writes, and the peer
-// streams; application frames are not reported.
+// streams, with who closed them; application frames are not reported.
 func TestFrameObserver(t *testing.T) {
 	a, b, _, rb := pair(t)
-	oa, ob := &obs{}, &obs{}
+	oa, ob := &closeObs{}, &closeObs{}
 	a.SetFrameObserver(oa)
 	b.SetFrameObserver(ob)
 	bAddr := types.Address{2}
@@ -256,8 +263,13 @@ func TestFrameObserver(t *testing.T) {
 	a.Send([]types.Address{bAddr}, 0x01, []byte("status"))
 	a.SendApp([]types.Address{bAddr}, 7, []byte("block"))
 	a.Send([]types.Address{bAddr}, transport.CodeFirst, nil)
-	ob.wait(t, `in 01 0x1 "status" frame_ignore`, `in 01 0x12 "" frame_disconnect`, "closed 01 read", "attached 01 true")
-	got := oa.wait(t, "closed 02 read", "attached 02 true")
+	ob.wait(t, `in 01 0x1 "status" frame_ignore`, `in 01 0x12 "" frame_disconnect`, "closed 01 by self cause frame", "attached 01 true")
+	// The dialing side reads the end of the stream; a reset instead of an
+	// orderly close leaves it unknown.
+	got := oa.wait(t, "attached 02 true")
+	if !slices.Contains(got, "closed 02 by peer cause ") && !slices.Contains(got, "closed 02 by unknown cause ") {
+		t.Fatalf("no close by the peer in %q", got)
+	}
 	for _, s := range append(got, ob.got...) {
 		if strings.Contains(s, "block") {
 			t.Fatalf("application frame reported: %q", s)
