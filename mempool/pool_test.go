@@ -3,6 +3,7 @@ package mempool
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -401,5 +402,66 @@ func TestSizes(t *testing.T) {
 	mustAdd(t, p, tx(1, 2, 0), CodeOK, "") // fills the gap
 	if s := p.Sizes(); s != (PoolSizes{ExecTxs: 5, ExecBytes: 15}) {
 		t.Fatalf("sizes after the gap %+v", s)
+	}
+}
+
+// countObserver records what a pool reports.
+type countObserver struct {
+	mu       sync.Mutex
+	checks   map[string]int
+	rechecks int
+	dropped  int
+}
+
+func (o *countObserver) Checked(code CheckCode, origin Origin, kind CheckKind) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if o.checks == nil {
+		o.checks = map[string]int{}
+	}
+	o.checks[fmt.Sprintf("%d/%d/%d", code, origin, kind)]++
+}
+func (o *countObserver) Rechecked(time.Duration) { o.mu.Lock(); o.rechecks++; o.mu.Unlock() }
+func (o *countObserver) InboundDropped(n int)    { o.mu.Lock(); o.dropped += n; o.mu.Unlock() }
+
+// TestObserver reports each admission and recheck result with its origin
+// and kind, a finished recheck, and peer transactions the pool did not
+// queue.
+func TestObserver(t *testing.T) {
+	obs := &countObserver{}
+	h := newHook()
+	p := newPool(t, Config{PeerQueue: 1, Observer: obs}, h, nil)
+	mustAdd(t, p, tx(1, 0, 0), CodeOK, "")
+	mustAdd(t, p, tx(1, 0, 0), CodeReject, ReasonKnown)
+	// The peer's queue holds one transaction: the other two are dropped.
+	if n := p.OfferTxs(addr(9), [][]byte{tx(2, 0, 0), tx(2, 1, 0), tx(2, 2, 0)}); n != 1 {
+		t.Fatalf("queued %d of 3", n)
+	}
+	// Wait for its admission, so that the recheck below sees it.
+	remote, _ := h.TxKey(tx(2, 0, 0))
+	for deadline := time.Now().Add(5 * time.Second); !p.Has(remote); time.Sleep(time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatal("the peer's transaction was not admitted")
+		}
+	}
+	h.set(func(h *testHook) { h.banned[addr(1)] = true })
+	if err := p.Update(context.Background(), BlockUpdate{}); err != nil {
+		t.Fatal(err)
+	}
+	// A local addition queues behind the recheck, so the recheck is done
+	// when it returns.
+	mustAdd(t, p, tx(3, 0, 0), CodeOK, "")
+	obs.mu.Lock()
+	defer obs.mu.Unlock()
+	k := func(c CheckCode, o Origin, kind CheckKind) string { return fmt.Sprintf("%d/%d/%d", c, o, kind) }
+	want := map[string]int{
+		k(CodeOK, OriginLocal, CheckNew):         2,
+		k(CodeReject, OriginLocal, CheckNew):     1,
+		k(CodeOK, OriginRemote, CheckNew):        1,
+		k(CodeReject, OriginLocal, CheckRecheck): 1,
+		k(CodeOK, OriginRemote, CheckRecheck):    1,
+	}
+	if fmt.Sprint(obs.checks) != fmt.Sprint(want) || obs.rechecks != 1 || obs.dropped != 2 {
+		t.Fatalf("checks %v (want %v), %d rechecks, %d dropped", obs.checks, want, obs.rechecks, obs.dropped)
 	}
 }

@@ -8,6 +8,7 @@ import (
 	"maps"
 	"slices"
 	"sync"
+	"time"
 
 	"github.com/0xmhha/wbft/types"
 )
@@ -25,6 +26,23 @@ type Config struct {
 	PeerQueue int
 	// Logger logs; nil discards.
 	Logger *slog.Logger
+	// Observer, when set, is told about admissions, rechecks and
+	// transactions from peers the pool did not take (the mempool metrics,
+	// observe.md 5.1). Its methods must not block.
+	Observer Observer
+}
+
+// Observer is told what the pool does.
+type Observer interface {
+	// Checked reports the result of checking a transaction: kind is
+	// CheckNew for an admission and CheckRecheck after a new head.
+	Checked(code CheckCode, origin Origin, kind CheckKind)
+	// Rechecked reports how long a recheck after a new head took; a
+	// recheck a newer head interrupted is not reported.
+	Rechecked(d time.Duration)
+	// InboundDropped reports n transactions from a peer that were not
+	// queued for admission (the peer's queue or the pool's was full).
+	InboundDropped(n int)
 }
 
 // Errors of the pool.
@@ -224,6 +242,11 @@ func (p *TxPool) OfferTxs(peer types.Address, txs [][]byte) int {
 		return 0
 	}
 	n := 0
+	defer func() {
+		if o := p.cfg.Observer; o != nil && n < len(txs) {
+			o.InboundDropped(len(txs) - n)
+		}
+	}()
 	for _, tx := range txs {
 		if p.peerLoad[peer] >= p.cfg.PeerQueue {
 			break
@@ -242,6 +265,9 @@ func (p *TxPool) OfferTxs(peer types.Address, txs [][]byte) int {
 // admit checks one transaction and adds it.
 func (p *TxPool) admit(j job) {
 	resp := p.check(j)
+	if o := p.cfg.Observer; o != nil {
+		o.Checked(resp.Code, j.origin, CheckNew)
+	}
 	if j.reply != nil {
 		j.reply <- resp
 	}
@@ -450,11 +476,16 @@ func (p *TxPool) recheck() {
 		if u == nil {
 			return
 		}
-		p.recheckSenders(senders, gen)
+		start := time.Now()
+		if p.recheckSenders(senders, gen) && p.cfg.Observer != nil {
+			p.cfg.Observer.Rechecked(time.Since(start))
+		}
 	}
 }
 
-func (p *TxPool) recheckSenders(senders []types.Address, gen uint64) {
+// recheckSenders checks the transactions of senders again; it reports
+// false when a newer update stopped it.
+func (p *TxPool) recheckSenders(senders []types.Address, gen uint64) bool {
 	for _, addr := range senders {
 		p.mu.Lock()
 		s := p.senders[addr]
@@ -468,10 +499,13 @@ func (p *TxPool) recheckSenders(senders []types.Address, gen uint64) {
 			stale := p.gen != gen
 			p.mu.Unlock()
 			if stale {
-				return
+				return false
 			}
 			prev := tx.Meta
 			resp := p.hook.CheckTx(p.ctx, CheckRequest{Tx: tx.Tx, Key: tx.Key, Kind: CheckRecheck, Origin: origin(tx.Local), Prev: &prev})
+			if o := p.cfg.Observer; o != nil {
+				o.Checked(resp.Code, origin(tx.Local), CheckRecheck)
+			}
 			p.mu.Lock()
 			switch {
 			case p.byKey[tx.Key] != tx:
@@ -486,6 +520,7 @@ func (p *TxPool) recheckSenders(senders []types.Address, gen uint64) {
 			p.mu.Unlock()
 		}
 	}
+	return true
 }
 
 func origin(local bool) Origin {

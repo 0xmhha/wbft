@@ -477,6 +477,36 @@ func (n *Node) openJournal(core consensus.Options, runID string) (*journal.FileW
 	return jw, nil
 }
 
+// mempoolMetrics are the mempool metrics of observe.md 5.1 that the pool
+// reports; the sizes are read from the pool when the registry is gathered.
+type mempoolMetrics struct {
+	admissions     *metrics.Counter
+	recheck        *metrics.Histogram
+	inboundDropped *metrics.Counter
+}
+
+var (
+	checkCodes   = map[mempool.CheckCode]string{mempool.CodeOK: "ok", mempool.CodeReject: "reject", mempool.CodeTemporary: "temporary"}
+	checkOrigins = map[mempool.Origin]string{mempool.OriginLocal: "local", mempool.OriginRemote: "remote"}
+	checkKinds   = map[mempool.CheckKind]string{mempool.CheckNew: "new", mempool.CheckRecheck: "recheck"}
+)
+
+func newMempoolMetrics(r *metrics.Registry) *mempoolMetrics {
+	return &mempoolMetrics{
+		admissions: r.Counter("wbft_mempool_admissions_total", "Transaction checks by result (ok, reject, temporary), origin (local, remote) and kind (new, recheck).",
+			"code", "origin", "kind"),
+		recheck: r.Histogram("wbft_mempool_recheck_seconds", "Duration of a recheck of the pool after a new head that ran to its end.",
+			[]float64{0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5}),
+		inboundDropped: r.Counter("wbft_tx_inbound_dropped_total", "Transactions from peers not queued for admission because a queue was full."),
+	}
+}
+
+func (m *mempoolMetrics) Checked(code mempool.CheckCode, origin mempool.Origin, kind mempool.CheckKind) {
+	m.admissions.Inc(checkCodes[code], checkOrigins[origin], checkKinds[kind])
+}
+func (m *mempoolMetrics) Rechecked(d time.Duration) { m.recheck.Observe(d.Seconds()) }
+func (m *mempoolMetrics) InboundDropped(n int)      { m.inboundDropped.Add(float64(n)) }
+
 // journalMetrics are the journal metrics of observe.md 11.5 but
 // wbft_journal_bytes, which is read when the registry is gathered.
 type journalMetrics struct {
@@ -584,6 +614,9 @@ func (n *Node) startPool(ctx context.Context) error {
 	limits := n.cfg.Mempool.Limits
 	if limits.Logger == nil {
 		limits.Logger = n.levels.Logger(logcat.Mempool, n.logBase)
+	}
+	if limits.Observer == nil {
+		limits.Observer = newMempoolMetrics(n.metrics)
 	}
 	pool, err := mempool.New(limits, n.d.Admission, policy, n.d.TxTransport)
 	if err != nil {
