@@ -69,6 +69,8 @@ func Handler(apis []API) http.Handler {
 			}
 			methods[a.Namespace+"_evidence"] = ranged(func(from, to HeightArg) (any, error) { return s.Evidence(from, to) })
 			methods[a.Namespace+"_participation"] = ranged(func(from, to HeightArg) (any, error) { return s.Participation(from, to) })
+			methods[a.Namespace+"_participationSummary"] = ranged(func(from, to HeightArg) (any, error) { return s.ParticipationSummary(from, to) })
+			methods[a.Namespace+"_roundChanges"] = ranged(func(from, to HeightArg) (any, error) { return s.RoundChanges(from, to) })
 			methods[a.Namespace+"_rejections"] = ranged(func(from, to HeightArg) (any, error) { return s.Rejections(from, to) })
 			methods[a.Namespace+"_events"] = func(params []json.RawMessage) (any, error) {
 				var from uint64

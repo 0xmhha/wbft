@@ -136,6 +136,28 @@ func (s *Service) Participation(from, to HeightArg) ([]participation.Record, err
 	return s.b.Participation(from.v, to.v)
 }
 
+// ParticipationSummary is wbft_participationSummary(from, to): the
+// participation records of from..to aggregated by validator, at most
+// MaxRange heights (participation.md 5).
+func (s *Service) ParticipationSummary(from, to HeightArg) (participation.Summary, error) {
+	recs, err := s.Participation(from, to)
+	if err != nil {
+		return participation.Summary{}, err
+	}
+	return participation.Summarize(recs), nil
+}
+
+// RoundChanges is wbft_roundChanges(from, to): the rounds of from..to that
+// ended in a round change, with the cause when this node saw it, at most
+// MaxRange heights (participation.md 5).
+func (s *Service) RoundChanges(from, to HeightArg) ([]participation.RoundChange, error) {
+	recs, err := s.Participation(from, to)
+	if err != nil {
+		return nil, err
+	}
+	return participation.RoundChanges(recs), nil
+}
+
 // SealCopy is a seal of a header copy: the indices of the sealers in the
 // validator set of the sealed height, and the aggregate signature.
 type SealCopy struct {
