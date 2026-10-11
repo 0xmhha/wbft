@@ -588,7 +588,7 @@ func (m *journalMetrics) Retained(span time.Duration) {
 	}
 	m.mu.Unlock()
 	if warn {
-		m.log.Warn("the journal's size limit keeps less than a day of records; raise max_bytes or keep only first copies",
+		m.log.Warn("the journal's size limit keeps less than a day of records; raise max_bytes",
 			"retained", span.Round(time.Second).String(), "min", JournalMinRetention.String())
 	}
 }
