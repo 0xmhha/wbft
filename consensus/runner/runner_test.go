@@ -747,7 +747,7 @@ func TestEngineRestartMoment(t *testing.T) {
 	if len(recs) == 0 || recs[0].Kind != event.EngineStart || recs[0].Fields["engine_run"] != uint64(2) {
 		t.Fatalf("first record of the restart: %+v", recs)
 	}
-	var enter, arm int = -1, -1
+	enter, arm := -1, -1
 	for i, r := range recs {
 		switch {
 		case r.Kind == event.RoundEnter && enter < 0:
