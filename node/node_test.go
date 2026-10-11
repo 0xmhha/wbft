@@ -19,6 +19,7 @@ import (
 	"github.com/0xmhha/wbft/internal/fsys"
 	"github.com/0xmhha/wbft/mempool"
 	"github.com/0xmhha/wbft/observe/event"
+	"github.com/0xmhha/wbft/observe/participation"
 	"github.com/0xmhha/wbft/rpc"
 	"github.com/0xmhha/wbft/types"
 )
@@ -382,6 +383,31 @@ func TestRPC(t *testing.T) {
 	}
 	if p := ranged(`["1","1025"]`); p.Error == nil {
 		t.Fatalf("wbft_participation over 1024 heights: %+v", p)
+	}
+	// The summary and the round changes of the same height: one validator
+	// that proposed and sealed it, no round change.
+	post := func(method, params string, out any) {
+		resp, err := http.Post(srv.URL, "application/json", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"`+method+`","params":`+params+`}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var sum struct{ Result participation.Summary }
+	post("wbft_participationSummary", `["1","1"]`, &sum)
+	if v := sum.Result.Validators; sum.Result.Heights != 1 || len(v) != 1 || v[0].Proposed != 1 || v[0].Sealed != 1 || v[0].ProposerRounds != 1 {
+		t.Fatalf("wbft_participationSummary %+v", sum.Result)
+	}
+	var rcs struct {
+		Result []participation.RoundChange
+		Error  any
+	}
+	post("wbft_roundChanges", `["1","1"]`, &rcs)
+	if rcs.Error != nil || rcs.Result == nil || len(rcs.Result) != 0 {
+		t.Fatalf("wbft_roundChanges %+v", rcs)
 	}
 	if st := call("wbft_consensusState")["result"].(map[string]any); st["running"] != true {
 		t.Fatalf("consensusState %v", st)
