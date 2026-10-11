@@ -426,6 +426,12 @@ func eventNewHead(b *types.Block, path string) event.Record {
 		if x.CommittedSeal != nil {
 			f["committed_sealers"] = x.CommittedSeal.Sealers.Sealers()
 		}
+		if x.PrevPreparedSeal != nil {
+			f["prev_prepared_sealers"] = x.PrevPreparedSeal.Sealers.Sealers()
+		}
+		if x.PrevCommittedSeal != nil {
+			f["prev_committed_sealers"] = x.PrevCommittedSeal.Sealers.Sealers()
+		}
 	}
 	return event.Record{Kind: event.NewHead, Fields: f}
 }

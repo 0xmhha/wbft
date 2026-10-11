@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"math/big"
+	"strconv"
 
 	"github.com/0xmhha/wbft/app"
 	"github.com/0xmhha/wbft/chain/epoch"
@@ -172,8 +173,7 @@ func (s *service) OnNewHead(ev app.NewHead) {
 	}
 	hash := codec.BlockHash(ev.Header)
 	s.n.paths.put(hash, ev.Path)
-	s.n.emit(event.Record{Kind: event.NewHead, Fields: map[string]any{"number": ev.Header.Number.String(),
-		"hash": "0x" + hex.EncodeToString(hash.Bytes()), "path": ev.Path.String()}})
+	s.n.emit(event.Record{Kind: event.NewHead, Fields: newHeadFields(ev.Header, hash, ev.Path.String())})
 	// The application stores a block's snapshot before it announces the
 	// head (app-interface.md 8.3); otherwise the child's PRE-PREPARE finds
 	// no parent snapshot.
@@ -230,4 +230,25 @@ func (s *service) OnImportFailed(f app.ImportFailure) {
 			s.n.log.Warn("rejection store write failed", "err", err)
 		}
 	}
+}
+
+// newHeadFields returns the fields of a NEW_HEAD record (observe.md 2.1):
+// the block's number, hash and path, and, from its extra, the round and
+// the sealers of its seals and of the parent's seals it carries (this
+// node's copy, WBFT-HDR-053). A seal the extra does not carry, or an extra
+// that does not decode, leaves its fields out.
+func newHeadFields(h *types.Header, hash types.Hash, path string) map[string]any {
+	f := map[string]any{"number": h.Number.String(), "hash": "0x" + hex.EncodeToString(hash.Bytes()), "path": path}
+	x, err := codec.DecodeExtra(h)
+	if err != nil {
+		return f
+	}
+	f["round"] = strconv.FormatUint(uint64(x.Round), 10)
+	for name, s := range map[string]*types.AggregatedSeal{"prepared_sealers": x.PreparedSeal, "committed_sealers": x.CommittedSeal, //wbft:unordered independent fields
+		"prev_prepared_sealers": x.PrevPreparedSeal, "prev_committed_sealers": x.PrevCommittedSeal} {
+		if s != nil {
+			f[name] = s.Sealers.Sealers()
+		}
+	}
+	return f
 }
