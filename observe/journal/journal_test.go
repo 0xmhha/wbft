@@ -159,6 +159,7 @@ type countObserver struct {
 	mu                         sync.Mutex
 	written                    map[Kind]int
 	dropped, truncated, pruned int
+	retained                   []time.Duration
 }
 
 func (o *countObserver) Written(k Kind) {
@@ -172,6 +173,11 @@ func (o *countObserver) Written(k Kind) {
 func (o *countObserver) Dropped(Kind) { o.mu.Lock(); o.dropped++; o.mu.Unlock() }
 func (o *countObserver) Truncated()   { o.mu.Lock(); o.truncated++; o.mu.Unlock() }
 func (o *countObserver) Pruned(n int) { o.mu.Lock(); o.pruned += n; o.mu.Unlock() }
+func (o *countObserver) Retained(d time.Duration) {
+	o.mu.Lock()
+	o.retained = append(o.retained, d)
+	o.mu.Unlock()
+}
 
 // TestObserver reports the written records by kind, frames kept without
 // their payload, and the segments the writer prunes; Bytes is the size of
@@ -230,13 +236,43 @@ func TestPrune(t *testing.T) {
 	if len(res.Removed) == 0 {
 		t.Fatal("nothing pruned by height")
 	}
+	if res.BySize != 0 {
+		t.Fatalf("height pruning counted %d by size", res.BySize)
+	}
+	// A size limit one byte below the total removes the oldest segment
+	// and reports the span of the closed segments left.
+	resA, err := Prune(fs, "/j", types.HeightFromUint64(30), Options{MaxBytes: res.Bytes - 1}, cur)
+	if err != nil {
+		t.Fatal(err)
+	}
+	segs, _ = wal.Segments(fs, "/j")
+	var first, last int64
+	for _, s := range segs {
+		if s.Index == cur {
+			continue
+		}
+		ix, ok := ReadIndex(fs, "/j", s.Name)
+		if !ok {
+			t.Fatalf("segment %s without an index", s.Name)
+		}
+		if first == 0 {
+			first = ix.FirstWall
+		}
+		last = ix.LastWall
+	}
+	if resA.BySize != 1 || len(resA.Removed) != 1 || resA.Span != time.Duration(last-first) || resA.Span <= 0 {
+		t.Fatalf("size pruning by one: removed %v, by size %d, span %v (want %v)", resA.Removed, resA.BySize, resA.Span, time.Duration(last-first))
+	}
 	res2, err := Prune(fs, "/j", types.HeightFromUint64(30), Options{MaxBytes: 1}, cur)
 	if err != nil {
 		t.Fatal(err)
 	}
 	segs, _ = wal.Segments(fs, "/j")
+	if res2.Span != 0 || res2.BySize != len(res2.Removed) {
+		t.Fatalf("only the current segment left: span %v, by size %d of %v", res2.Span, res2.BySize, res2.Removed)
+	}
 	if len(segs) != 1 || segs[0].Index != cur {
-		t.Fatalf("size pruning left %d segments (before %d, removed %v %v)", len(segs), before, res.Removed, res2.Removed)
+		t.Fatalf("size pruning left %d segments (before %d, removed %v %v %v)", len(segs), before, res.Removed, resA.Removed, res2.Removed)
 	}
 	for _, s := range res2.Removed {
 		if _, err := fs.ReadFile(filepath.Join("/j", s+indexSuffix)); err == nil {
@@ -444,5 +480,42 @@ func TestPeerClose(t *testing.T) {
 	}
 	if got := r.Body.(*PeerRec); got.By != "" || got.Cause != "" || got.Reason != "read" || got.PeerIdx != 3 || r.JSeq != 8 {
 		t.Fatalf("record without By and Cause %+v", got)
+	}
+}
+
+// TestObserverRetained: the writer reports the span left after its size
+// limit removed segments, and nothing for pruning by height alone.
+func TestObserverRetained(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		opt  Options
+		want bool
+	}{
+		{"size", Options{SegmentBytes: 400, MaxBytes: 1200}, true},
+		{"height", Options{SegmentBytes: 400, KeepHeights: 5}, false},
+	} {
+		obs := &countObserver{}
+		c.opt.FS, c.opt.Dir, c.opt.Synchronous, c.opt.Observer = fsys.NewMem(), "/j", true, obs
+		w, err := Open(c.opt, ident())
+		if err != nil {
+			t.Fatal(err)
+		}
+		for h := uint64(1); h <= 30; h++ {
+			w.NoteHead(types.HeightFromUint64(h))
+			for i := 0; i < 3; i++ {
+				w.Put(Record{Body: step(h*10 + uint64(i))})
+			}
+		}
+		if err := w.Close(); err != nil {
+			t.Fatal(err)
+		}
+		if obs.pruned == 0 || (len(obs.retained) > 0) != c.want {
+			t.Fatalf("%s: pruned %d, retained %v", c.name, obs.pruned, obs.retained)
+		}
+		for _, d := range obs.retained {
+			if d <= 0 {
+				t.Fatalf("%s: retained %v", c.name, d)
+			}
+		}
 	}
 }
