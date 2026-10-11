@@ -64,7 +64,10 @@ simulation)** covers:
   gossip target choice, and the frame verdicts `DecodeFrame`,
   `CheckOutbound` and `StoppedEngineAction` for the application adapters.
 - `observe/event` and `observe/journal`: the event vocabulary with a JSON
-  Lines writer, and the message journal (a store of its own with pruning by
+  Lines writer, the schema of the event records
+  (`observe/event/schema/events-v1.json`, JSON Schema 2020-12, which the
+  simulator and the node tests check every record they write against), and
+  the message journal (a store of its own with pruning by
   height and size). `cmd/wbft-journal` reports on a journal directory
   (`stat`), checks it (`verify`), prunes it (`prune`) and exports it, also
   while a node writes it: as a bundle (`export`, a tar file of the segments

@@ -24,7 +24,7 @@ func TestLogSettings(t *testing.T) {
 	key := testKey(0)
 	cj, g := testGenesis(t, key)
 	a := newTestApp(cj, g)
-	logs, ev := &syncBuffer{}, &syncBuffer{}
+	logs, ev := &syncBuffer{text: true}, &syncBuffer{}
 	settings := logcat.Settings{Base: logcat.LevelOff, Modules: map[string]logcat.Level{"consensus.round": logcat.LevelTrace}}
 	n, err := New(Config{DataDir: "/data", Log: &settings, LogUnmapped: []string{"p2p/server.go=5"}}, Deps{App: a, Authority: a, fs: fsys.NewMem(), key: key, Events: ev,
 		Logger: slog.New(slog.NewJSONHandler(logs, nil))})
@@ -133,7 +133,7 @@ func TestNodeLogger(t *testing.T) {
 	key := testKey(0)
 	cj, g := testGenesis(t, key)
 	a := newTestApp(cj, g)
-	logs := &syncBuffer{}
+	logs := &syncBuffer{text: true}
 	settings := logcat.Settings{Base: logcat.LevelInfo, Modules: map[string]logcat.Level{"node": logcat.LevelOff}}
 	n, err := New(Config{DataDir: "/data", Log: &settings}, Deps{App: a, Authority: a, fs: fsys.NewMem(), key: key,
 		Logger: slog.New(slog.NewJSONHandler(logs, nil))})
@@ -166,7 +166,7 @@ func TestLogProfileMatchesLines(t *testing.T) {
 	key := testKey(0)
 	cj, g := testGenesis(t, key)
 	a := newTestApp(cj, g)
-	logs, ev := &syncBuffer{}, &syncBuffer{}
+	logs, ev := &syncBuffer{text: true}, &syncBuffer{}
 	settings := logcat.Settings{Base: logcat.LevelTrace}
 	n, err := New(Config{DataDir: "/data", Log: &settings}, Deps{App: a, Authority: a, fs: fsys.NewMem(), key: key, Events: ev,
 		Logger: slog.New(slog.NewJSONHandler(logs, &slog.HandlerOptions{Level: logcat.SlogLevelTrace}))})

@@ -359,9 +359,10 @@ func TestRPC(t *testing.T) {
 	// An EVIDENCE record of the core goes through the node's sink to the
 	// store and the event stream, and wbft_evidence returns it.
 	sink := &evidenceSink{store: n.evid, next: n.ev, log: n.log}
+	digestB := "0x" + strings.Repeat("bb", 32)
 	if err := sink.Write(event.Record{Kind: event.Evidence, View: &event.View{Seq: "7", Round: "1"}, Fields: map[string]any{
-		"code": uint64(2), "evidence_kind": "equivocation", "source": "0x01", "digest_a": "0xaa", "digest_b": "0xbb",
-		"sig_a": "0x11", "sig_b": "0x22"}}, event.Stamp{Wall: time.Unix(1_700_000_000, 0)}); err != nil {
+		"code": uint64(2), "evidence_kind": "equivocation", "source": "0x" + strings.Repeat("01", 20), "digest_a": "0x" + strings.Repeat("aa", 32),
+		"digest_b": digestB, "sig_a": "0x11", "sig_b": "0x22"}}, event.Stamp{Wall: time.Unix(1_700_000_000, 0)}); err != nil {
 		t.Fatal(err)
 	}
 	resp, err := http.Post(srv.URL, "application/json", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"wbft_evidence","params":["5","0x9"]}`))
@@ -374,7 +375,7 @@ func TestRPC(t *testing.T) {
 	}
 	resp.Body.Close()
 	n.flushEvents()
-	if len(evOut.Result) != 1 || evOut.Result[0]["height"] != "7" || evOut.Result[0]["digestB"] != "0xbb" ||
+	if len(evOut.Result) != 1 || evOut.Result[0]["height"] != "7" || evOut.Result[0]["digestB"] != digestB ||
 		evOut.Result[0]["code"] != float64(2) || !strings.Contains(ev.String(), `"kind":"EVIDENCE"`) {
 		t.Fatalf("wbft_evidence %+v", evOut.Result)
 	}

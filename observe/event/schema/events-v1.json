@@ -1,0 +1,519 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/0xmhha/wbft/observe/event/schema/events-v1.json",
+  "title": "wbft event record, format version 1",
+  "description": "One line of an event file (events-<run>.jsonl) or one record of wbft_events and wbft_subscribe. A record is an event of a kind of observe/event, an event of an application module (src \"app\"), or a dropped record that stands for records the node's writer lost. Numbers that can exceed 64 bits (block numbers, rounds) are decimal strings. The Go tests of observe/event/schema check that the kinds below are the kinds of observe/event and that the records the simulator and the node write match this file.",
+  "oneOf": [
+    { "$ref": "#/$defs/NODE_START" },
+    { "$ref": "#/$defs/NODE_STOP" },
+    { "$ref": "#/$defs/ENGINE_START" },
+    { "$ref": "#/$defs/ENGINE_STOP" },
+    { "$ref": "#/$defs/ROUND_ENTER" },
+    { "$ref": "#/$defs/STATE" },
+    { "$ref": "#/$defs/TIMER_ARM" },
+    { "$ref": "#/$defs/TIMER_CANCEL" },
+    { "$ref": "#/$defs/TIMER_FIRE" },
+    { "$ref": "#/$defs/PREPREPARE_ACCEPT" },
+    { "$ref": "#/$defs/PROPOSAL_DEFERRED" },
+    { "$ref": "#/$defs/QUORUM" },
+    { "$ref": "#/$defs/SEND" },
+    { "$ref": "#/$defs/BACKLOG" },
+    { "$ref": "#/$defs/EXTRA_SEAL" },
+    { "$ref": "#/$defs/BUILD_REQUEST" },
+    { "$ref": "#/$defs/PROPOSAL_SUBMITTED" },
+    { "$ref": "#/$defs/FINALIZE_HANDOVER" },
+    { "$ref": "#/$defs/NEW_HEAD" },
+    { "$ref": "#/$defs/IMPORT_FAIL" },
+    { "$ref": "#/$defs/MSG_OUTCOME" },
+    { "$ref": "#/$defs/EVIDENCE" },
+    { "$ref": "#/$defs/COMMIT_RESULT" },
+    { "$ref": "#/$defs/LOG_CONFIG" },
+    { "$ref": "#/$defs/HEALTH" },
+    { "$ref": "#/$defs/app" },
+    { "$ref": "#/$defs/dropped" }
+  ],
+  "$defs": {
+    "decimal": {
+      "description": "A non-negative integer as a decimal string.",
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]*)$"
+    },
+    "address": {
+      "type": "string",
+      "pattern": "^0x[0-9a-f]{40}$"
+    },
+    "hash": {
+      "type": "string",
+      "pattern": "^0x[0-9a-f]{64}$"
+    },
+    "bytes": {
+      "type": "string",
+      "pattern": "^0x([0-9a-f]{2})*$"
+    },
+    "code": {
+      "description": "Consensus message code: 0x12 PRE-PREPARE, 0x13 PREPARE, 0x14 COMMIT, 0x15 ROUND-CHANGE.",
+      "type": "integer",
+      "minimum": 0
+    },
+    "sealers": {
+      "description": "Validator indices whose seals the header carries, ascending.",
+      "type": "array",
+      "items": { "type": "integer", "minimum": 0 }
+    },
+    "timer": { "enum": ["round", "retry", "future"] },
+    "outcome": {
+      "description": "Outcome class of a received message (WBFT-NET-044), spelled as the vector network/receive_outcome.",
+      "enum": ["ACCEPT", "IGNORE", "DROP_SILENT", "DISCONNECT"]
+    },
+    "headPath": { "enum": ["sealed_locally", "imported", "synced"] },
+    "view": {
+      "type": "object",
+      "properties": {
+        "seq": { "$ref": "#/$defs/decimal" },
+        "round": { "$ref": "#/$defs/decimal" }
+      },
+      "required": ["seq", "round"],
+      "additionalProperties": false
+    },
+    "common": {
+      "description": "The fields the writer stamps on every event, in this order before the kind's fields.",
+      "type": "object",
+      "properties": {
+        "v": { "const": 1 },
+        "node": { "$ref": "#/$defs/address" },
+        "run": { "type": "string" },
+        "seq": { "description": "Increases by one per record within a run.", "type": "integer", "minimum": 0 },
+        "t_wall": { "description": "RFC 3339 with nanoseconds, UTC.", "type": "string" },
+        "t_mono_ns": { "type": "integer" },
+        "kind": { "type": "string" },
+        "view": { "$ref": "#/$defs/view" },
+        "step": { "description": "Input number of the core within the engine run, shared with the message journal.", "type": "integer", "minimum": 0 },
+        "imp": { "description": "Optional behaviours that decided this event.", "type": "array", "items": { "type": "string" } }
+      },
+      "required": ["v", "node", "run", "seq", "t_wall", "t_mono_ns", "kind"]
+    },
+    "NODE_START": {
+      "description": "The node started. A simulated node that refused to start (its sign state is damaged) writes only refused.",
+      "type": "object",
+      "allOf": [{ "$ref": "#/$defs/common" }],
+      "properties": {
+        "kind": { "const": "NODE_START" },
+        "impl": { "const": "wbft" },
+        "mode": { "enum": ["embedded", "standalone"] },
+        "profile": { "enum": ["compat", "improved"] },
+        "handshake": { "enum": ["start", "refinalize", "start_after_rollback", "refuse"] },
+        "improvements": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": { "type": "string" },
+              "source": { "enum": ["profile", "node", "chain", "app"] }
+            },
+            "required": ["name", "source"],
+            "additionalProperties": false
+          }
+        },
+        "log_profile": { "type": "string", "pattern": "^wbft@" },
+        "wal_recovery": {
+          "type": "object",
+          "properties": {
+            "records": { "type": "integer", "minimum": 0 },
+            "torn_bytes": { "type": "integer", "minimum": 0 },
+            "corrupted": { "type": "integer", "minimum": 0 }
+          },
+          "required": ["records", "torn_bytes", "corrupted"],
+          "additionalProperties": false
+        },
+        "sign_floor": {
+          "oneOf": [
+            { "type": "null" },
+            {
+              "type": "object",
+              "properties": {
+                "height": { "$ref": "#/$defs/decimal" },
+                "status": { "enum": ["set", "kept", "cleared"] }
+              },
+              "required": ["height", "status"],
+              "additionalProperties": false
+            }
+          ]
+        },
+        "validator": { "type": "boolean" },
+        "refused": { "type": "string" }
+      },
+      "oneOf": [
+        { "required": ["impl", "mode", "wal_recovery", "sign_floor"] },
+        { "required": ["refused"] }
+      ],
+      "unevaluatedProperties": false
+    },
+    "NODE_STOP": {
+      "type": "object",
+      "allOf": [{ "$ref": "#/$defs/common" }],
+      "properties": {
+        "kind": { "const": "NODE_STOP" },
+        "reason": { "enum": ["operator"] }
+      },
+      "required": ["reason"],
+      "unevaluatedProperties": false
+    },
+    "ENGINE_START": {
+      "type": "object",
+      "allOf": [{ "$ref": "#/$defs/common" }],
+      "properties": {
+        "kind": { "const": "ENGINE_START" },
+        "engine_run": { "type": "integer", "minimum": 0 },
+        "reason": { "enum": ["start"] },
+        "replay": {
+          "description": "The write-ahead log replay of this engine run.",
+          "type": "object",
+          "properties": {
+            "records": { "type": "integer", "minimum": 0 },
+            "stopped": { "description": "Why the replay stopped early; null when it read every record.", "type": ["string", "null"] },
+            "replayed": { "type": "boolean" }
+          },
+          "required": ["records", "stopped", "replayed"],
+          "additionalProperties": false
+        }
+      },
+      "required": ["engine_run", "reason", "replay"],
+      "unevaluatedProperties": false
+    },
+    "ENGINE_STOP": {
+      "type": "object",
+      "allOf": [{ "$ref": "#/$defs/common" }],
+      "properties": {
+        "kind": { "const": "ENGINE_STOP" },
+        "engine_run": { "type": "integer", "minimum": 0 },
+        "reason": { "enum": ["operator"] }
+      },
+      "required": ["engine_run", "reason"],
+      "unevaluatedProperties": false
+    },
+    "ROUND_ENTER": {
+      "type": "object",
+      "allOf": [{ "$ref": "#/$defs/common" }],
+      "properties": {
+        "kind": { "const": "ROUND_ENTER" },
+        "branch": { "enum": ["INITIAL", "CATCH_UP", "ROUND_CHANGE"] },
+        "cause": { "enum": ["start", "new_head", "timeout", "f_plus_one", "finalize_fail"] },
+        "requested_round": { "$ref": "#/$defs/decimal" },
+        "proposer": { "$ref": "#/$defs/address" },
+        "is_proposer": { "type": "boolean" },
+        "valset_digest": { "$ref": "#/$defs/hash" }
+      },
+      "required": ["view", "branch", "cause", "requested_round", "proposer", "is_proposer", "valset_digest"],
+      "unevaluatedProperties": false
+    },
+    "STATE": {
+      "type": "object",
+      "allOf": [{ "$ref": "#/$defs/common" }],
+      "properties": {
+        "kind": { "const": "STATE" },
+        "from": { "enum": ["AcceptRequest", "Preprepared", "Prepared", "Committed"] },
+        "to": { "enum": ["AcceptRequest", "Preprepared", "Prepared", "Committed"] }
+      },
+      "required": ["view", "from", "to"],
+      "unevaluatedProperties": false
+    },
+    "TIMER_ARM": {
+      "description": "A timer was armed. A timer re-armed after the write-ahead log replay has rearmed and no deadline_mono_ns.",
+      "type": "object",
+      "allOf": [{ "$ref": "#/$defs/common" }],
+      "properties": {
+        "kind": { "const": "TIMER_ARM" },
+        "timer": { "$ref": "#/$defs/timer" },
+        "duration_ms": { "type": "integer", "minimum": 0 },
+        "deadline_mono_ns": { "type": "integer" },
+        "gen": { "type": "integer", "minimum": 0 },
+        "engine_run": { "type": "integer", "minimum": 0 },
+        "target_round": { "description": "Round the retry timer rebuilds a ROUND-CHANGE for; retry timers only.", "$ref": "#/$defs/decimal" },
+        "rearmed": { "const": true }
+      },
+      "required": ["view", "timer", "duration_ms", "gen", "engine_run"],
+      "unevaluatedProperties": false
+    },
+    "TIMER_CANCEL": {
+      "type": "object",
+      "allOf": [{ "$ref": "#/$defs/common" }],
+      "properties": {
+        "kind": { "const": "TIMER_CANCEL" },
+        "timer": { "$ref": "#/$defs/timer" },
+        "gen": { "type": "integer", "minimum": 0 },
+        "engine_run": { "type": "integer", "minimum": 0 }
+      },
+      "required": ["timer", "gen", "engine_run"],
+      "unevaluatedProperties": false
+    },
+    "TIMER_FIRE": {
+      "type": "object",
+      "allOf": [{ "$ref": "#/$defs/common" }],
+      "properties": {
+        "kind": { "const": "TIMER_FIRE" },
+        "timer": { "$ref": "#/$defs/timer" },
+        "gen": { "type": "integer", "minimum": 0 },
+        "stale": { "description": "The timer was re-armed or cancelled after this generation.", "type": "boolean" },
+        "engine_run": { "type": "integer", "minimum": 0 }
+      },
+      "required": ["view", "timer", "gen", "stale", "engine_run"],
+      "unevaluatedProperties": false
+    },
+    "PREPREPARE_ACCEPT": {
+      "type": "object",
+      "allOf": [{ "$ref": "#/$defs/common" }],
+      "properties": {
+        "kind": { "const": "PREPREPARE_ACCEPT" },
+        "digest": { "$ref": "#/$defs/hash" },
+        "proposer": { "$ref": "#/$defs/address" },
+        "block_time": { "description": "Header time, Unix seconds.", "type": "integer", "minimum": 0 }
+      },
+      "required": ["view", "digest", "proposer", "block_time"],
+      "unevaluatedProperties": false
+    },
+    "PROPOSAL_DEFERRED": {
+      "type": "object",
+      "allOf": [{ "$ref": "#/$defs/common" }],
+      "properties": {
+        "kind": { "const": "PROPOSAL_DEFERRED" },
+        "digest": { "$ref": "#/$defs/hash" },
+        "wait_ns": { "type": "integer", "minimum": 0 }
+      },
+      "required": ["view", "digest", "wait_ns"],
+      "unevaluatedProperties": false
+    },
+    "QUORUM": {
+      "type": "object",
+      "allOf": [{ "$ref": "#/$defs/common" }],
+      "properties": {
+        "kind": { "const": "QUORUM" },
+        "what": { "enum": ["PREPARE", "COMMIT", "ROUND_CHANGE", "F_PLUS_ONE"] },
+        "count": { "type": "integer", "minimum": 0 },
+        "quorum": { "type": "integer", "minimum": 0 }
+      },
+      "required": ["view", "what", "count", "quorum"],
+      "unevaluatedProperties": false
+    },
+    "SEND": {
+      "description": "A message was put on the wire. A message re-sent after the write-ahead log replay has only code and cause.",
+      "type": "object",
+      "allOf": [{ "$ref": "#/$defs/common" }],
+      "properties": {
+        "kind": { "const": "SEND" },
+        "code": { "$ref": "#/$defs/code" },
+        "dedup_key": { "$ref": "#/$defs/hash" },
+        "payload_sha256": { "$ref": "#/$defs/hash" },
+        "cause": { "enum": ["broadcast", "gossip", "relay", "retry", "reconnect", "replay", "direct"] }
+      },
+      "required": ["code", "cause"],
+      "unevaluatedProperties": false
+    },
+    "BACKLOG": {
+      "type": "object",
+      "allOf": [{ "$ref": "#/$defs/common" }],
+      "properties": {
+        "kind": { "const": "BACKLOG" },
+        "op": { "enum": ["push", "replay", "drop"] },
+        "code": { "$ref": "#/$defs/code" },
+        "source": { "$ref": "#/$defs/address" },
+        "reason": {
+          "description": "Why a message was dropped: own, duplicate, full, not_member, or the check_message class it got at replay.",
+          "enum": ["own", "duplicate", "full", "not_member", "OLD", "INVALID", "TOO_FAR"]
+        }
+      },
+      "required": ["view", "op", "code", "source"],
+      "unevaluatedProperties": false
+    },
+    "EXTRA_SEAL": {
+      "type": "object",
+      "allOf": [{ "$ref": "#/$defs/common" }],
+      "properties": {
+        "kind": { "const": "EXTRA_SEAL" },
+        "op": { "enum": ["store", "ignore", "reject"] },
+        "source": { "$ref": "#/$defs/address" },
+        "seal_type": { "enum": ["PREPARE", "COMMIT", null] },
+        "target": { "oneOf": [{ "$ref": "#/$defs/hash" }, { "type": "null" }] }
+      },
+      "required": ["view", "op", "source", "seal_type", "target"],
+      "unevaluatedProperties": false
+    },
+    "BUILD_REQUEST": {
+      "type": "object",
+      "allOf": [{ "$ref": "#/$defs/common" }],
+      "properties": {
+        "kind": { "const": "BUILD_REQUEST" },
+        "round": { "$ref": "#/$defs/decimal" },
+        "wait_ms": { "type": "integer" }
+      },
+      "required": ["view", "round", "wait_ms"],
+      "unevaluatedProperties": false
+    },
+    "PROPOSAL_SUBMITTED": {
+      "type": "object",
+      "allOf": [{ "$ref": "#/$defs/common" }],
+      "properties": {
+        "kind": { "const": "PROPOSAL_SUBMITTED" },
+        "number": { "$ref": "#/$defs/decimal" }
+      },
+      "required": ["number"],
+      "unevaluatedProperties": false
+    },
+    "FINALIZE_HANDOVER": {
+      "type": "object",
+      "allOf": [{ "$ref": "#/$defs/common" }],
+      "properties": {
+        "kind": { "const": "FINALIZE_HANDOVER" },
+        "number": { "$ref": "#/$defs/decimal" },
+        "hash": { "$ref": "#/$defs/hash" },
+        "round": { "$ref": "#/$defs/decimal" },
+        "prepared_sealers": { "$ref": "#/$defs/sealers" },
+        "committed_sealers": { "$ref": "#/$defs/sealers" }
+      },
+      "required": ["number", "hash", "round", "prepared_sealers", "committed_sealers"],
+      "unevaluatedProperties": false
+    },
+    "NEW_HEAD": {
+      "description": "The application announced a new head. The round and the sealer lists come from the header extra; they are absent when the extra does not decode or lacks the seal.",
+      "type": "object",
+      "allOf": [{ "$ref": "#/$defs/common" }],
+      "properties": {
+        "kind": { "const": "NEW_HEAD" },
+        "number": { "$ref": "#/$defs/decimal" },
+        "hash": { "$ref": "#/$defs/hash" },
+        "path": { "$ref": "#/$defs/headPath" },
+        "round": { "$ref": "#/$defs/decimal" },
+        "prepared_sealers": { "$ref": "#/$defs/sealers" },
+        "committed_sealers": { "$ref": "#/$defs/sealers" },
+        "prev_prepared_sealers": { "$ref": "#/$defs/sealers" },
+        "prev_committed_sealers": { "$ref": "#/$defs/sealers" }
+      },
+      "required": ["number", "hash", "path"],
+      "unevaluatedProperties": false
+    },
+    "IMPORT_FAIL": {
+      "type": "object",
+      "allOf": [{ "$ref": "#/$defs/common" }],
+      "properties": {
+        "kind": { "const": "IMPORT_FAIL" },
+        "number": { "$ref": "#/$defs/decimal" },
+        "hash": { "$ref": "#/$defs/hash" },
+        "path": { "$ref": "#/$defs/headPath" },
+        "recorded_bad": { "type": "boolean" },
+        "failed_step": { "description": "Verification step of A-08 or B-03 (P1, H4, B1, ...).", "type": "string" },
+        "error_class": { "type": "string" }
+      },
+      "required": ["number", "hash", "path", "recorded_bad"],
+      "unevaluatedProperties": false
+    },
+    "MSG_OUTCOME": {
+      "description": "What the node did with a received message. check is prefilter for a message that did not reach the core; then row is null and reason names the check it failed.",
+      "type": "object",
+      "allOf": [{ "$ref": "#/$defs/common" }],
+      "properties": {
+        "kind": { "const": "MSG_OUTCOME" },
+        "code": { "$ref": "#/$defs/code" },
+        "check": { "enum": ["PROCESS", "FUTURE", "OLD", "INVALID", "TOO_FAR", "EXTRA_SEAL", "prefilter", null] },
+        "outcome": { "$ref": "#/$defs/outcome" },
+        "row": { "description": "Row of A-05 §16.", "type": ["integer", "null"] },
+        "reason": { "enum": ["signature", "membership", "window", "duplicate", "overwritten", "engine_stopped"] },
+        "via": { "enum": ["direct", "backlog", "self"] },
+        "peer": { "$ref": "#/$defs/address" },
+        "source": { "$ref": "#/$defs/address" },
+        "dedup_key": { "$ref": "#/$defs/hash" }
+      },
+      "required": ["code", "check", "outcome", "row", "via", "peer", "dedup_key"],
+      "unevaluatedProperties": false
+    },
+    "EVIDENCE": {
+      "description": "Two validly signed messages of one source, view and code with different digests. Observation only.",
+      "type": "object",
+      "allOf": [{ "$ref": "#/$defs/common" }],
+      "properties": {
+        "kind": { "const": "EVIDENCE" },
+        "code": { "$ref": "#/$defs/code" },
+        "source": { "$ref": "#/$defs/address" },
+        "digest_a": { "$ref": "#/$defs/hash" },
+        "digest_b": { "$ref": "#/$defs/hash" },
+        "sig_a": { "$ref": "#/$defs/bytes" },
+        "sig_b": { "$ref": "#/$defs/bytes" },
+        "evidence_kind": { "enum": ["equivocation", "round0_preprepare"] }
+      },
+      "required": ["view", "code", "source", "digest_a", "digest_b", "sig_a", "sig_b", "evidence_kind"],
+      "unevaluatedProperties": false
+    },
+    "COMMIT_RESULT": {
+      "type": "object",
+      "allOf": [{ "$ref": "#/$defs/common" }],
+      "properties": {
+        "kind": { "const": "COMMIT_RESULT" },
+        "number": { "$ref": "#/$defs/decimal" },
+        "hash": { "$ref": "#/$defs/hash" },
+        "ok": { "type": "boolean" },
+        "error_class": { "type": "string" },
+        "duration_ms": { "type": "integer", "minimum": 0 }
+      },
+      "required": ["number", "hash", "ok", "duration_ms"],
+      "unevaluatedProperties": false
+    },
+    "LOG_CONFIG": {
+      "type": "object",
+      "allOf": [{ "$ref": "#/$defs/common" }],
+      "properties": {
+        "kind": { "const": "LOG_CONFIG" },
+        "level": { "type": "string" },
+        "modules": { "description": "Level per module that differs from level.", "type": "object", "additionalProperties": { "type": "string" } },
+        "source": { "enum": ["config", "rpc"] },
+        "unmapped": { "type": "array", "items": { "type": "string" } }
+      },
+      "required": ["level", "modules", "source"],
+      "unevaluatedProperties": false
+    },
+    "HEALTH": {
+      "description": "A condition worth an operator's attention. The fields after what depend on it; h is a block number.",
+      "type": "object",
+      "allOf": [{ "$ref": "#/$defs/common" }],
+      "properties": {
+        "kind": { "const": "HEALTH" },
+        "what": {
+          "enum": ["head_mismatch", "peer_inbound_overflow", "peer_inbound_disconnect", "privval_refusal", "sign_floor_skip",
+            "snapshot_missing_at_preprepare", "snapshot_missing_at_head", "consensus_halted", "disconnect"]
+        },
+        "peer": { "$ref": "#/$defs/address" },
+        "code": { "$ref": "#/$defs/code" },
+        "h": { "$ref": "#/$defs/decimal" },
+        "hash": { "$ref": "#/$defs/hash" },
+        "parent": { "$ref": "#/$defs/hash" },
+        "path": { "$ref": "#/$defs/headPath" },
+        "app_head": { "$ref": "#/$defs/decimal" },
+        "core_head": { "$ref": "#/$defs/decimal" },
+        "error": { "type": "string" },
+        "reason": { "type": "string" }
+      },
+      "required": ["what"],
+      "unevaluatedProperties": false
+    },
+    "app": {
+      "description": "An event of an application module (observe.AppEmitter). The module owns its kind and fields; wbft checks only the common fields.",
+      "type": "object",
+      "allOf": [{ "$ref": "#/$defs/common" }],
+      "properties": {
+        "src": { "const": "app" }
+      },
+      "required": ["src"]
+    },
+    "dropped": {
+      "description": "Stands for count records from seq from_seq that the node's writer lost because its queue was full.",
+      "type": "object",
+      "properties": {
+        "v": { "const": 1 },
+        "type": { "const": "dropped" },
+        "node": { "$ref": "#/$defs/address" },
+        "run": { "type": "string" },
+        "count": { "type": "integer", "minimum": 1 },
+        "from_seq": { "type": "integer", "minimum": 0 }
+      },
+      "required": ["v", "type", "node", "run", "count", "from_seq"],
+      "additionalProperties": false
+    }
+  }
+}
