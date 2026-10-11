@@ -29,6 +29,25 @@ var _ rpc.Backend = backend{}
 // server.
 func (n *Node) APIs() []rpc.API { return rpc.APIs(backend{n}) }
 
+// SubscriptionBuffer is how many event records a subscription holds for
+// a subscriber that has not read them; beyond it records are dropped and
+// a gap record (rpc.Gap) is delivered in their place.
+const SubscriptionBuffer = 1024
+
+// SubscribeEvents delivers the event records written from now on that
+// pass f, for wbft_subscribe("events", f) of the application's RPC
+// server (observe.md 2.2). The returned function ends the subscription
+// and closes the channel; the caller calls it once it stops reading. A
+// subscriber that falls behind does not block the node: the records it
+// misses are replaced by a gap record of their seq range.
+func (n *Node) SubscribeEvents(f *rpc.EventFilter) (<-chan json.RawMessage, func(), error) {
+	if err := f.Check(); err != nil {
+		return nil, nil, err
+	}
+	ch, cancel := n.ring.subscribe(SubscriptionBuffer, f.Match)
+	return ch, cancel, nil
+}
+
 // AdminAPIs returns the administrative methods of the node
 // (admin_wbftSetLogLevels); the application registers them only on IPC or
 // an authenticated endpoint.

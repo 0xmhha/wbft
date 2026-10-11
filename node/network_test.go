@@ -2,6 +2,7 @@ package node
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"maps"
 	"math/big"
@@ -16,6 +17,7 @@ import (
 	"github.com/0xmhha/wbft/observe/journal"
 	"github.com/0xmhha/wbft/p2p/devnet"
 	"github.com/0xmhha/wbft/p2p/transport"
+	"github.com/0xmhha/wbft/rpc"
 	"github.com/0xmhha/wbft/types"
 )
 
@@ -89,8 +91,32 @@ func TestFourValidators(t *testing.T) {
 		}
 	})
 
+	// A subscription of node 1 to ROUND_ENTER of heights 2 and 3.
+	var from, to rpc.HeightArg
+	if json.Unmarshal([]byte("2"), &from) != nil || json.Unmarshal([]byte(`"0x3"`), &to) != nil {
+		t.Fatal("heights")
+	}
+	sub, unsub, err := nodes[1].SubscribeEvents(&rpc.EventFilter{Kinds: []string{"ROUND_ENTER"}, FromHeight: &from, ToHeight: &to})
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, a := range apps {
 		a.waitHead(t, 3, 60*time.Second)
+	}
+	unsub()
+	heights := map[string]bool{}
+	for rec := range sub {
+		var e struct {
+			Kind string
+			View struct{ Seq string }
+		}
+		if json.Unmarshal(rec, &e) != nil || e.Kind != "ROUND_ENTER" || (e.View.Seq != "2" && e.View.Seq != "3") {
+			t.Fatalf("subscription delivered %s", rec)
+		}
+		heights[e.View.Seq] = true
+	}
+	if !heights["2"] || !heights["3"] {
+		t.Fatalf("subscription saw heights %v", heights)
 	}
 	// Stop the last validator; the other three continue.
 	if err := nodes[n-1].Stop(); err != nil {
