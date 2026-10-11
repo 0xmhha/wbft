@@ -103,6 +103,9 @@ type Consensus interface {
 	// OnSyncState reports the start and the end of a chain
 	// synchronisation.
 	OnSyncState(s SyncState)
-	// OnImportFailed reports a block that failed import.
+	// OnImportFailed reports a block that failed import on a path other
+	// than FinalizeBlock (Imported, Synced). For a decided block, the
+	// application returns an *ImportError from FinalizeBlock instead, and
+	// the node records it as a failure on the SealedLocally path.
 	OnImportFailed(f ImportFailure)
 }

@@ -122,6 +122,10 @@ func (c *chainView) IsBadBlock(h types.Hash) bool { return c.a.IsBadBlock(h) }
 type appDriver struct {
 	a   app.Application
 	ctx context.Context
+	// failed, when set, is told a decided block the application failed to
+	// import (an *app.ImportError from FinalizeBlock); the node records it
+	// as for OnImportFailed.
+	failed func(app.ImportFailure)
 }
 
 var _ runner.App = (*appDriver)(nil)
@@ -138,5 +142,11 @@ func (d *appDriver) ReadyToBuild(req consensus.RequestBuild, wait time.Duration,
 
 func (d *appDriver) FinalizeBlock(b *types.Block, round types.Round) error {
 	_, err := d.a.FinalizeBlock(d.ctx, app.FinalizeRequest{Block: b, Round: round})
+	if ie := (*app.ImportError)(nil); d.failed != nil && errors.As(err, &ie) {
+		// An invalid block is recorded as bad by the application
+		// (WBFT-APP-090); another import failure is not.
+		d.failed(app.ImportFailure{Number: b.Header.Number, Hash: codec.BlockHash(b.Header), Path: app.SealedLocally,
+			RecordedBad: errors.Is(err, app.ErrInvalidBlock), Err: ie})
+	}
 	return err
 }
