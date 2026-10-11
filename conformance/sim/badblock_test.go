@@ -2,6 +2,11 @@ package sim
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -44,9 +49,20 @@ func TestBadBlockAfterCommit(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			sc := Scenario{Name: "bad_block_after_commit", Seed: 1, Validators: vs, Until: Stop{Height: 4, Duration: 2 * time.Minute},
 				App: AppModel{FailedImports: []FailedImport{{Height: 2, Proposer: p, Delay: tt.delay}}}}
-			res, err := Run(context.Background(), sc, Output{})
+			dir := t.TempDir()
+			res, err := Run(context.Background(), sc, Output{EventsDir: dir})
 			if err != nil {
 				t.Fatal(err)
+			}
+			// Every node records the failed import of the block as bad.
+			bad := importFails(t, dir)
+			if len(bad) != len(vs) {
+				t.Errorf("IMPORT_FAIL records of %d nodes, want %d: %v", len(bad), len(vs), bad)
+			}
+			for node, recs := range bad {
+				if recs[0] != "2 sealed_locally true" {
+					t.Errorf("node %s: IMPORT_FAIL %v", node, recs)
+				}
 			}
 			if len(res.Violations) != 0 {
 				t.Fatalf("violations %v (heads %v, rounds %v, refusals %d)", res.Violations, res.Heads, res.Rounds, res.Refusals)
@@ -63,4 +79,34 @@ func TestBadBlockAfterCommit(t *testing.T) {
 			t.Logf("heads %v rounds %v", res.Heads, res.Rounds)
 		})
 	}
+}
+
+// importFails returns, per node, the "number path recorded_bad" of its
+// IMPORT_FAIL records in the event files of dir.
+func importFails(t *testing.T, dir string) map[string][]string {
+	t.Helper()
+	files, err := filepath.Glob(filepath.Join(dir, "*.jsonl"))
+	if err != nil || len(files) == 0 {
+		t.Fatalf("event files: %v %v", files, err)
+	}
+	out := map[string][]string{}
+	for _, f := range files {
+		b, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, l := range strings.Split(strings.TrimSpace(string(b)), "\n") {
+			var r struct {
+				Node, Kind, Number, Path string
+				RecordedBad              bool `json:"recorded_bad"`
+			}
+			if err := json.Unmarshal([]byte(l), &r); err != nil {
+				t.Fatal(err)
+			}
+			if r.Kind == "IMPORT_FAIL" {
+				out[r.Node] = append(out[r.Node], fmt.Sprintf("%s %s %v", r.Number, r.Path, r.RecordedBad))
+			}
+		}
+	}
+	return out
 }
