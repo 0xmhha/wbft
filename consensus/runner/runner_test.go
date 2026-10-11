@@ -721,3 +721,48 @@ func TestStartAfterClose(t *testing.T) {
 		t.Fatal("Start after Close did not return")
 	}
 }
+
+// TestEngineRestartMoment: a restart of the engine that does not replay the
+// log writes ENGINE_START before the records of the new run's first step,
+// and that step has its own moment: its records carry it and its round
+// timer runs from it, not from the last step of the previous run.
+func TestEngineRestartMoment(t *testing.T) {
+	k := newKeys(t, 4)
+	n := newTNode(t, k, 1)
+	n.boot()
+	n.clock.now += 5 * time.Second
+	if err := n.r.Stop(); err != nil {
+		t.Fatal(err)
+	}
+	n.clock.now += 30 * time.Second
+	n.r.cfg.ReplayWAL = false
+	from := len(n.events.recs)
+	restart := n.clock.now
+	if err := n.r.Start(context.Background(), types.HeightFromUint64(10)); err != nil {
+		t.Fatal(err)
+	}
+	n.events.mu.Lock()
+	recs, stamps := n.events.recs[from:], n.events.stamps[from:]
+	n.events.mu.Unlock()
+	if len(recs) == 0 || recs[0].Kind != event.EngineStart || recs[0].Fields["engine_run"] != uint64(2) {
+		t.Fatalf("first record of the restart: %+v", recs)
+	}
+	enter, arm := -1, -1
+	for i, r := range recs {
+		switch {
+		case r.Kind == event.RoundEnter && enter < 0:
+			enter = i
+		case r.Kind == event.TimerArm && r.Fields["timer"] == "round" && arm < 0:
+			arm = i
+		}
+	}
+	if enter < 0 || arm < 0 {
+		t.Fatalf("no ROUND_ENTER or round TIMER_ARM after the restart: %+v", recs)
+	}
+	if stamps[enter].Mono < restart || stamps[arm].Mono != stamps[enter].Mono {
+		t.Fatalf("first step stamped at %v (restart at %v), timer armed at %v", stamps[enter].Mono, restart, stamps[arm].Mono)
+	}
+	if d, ok := recs[arm].Fields["deadline_mono_ns"].(int64); !ok || time.Duration(d) <= restart {
+		t.Fatalf("round timer deadline %v, restart at %v", recs[arm].Fields["deadline_mono_ns"], restart)
+	}
+}

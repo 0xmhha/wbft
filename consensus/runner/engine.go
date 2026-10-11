@@ -65,13 +65,24 @@ func (r *Runner) startEngine(_ context.Context, head *types.Header) error {
 			r.env.head = plan.head
 		}
 	}
+	r.replay.Replayed = replayed
+	// ENGINE_START comes before the records of the run's first step, which
+	// belong to the new run.
+	f := map[string]any{"engine_run": r.engineRun, "reason": "start", "replay": map[string]any{
+		"records": r.replay.Records, "stopped": nilIfEmpty(r.replay.Stopped), "replayed": replayed}}
+	r.emit(event.Record{Kind: event.EngineStart, Fields: f}, nil)
 	if !replayed {
 		r.core = consensus.NewState(r.cfg.Core)
+		r.step++
+		step := r.step
+		// The start step has its own moment, as every step (handle): its
+		// records and the timers it arms are measured from it, not from
+		// the last step of the previous run.
+		r.stepAt = event.Stamp{Wall: r.d.Clock.Now(), Mono: r.d.Clock.Mono(), Step: &step}
 		r.env.begin(false)
 		outs := r.core.Step(r.env, consensus.Start{})
 		answers := r.env.end()
 		r.running.Store(true)
-		r.step++
 		sc := &stepCtx{q: queued{in: consensus.Start{}, via: viaEngine}, step: r.step, outs: outs, env: answers}
 		body, _ := inputlog.Encode(consensus.Start{})
 		r.execute(sc)
@@ -97,12 +108,8 @@ func (r *Runner) startEngine(_ context.Context, head *types.Header) error {
 		}
 		r.afterReplay(replayTimers, snap)
 	}
-	r.replay.Replayed = replayed
 	r.lastHead.Store(r.env.head)
 	r.startHousekeeping()
-	f := map[string]any{"engine_run": r.engineRun, "reason": "start", "replay": map[string]any{
-		"records": r.replay.Records, "stopped": nilIfEmpty(r.replay.Stopped), "replayed": replayed}}
-	r.emit(event.Record{Kind: event.EngineStart, Fields: f}, nil)
 	return nil
 }
 
