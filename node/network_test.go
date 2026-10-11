@@ -136,6 +136,23 @@ func TestFourValidators(t *testing.T) {
 			}
 		}
 	}
+	// NEW_HEAD carries the round and the sealers of the block's seals and
+	// of the parent's seals in its extra (observe.md 2.1).
+	var head2 map[string]any
+	for _, rec := range nodes[0].ring.since(0, eventsKept) {
+		var e map[string]any
+		if json.Unmarshal(rec, &e) == nil && e["kind"] == "NEW_HEAD" && e["number"] == "2" {
+			head2 = e
+		}
+	}
+	for _, k := range []string{"prepared_sealers", "committed_sealers", "prev_prepared_sealers", "prev_committed_sealers"} {
+		if l, ok := head2[k].([]any); !ok || len(l) < 3 {
+			t.Fatalf("NEW_HEAD of block 2: %s %v (%v)", k, head2[k], head2)
+		}
+	}
+	if _, ok := head2["round"].(string); !ok {
+		t.Fatalf("NEW_HEAD of block 2 without a round: %v", head2)
+	}
 	// Gossip left relays out for peers that held them, and the receive
 	// queue size is a metric.
 	var text strings.Builder
