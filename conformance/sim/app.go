@@ -1,6 +1,7 @@
 package sim
 
 import (
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"time"
@@ -13,6 +14,7 @@ import (
 	"github.com/0xmhha/wbft/codec/rlp"
 	"github.com/0xmhha/wbft/consensus"
 	"github.com/0xmhha/wbft/crypto/keccak"
+	"github.com/0xmhha/wbft/observe/event"
 	"github.com/0xmhha/wbft/types"
 	"github.com/holiman/uint256"
 )
@@ -264,6 +266,11 @@ func (a *app) importBlock(b *types.Block, path string) error {
 		// repeated finalize arrives after the height was decided otherwise.
 		a.bad[codec.BlockHash(b.Header)] = true
 		delete(a.pending, h)
+		if a.n.r != nil && a.n.alive {
+			// What a node records for an application's OnImportFailed.
+			_ = a.n.ev.Write(event.Record{Kind: event.ImportFail, Fields: map[string]any{"number": b.Header.Number.String(),
+				"hash": "0x" + hex.EncodeToString(codec.BlockHash(b.Header).Bytes()), "path": path, "recorded_bad": true}}, a.n.stamp())
+		}
 		return errImportFail
 	}
 	head := a.head()
