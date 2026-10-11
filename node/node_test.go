@@ -64,6 +64,31 @@ func TestSingleValidatorChain(t *testing.T) {
 	}
 }
 
+// TestStuckEventFile: an event file whose writes never return holds up
+// neither the chain nor Stop (observe.md 1).
+func TestStuckEventFile(t *testing.T) {
+	key := testKey(0)
+	cj, g := testGenesis(t, key)
+	a := newTestApp(cj, g)
+	d := Deps{App: a, Authority: a, fs: fsys.NewMem(), key: key, Events: &gate{open: make(chan struct{})}}
+	n, err := New(Config{DataDir: "/data"}, d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.cons = n.Consensus()
+	if err := n.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	a.waitHead(t, 3, 20*time.Second)
+	start := time.Now()
+	if err := n.Stop(); err != nil {
+		t.Fatal(err)
+	}
+	if d := time.Since(start); d > eventsCloseWait+5*time.Second {
+		t.Fatalf("Stop took %v", d)
+	}
+}
+
 // TestRestartContinues stops a validator and starts it again on the same
 // state: it continues from the head.
 func TestRestartContinues(t *testing.T) {

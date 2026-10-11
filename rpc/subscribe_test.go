@@ -27,6 +27,7 @@ func TestEventFilter(t *testing.T) {
 		{`{"seq":5,"kind":"MSG_OUTCOME","view":{"seq":"11","round":"0"}}`, false},
 		{`{"seq":6,"kind":"ROUND_ENTER"}`, false},
 		{`{"gap":{"fromSeq":7,"toSeq":9}}`, true},
+		{`{"v":1,"type":"dropped","count":3,"from_seq":10}`, true},
 		{`not json`, false},
 	}
 	for _, c := range cases {

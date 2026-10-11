@@ -26,7 +26,9 @@ func (f *EventFilter) Check() error {
 }
 
 // Match reports whether the event record rec passes the filter. A gap
-// record (Gap) always passes. A nil filter passes everything.
+// record (Gap) and a record that is not an event (it has a "type", such
+// as the dropped record that stands for records the node's writer lost)
+// always pass. A nil filter passes everything.
 func (f *EventFilter) Match(rec json.RawMessage) bool {
 	if f == nil || len(f.Kinds) == 0 && f.FromHeight == nil && f.ToHeight == nil {
 		return true
@@ -35,11 +37,12 @@ func (f *EventFilter) Match(rec json.RawMessage) bool {
 		Kind string                `json:"kind"`
 		View *struct{ Seq string } `json:"view"`
 		Gap  *json.RawMessage      `json:"gap"`
+		Type *string               `json:"type"`
 	}
 	if json.Unmarshal(rec, &h) != nil {
 		return false
 	}
-	if h.Gap != nil {
+	if h.Gap != nil || h.Type != nil {
 		return true
 	}
 	if len(f.Kinds) > 0 {
