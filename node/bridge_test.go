@@ -102,6 +102,7 @@ func TestSnapshotMissingHealth(t *testing.T) {
 	ev := &syncBuffer{}
 	n := startNode(t, a, fsys.NewMem(), key, false, ev)
 	a.waitHead(t, 3, 20*time.Second)
+	n.flushEvents()
 	if strings.Contains(ev.String(), "snapshot_missing") {
 		t.Fatalf("a snapshot missing with an orderly application:\n%.2000s", ev.String())
 	}

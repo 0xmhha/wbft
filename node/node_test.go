@@ -64,6 +64,31 @@ func TestSingleValidatorChain(t *testing.T) {
 	}
 }
 
+// TestStuckEventFile: an event file whose writes never return holds up
+// neither the chain nor Stop (observe.md 1).
+func TestStuckEventFile(t *testing.T) {
+	key := testKey(0)
+	cj, g := testGenesis(t, key)
+	a := newTestApp(cj, g)
+	d := Deps{App: a, Authority: a, fs: fsys.NewMem(), key: key, Events: &gate{open: make(chan struct{})}}
+	n, err := New(Config{DataDir: "/data"}, d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.cons = n.Consensus()
+	if err := n.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	a.waitHead(t, 3, 20*time.Second)
+	start := time.Now()
+	if err := n.Stop(); err != nil {
+		t.Fatal(err)
+	}
+	if d := time.Since(start); d > eventsCloseWait+5*time.Second {
+		t.Fatalf("Stop took %v", d)
+	}
+}
+
 // TestRestartContinues stops a validator and starts it again on the same
 // state: it continues from the head.
 func TestRestartContinues(t *testing.T) {
@@ -326,6 +351,7 @@ func TestRPC(t *testing.T) {
 		info["version"] == "" || string(imps) != want {
 		t.Fatalf("nodeInfo %v", info)
 	}
+	n.flushEvents()
 	if s := ev.String(); !strings.Contains(s, `"kind":"NODE_START"`) || !strings.Contains(s, `"mode":"embedded"`) ||
 		!strings.Contains(s, `"improvements":`+want) {
 		t.Fatalf("NODE_START: %s", s[:min(len(s), 600)])
@@ -347,6 +373,7 @@ func TestRPC(t *testing.T) {
 		t.Fatal(err)
 	}
 	resp.Body.Close()
+	n.flushEvents()
 	if len(evOut.Result) != 1 || evOut.Result[0]["height"] != "7" || evOut.Result[0]["digestB"] != "0xbb" ||
 		evOut.Result[0]["code"] != float64(2) || !strings.Contains(ev.String(), `"kind":"EVIDENCE"`) {
 		t.Fatalf("wbft_evidence %+v", evOut.Result)
@@ -487,6 +514,7 @@ func TestRejections(t *testing.T) {
 	}
 	n.Consensus().OnImportFailed(app.ImportFailure{Number: types.HeightFromUint64(501), Hash: types.Hash{1}, Path: app.Imported,
 		Err: &app.ImportError{Step: "H5", Class: "ErrInvalidMixDigest"}})
+	n.flushEvents()
 	if s := ev.String(); !strings.Contains(s, `"kind":"IMPORT_FAIL"`) || !strings.Contains(s, `"failed_step":"H5"`) ||
 		!strings.Contains(s, `"error_class":"ErrInvalidMixDigest"`) {
 		t.Fatalf("IMPORT_FAIL not in the event stream")

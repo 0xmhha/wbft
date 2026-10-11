@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/0xmhha/wbft/app"
@@ -73,6 +74,7 @@ type Node struct {
 	wal      *wal.Log
 	journal  *journal.FileWriter // nil without a journal
 	ev       *event.Writer
+	evq      *eventQueue // the writer of ev's records
 	evid     *evidence.Store
 	rej      *rejection.Store
 	part     *participation.Recorder // nil when disabled
@@ -87,6 +89,8 @@ type Node struct {
 	cacheMisses  *metrics.Counter   // wbft_authority_cache_misses_total
 	valMetrics   *validatorMetrics  // wbft_validator_*
 	partDropped  *metrics.Counter   // wbft_participation_write_dropped_total
+	evDropped    *metrics.Counter   // wbft_events_dropped_total
+	evWriteErrs  *metrics.Counter   // wbft_events_write_errors_total
 	ring         *eventRing         // the recent event records (wbft_events)
 	r            *runner.Runner
 	pool         *mempool.TxPool
@@ -143,6 +147,9 @@ func New(cfg Config, d Deps) (*Node, error) {
 	n.cacheMisses = n.metrics.Counter("wbft_authority_cache_misses_total",
 		"Authority snapshots of a parent missing from the cache, once per parent and verification, by context.", "context")
 	n.valMetrics = newValidatorMetrics(n.metrics)
+	n.evDropped = n.metrics.Counter("wbft_events_dropped_total",
+		"Event records dropped because the event writer's queue was full; a dropped record in the stream stands for them.")
+	n.evWriteErrs = n.metrics.Counter("wbft_events_write_errors_total", "Event records the event file or the recent records failed to take.")
 	n.partDropped = n.metrics.Counter("wbft_participation_write_dropped_total",
 		"Participation inputs dropped because the recorder's queue was full, and records that could not be built or written.")
 	n.walFsync = n.metrics.Histogram("wbft_wal_fsync_seconds", "Duration of the write-ahead log's fsyncs, by method.", fsyncBuckets, "method")
@@ -298,12 +305,21 @@ func (n *Node) start(ctx context.Context) error {
 		self = n.signer.Address()
 	}
 	// The node always writes its events: to the recent records of
-	// wbft_events and, when configured, to Deps.Events.
+	// wbft_events and, when configured, to Deps.Events. One goroutine
+	// writes them from a bounded queue, so that a slow event file does not
+	// hold up the goroutine that emits (the consensus loop among them).
 	var out io.Writer = n.ring
 	if n.d.Events != nil {
 		out = io.MultiWriter(n.d.Events, n.ring)
 	}
-	ev := event.NewWriter(out, self, runID)
+	var reported atomic.Bool
+	q := newEventQueue(out, eventsQueued, self, runID, func() { n.evDropped.Inc() }, func(err error) {
+		n.evWriteErrs.Inc()
+		if !reported.Swap(true) {
+			n.log.Warn("event write failed; later failures are only counted", "err", err)
+		}
+	})
+	ev := event.NewWriter(q, self, runID)
 	ev.Observe(n.eventMetrics.Observe)
 	ev.Observe(n.valMetrics.observe)
 	if !n.cfg.Participation.Disabled {
@@ -322,7 +338,7 @@ func (n *Node) start(ctx context.Context) error {
 		ev.Observe(part.Consume)
 	}
 	n.mu.Lock() // AppEvents reads it from other goroutines
-	n.ev = ev
+	n.ev, n.evq = ev, q
 	n.mu.Unlock()
 	evid, err := evidence.Open(n.fs, filepath.Join(n.cfg.DataDir, evidenceDir), evidence.Options{Now: n.clock.Now})
 	if err != nil {
@@ -805,7 +821,23 @@ func (n *Node) close() error {
 	if n.part != nil {
 		n.part.Close()
 	}
+	// The queued event records are written before Stop returns: the
+	// application may close the event file then.
+	if n.evq != nil && !n.evq.Close(eventsCloseWait) {
+		n.log.Warn("the event file did not take the queued event records in time; they may be lost", "wait", eventsCloseWait)
+	}
 	return errors.Join(errs...)
+}
+
+// flushEvents waits until the event records emitted so far are written to
+// the event file and the recent records.
+func (n *Node) flushEvents() {
+	n.mu.Lock()
+	q := n.evq
+	n.mu.Unlock()
+	if q != nil {
+		q.flush()
+	}
 }
 
 // participation returns the participation recorder, or nil.
