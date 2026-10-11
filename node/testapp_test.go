@@ -234,12 +234,18 @@ func (a *testApp) waitHead(t *testing.T, n uint64, timeout time.Duration) {
 }
 
 // syncBuffer is a bytes.Buffer safe for concurrent writers and readers.
+// Unless text is set it holds event records, and each record written is
+// checked against the event schema; TestMain fails the run on a mismatch.
 type syncBuffer struct {
-	mu sync.Mutex
-	b  bytes.Buffer
+	mu   sync.Mutex
+	b    bytes.Buffer
+	text bool // log lines, not event records
 }
 
 func (s *syncBuffer) Write(p []byte) (int, error) {
+	if !s.text {
+		checkEvents(p)
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.b.Write(p)

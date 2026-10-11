@@ -1,6 +1,7 @@
 package sim
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -9,6 +10,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/0xmhha/wbft/codec"
@@ -16,6 +18,7 @@ import (
 	"github.com/0xmhha/wbft/consensus/runner"
 	"github.com/0xmhha/wbft/crypto/bls"
 	"github.com/0xmhha/wbft/crypto/ecdsa"
+	"github.com/0xmhha/wbft/observe/event/schema"
 	"github.com/0xmhha/wbft/observe/logcat"
 	"github.com/0xmhha/wbft/types"
 	"io"
@@ -234,7 +237,7 @@ type Output struct {
 
 // Violation is a failed property.
 type Violation struct {
-	Kind   string // agreement, double_sign, progress, header, replay, lock_lost, refinalize, start
+	Kind   string // agreement, double_sign, progress, header, replay, lock_lost, refinalize, start, event_schema
 	Node   types.Address
 	Detail string
 }
@@ -611,7 +614,34 @@ func (s *simulation) noteDecided(n *node, b *types.Block) {
 	}
 }
 
+// eventSchema is the schema the event records of every node must match.
+var eventSchema = sync.OnceValues(schema.Load)
+
+// checkEvents reports the first record of each event file that does not
+// match the event schema (observe/event/schema).
+func (s *simulation) checkEvents() {
+	sch, err := eventSchema()
+	if err != nil {
+		s.violate("event_schema", types.Address{}, "%v", err)
+		return
+	}
+	for _, n := range s.nodes {
+		for _, name := range sortedKeys(n.eventFiles) {
+			for i, line := range bytes.SplitAfter(n.eventFiles[name].Bytes(), []byte("\n")) {
+				if len(line) == 0 {
+					continue
+				}
+				if err := sch.Validate(line); err != nil {
+					s.violate("event_schema", n.v.address, "%s line %d: %v", name, i+1, err)
+					break
+				}
+			}
+		}
+	}
+}
+
 func (s *simulation) result() *Result {
+	s.checkEvents()
 	res := &Result{Rounds: s.rounds, Violations: s.viol, Crashes: s.crashes, Replays: s.replays, Refinalize: s.refinal, Refusals: s.refused,
 		LockChecks: s.locks, Damaged: s.damaged, Evidence: s.evidence, Journals: map[types.Address]map[string][]byte{}, Events: map[string][]byte{}, SimTime: s.l.now}
 	for i := uint64(0); ; i++ {
