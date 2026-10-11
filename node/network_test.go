@@ -139,6 +139,7 @@ func TestFourValidators(t *testing.T) {
 	// NEW_HEAD carries the round and the sealers of the block's seals and
 	// of the parent's seals in its extra (observe.md 2.1).
 	var head2 map[string]any
+	nodes[0].flushEvents()
 	for _, rec := range nodes[0].ring.since(0, eventsKept) {
 		var e map[string]any
 		if json.Unmarshal(rec, &e) == nil && e["kind"] == "NEW_HEAD" && e["number"] == "2" {

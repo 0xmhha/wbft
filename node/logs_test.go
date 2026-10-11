@@ -36,6 +36,7 @@ func TestLogSettings(t *testing.T) {
 		t.Fatal(err)
 	}
 	a.waitHead(t, 2, 20*time.Second)
+	n.flushEvents()
 	if !strings.Contains(ev.String(), `"kind":"LOG_CONFIG","level":"off","modules":{"consensus.round":"trace"},"source":"config","unmapped":["p2p/server.go=5"]`) {
 		t.Fatalf("no LOG_CONFIG event:\n%.2000s", ev.String())
 	}
@@ -54,6 +55,7 @@ func TestLogSettings(t *testing.T) {
 	if _, err := n.SetLogLevels(logcat.Settings{Base: logcat.LevelInfo}, "rpc"); err != nil {
 		t.Fatal(err)
 	}
+	n.flushEvents()
 	if got := n.LogLevels(); got.Source != "rpc" || got.Base != logcat.LevelInfo || !strings.Contains(ev.String(), `"source":"rpc"`) {
 		t.Fatalf("after the rpc change: %+v", got)
 	}

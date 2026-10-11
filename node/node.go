@@ -829,6 +829,17 @@ func (n *Node) close() error {
 	return errors.Join(errs...)
 }
 
+// flushEvents waits until the event records emitted so far are written to
+// the event file and the recent records.
+func (n *Node) flushEvents() {
+	n.mu.Lock()
+	q := n.evq
+	n.mu.Unlock()
+	if q != nil {
+		q.flush()
+	}
+}
+
 // participation returns the participation recorder, or nil.
 func (n *Node) participation() *participation.Recorder {
 	n.mu.Lock()

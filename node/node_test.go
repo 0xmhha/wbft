@@ -351,6 +351,7 @@ func TestRPC(t *testing.T) {
 		info["version"] == "" || string(imps) != want {
 		t.Fatalf("nodeInfo %v", info)
 	}
+	n.flushEvents()
 	if s := ev.String(); !strings.Contains(s, `"kind":"NODE_START"`) || !strings.Contains(s, `"mode":"embedded"`) ||
 		!strings.Contains(s, `"improvements":`+want) {
 		t.Fatalf("NODE_START: %s", s[:min(len(s), 600)])
@@ -372,6 +373,7 @@ func TestRPC(t *testing.T) {
 		t.Fatal(err)
 	}
 	resp.Body.Close()
+	n.flushEvents()
 	if len(evOut.Result) != 1 || evOut.Result[0]["height"] != "7" || evOut.Result[0]["digestB"] != "0xbb" ||
 		evOut.Result[0]["code"] != float64(2) || !strings.Contains(ev.String(), `"kind":"EVIDENCE"`) {
 		t.Fatalf("wbft_evidence %+v", evOut.Result)
@@ -512,6 +514,7 @@ func TestRejections(t *testing.T) {
 	}
 	n.Consensus().OnImportFailed(app.ImportFailure{Number: types.HeightFromUint64(501), Hash: types.Hash{1}, Path: app.Imported,
 		Err: &app.ImportError{Step: "H5", Class: "ErrInvalidMixDigest"}})
+	n.flushEvents()
 	if s := ev.String(); !strings.Contains(s, `"kind":"IMPORT_FAIL"`) || !strings.Contains(s, `"failed_step":"H5"`) ||
 		!strings.Contains(s, `"error_class":"ErrInvalidMixDigest"`) {
 		t.Fatalf("IMPORT_FAIL not in the event stream")
