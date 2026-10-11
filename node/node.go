@@ -489,7 +489,7 @@ func (n *Node) openJournal(core consensus.Options, runID string) (*journal.FileW
 	if n.cfg.Journal.MaxBytes != 0 {
 		opt.MaxBytes = n.cfg.Journal.MaxBytes
 	}
-	opt.Observer = newJournalMetrics(n.metrics)
+	opt.Observer = newJournalMetrics(n.metrics, n.log, n.clock.Now)
 	n.mu.Lock()
 	info := n.info
 	n.mu.Unlock()
@@ -545,17 +545,51 @@ func (m *mempoolMetrics) Rechecked(d time.Duration) { m.recheck.Observe(d.Second
 func (m *mempoolMetrics) InboundDropped(n int)      { m.inboundDropped.Add(float64(n)) }
 
 // journalMetrics are the journal metrics of observe.md 11.5 but
-// wbft_journal_bytes, which is read when the registry is gathered.
+// wbft_journal_bytes, which is read when the registry is gathered. It also
+// warns when the size limit leaves less than JournalMinRetention of
+// records, at most once per journalWarnEvery.
 type journalMetrics struct {
 	records, dropped, truncated, pruned *metrics.Counter
+	retained                            *metrics.Gauge
+	log                                 *slog.Logger
+	now                                 func() time.Time
+	mu                                  sync.Mutex
+	warned                              time.Time
 }
 
-func newJournalMetrics(r *metrics.Registry) *journalMetrics {
+// JournalMinRetention is the span of records below which the journal's size
+// limit is reported as too small: a fault noticed the next day should
+// still be in the journal (observe.md 11.5).
+const JournalMinRetention = 24 * time.Hour
+
+const journalWarnEvery = time.Hour
+
+func newJournalMetrics(r *metrics.Registry, log *slog.Logger, now func() time.Time) *journalMetrics {
 	return &journalMetrics{
 		records:   r.Counter("wbft_journal_records_total", "Records written to the message journal, by kind (not counting the header records each segment repeats).", "kind"),
 		dropped:   r.Counter("wbft_journal_dropped_total", "Journal records dropped because the writer's queue was full."),
 		truncated: r.Counter("wbft_journal_truncated_total", "Received frames journaled without their payload (too large to keep)."),
 		pruned:    r.Counter("wbft_journal_pruned_segments_total", "Journal segments removed by the retention rules."),
+		retained:  r.Gauge("wbft_journal_retained_seconds", "Wall time span of the journal's closed segments after the size limit last removed segments."),
+		log:       log, now: now,
+	}
+}
+
+func (m *journalMetrics) Retained(span time.Duration) {
+	m.retained.Set(span.Seconds())
+	if span >= JournalMinRetention {
+		return
+	}
+	m.mu.Lock()
+	t := m.now()
+	warn := m.warned.IsZero() || t.Sub(m.warned) >= journalWarnEvery
+	if warn {
+		m.warned = t
+	}
+	m.mu.Unlock()
+	if warn {
+		m.log.Warn("the journal's size limit keeps less than a day of records; raise max_bytes or keep only first copies",
+			"retained", span.Round(time.Second).String(), "min", JournalMinRetention.String())
 	}
 }
 

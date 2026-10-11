@@ -64,6 +64,10 @@ type Observer interface {
 	Truncated()
 	// Pruned reports n segments removed by the retention rules.
 	Pruned(n int)
+	// Retained reports, after the size limit removed segments, the wall
+	// time span of the records the closed segments still hold: what an
+	// operator can still replay (observe.md 11.5).
+	Retained(span time.Duration)
 }
 
 // DefaultEnabled is the default of the node setting that turns the journal
@@ -449,6 +453,9 @@ func (w *FileWriter) prune() {
 	res, _ := Prune(w.fs, w.opt.Dir, *w.head, w.opt, w.seg)
 	if w.opt.Observer != nil && len(res.Removed) > 0 {
 		w.opt.Observer.Pruned(len(res.Removed))
+		if res.BySize > 0 && res.Span > 0 {
+			w.opt.Observer.Retained(res.Span)
+		}
 	}
 }
 
@@ -469,6 +476,12 @@ func (w *FileWriter) Bytes() (int64, error) {
 type PruneResult struct {
 	Removed []string
 	Bytes   int64 // bytes of the remaining segments
+	// BySize is the number of segments removed by the size limit.
+	BySize int
+	// Span is the wall time span from the first record of the oldest
+	// remaining closed segment to the last record of the newest one, 0
+	// when no remaining closed segment has an index file.
+	Span time.Duration
 }
 
 // Prune removes closed segments of the journal in dir: first those whose
@@ -522,14 +535,32 @@ func Prune(fs fsys.FS, dir string, head types.Height, opt Options, current uint6
 		kept = append(kept, s)
 	}
 	if opt.MaxBytes > 0 {
-		for _, s := range kept {
+		for len(kept) > 0 {
+			s := kept[0]
 			if total <= opt.MaxBytes || s.Index >= current {
 				break
 			}
 			if err := remove(s); err != nil {
 				return res, err
 			}
+			res.BySize++
+			kept = kept[1:]
 		}
+	}
+	var first, last int64
+	for _, s := range kept {
+		if s.Index >= current {
+			break
+		}
+		if ix, ok := readIndex(fs, dir, s.Name); ok && ix.FirstWall > 0 {
+			if first == 0 || ix.FirstWall < first {
+				first = ix.FirstWall
+			}
+			last = max(last, ix.LastWall)
+		}
+	}
+	if first > 0 && last > first {
+		res.Span = time.Duration(last - first)
 	}
 	res.Bytes = total
 	return res, nil
