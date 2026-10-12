@@ -636,6 +636,9 @@ func (n *Node) logConfig(a logcat.Applied) {
 	// base_level, not level: a JSON line's own level is under "level".
 	r.AddAttrs(slog.String("module", le.Module.Name()), slog.String("base_level", a.Base.String()), slog.Any("modules", modules),
 		slog.String("source", a.Source))
+	if n.chainCfg != nil {
+		r.AddAttrs(slog.Any("rules_digest", n.chainCfg.RulesDigest()), slog.Any("rule_activations", n.chainCfg.RuleActivations()))
+	}
 	if len(n.cfg.LogUnmapped) > 0 {
 		r.AddAttrs(slog.Any("unmapped", n.cfg.LogUnmapped))
 	}
@@ -783,7 +786,13 @@ func (n *Node) improvements() []rpc.Improvement {
 	}
 	n.mu.Lock()
 	app := n.info.AppImprovements
+	cfg := n.chainCfg
 	n.mu.Unlock()
+	if cfg != nil {
+		if head := n.d.App.Head(); head != nil && cfg.Rules(types.RejectNumberJump, head.Number.AddUint64(1)) {
+			out = append(out, rpc.Improvement{Name: string(types.RejectNumberJump), Source: "chain"})
+		}
+	}
 	for _, name := range app {
 		out = append(out, rpc.Improvement{Name: name, Source: "app"})
 	}
@@ -799,6 +808,10 @@ func (n *Node) startFields(act runner.HandshakeAction, recov wal.Recovery) map[s
 		f["sign_floor"] = map[string]any{"height": n.floor.String(), "status": n.floorState}
 	}
 	f["validator"] = n.signer != nil
+	if n.chainCfg != nil {
+		f["rules_digest"] = n.chainCfg.RulesDigest()
+		f["rule_activations"] = n.chainCfg.RuleActivations()
+	}
 	return f
 }
 

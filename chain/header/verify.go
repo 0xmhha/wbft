@@ -46,6 +46,9 @@ import (
 //
 // Spec: WBFT-HDR-070, WBFT-VAL-010
 func ValidatorsForVerifying(env *Env, h *types.Header, parents []*types.Header) (v, vp *validator.Set, err error) {
+	if err := verifyNumber(env, h, parents); err != nil {
+		return nil, nil, err
+	}
 	v, err = validator.ValidatorsAt(env.Chain, env.Config, h.Number, h.ParentHash, parents)
 	if err != nil {
 		return nil, nil, stepErr("V0a", "ErrUnknownAncestor", ErrUnknownAncestor)

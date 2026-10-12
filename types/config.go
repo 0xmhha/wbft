@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"math/big"
-	"sort"
 	"strings"
 
 	"github.com/0xmhha/wbft/internal/refsort"
@@ -77,6 +76,8 @@ type Config struct {
 	transitions []Transition
 	Init        GenesisInit
 	ChainID     *big.Int
+	rules       map[RuleName]Height
+	rulesDigest Hash
 }
 
 // NewConfig builds the configuration a node derives from anzeon.wbft and the
@@ -348,7 +349,17 @@ func ParseChainConfig(raw []byte) (*Config, error) {
 	for i, t := range cc.Transitions {
 		ts[i] = Transition{Block: t.Block, WBFT: t.WBFTParams}
 	}
-	return NewConfig(*cc.Anzeon.WBFT, ts, init, cc.ChainID), nil
+	c := NewConfig(*cc.Anzeon.WBFT, ts, init, cc.ChainID)
+	rules, err := parseConsensusRules(raw)
+	if err != nil {
+		return nil, err
+	}
+	c.rules = rules
+	c.rulesDigest, err = chainRulesDigest(raw)
+	if err != nil {
+		return nil, &ErrConfig{Field: "wbftRules", Reason: err.Error()}
+	}
+	return c, nil
 }
 
 // decodeHex0x decodes a 0x-prefixed hex string, as hexutil.Decode does.
@@ -364,34 +375,8 @@ func decodeHex0x(s string) ([]byte, error) {
 // others.
 var ConsensusRulesGroups = []string{"consensusRules", "featureRules"}
 
-// CheckConsensusRules refuses a key in a consensus rules group of a genesis
-// chain configuration. Part 1 implements no chain-level flag, so every key
-// is unknown, and a node must not start with a flag it would ignore: it
-// would judge blocks differently from the nodes that enable it.
+// CheckConsensusRules refuses unknown rules or invalid activation heights.
 func CheckConsensusRules(raw []byte) error {
-	var cc struct {
-		Rules map[string]json.RawMessage `json:"wbftRules"`
-	}
-	if err := json.Unmarshal(raw, &cc); err != nil {
-		return &ErrConfig{Field: "wbftRules", Reason: err.Error()}
-	}
-	for _, g := range ConsensusRulesGroups {
-		group, ok := cc.Rules[g]
-		if !ok || strings.TrimSpace(string(group)) == "null" {
-			continue
-		}
-		var keys map[string]json.RawMessage
-		if err := json.Unmarshal(group, &keys); err != nil {
-			return &ErrConfig{Field: "wbftRules." + g, Reason: err.Error()}
-		}
-		names := make([]string, 0, len(keys))
-		for k := range keys { //wbft:unordered sorted below
-			names = append(names, k)
-		}
-		sort.Strings(names)
-		if len(names) > 0 {
-			return &ErrConfig{Field: "wbftRules." + g + "." + names[0], Reason: "unknown rule"}
-		}
-	}
-	return nil
+	_, err := parseConsensusRules(raw)
+	return err
 }
