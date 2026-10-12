@@ -112,6 +112,9 @@ func (b backend) NodeInfo() rpc.NodeInfo {
 		info.BLSPublicKey = "0x" + hex.EncodeToString(n.signer.BLSPublicKey())
 	}
 	info.ChainID, info.GenesisHash = n.info.ChainID, n.info.GenesisHash
+	if n.chainCfg != nil {
+		info.RulesDigest, info.RuleActivations = n.chainCfg.RulesDigest(), n.chainCfg.RuleActivations()
+	}
 	n.mu.Unlock()
 	if h := n.d.App.Head(); h != nil {
 		info.Head = rpc.HeadInfo{Number: h.Number.String(), Hash: codec.BlockHash(h)}

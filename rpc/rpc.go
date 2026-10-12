@@ -67,7 +67,9 @@ type NodeInfo struct {
 	LogProfile string `json:"logProfile"`
 	// Improvements are the enabled improvements, each with where it was
 	// turned on.
-	Improvements []Improvement `json:"improvements"`
+	Improvements    []Improvement             `json:"improvements"`
+	RulesDigest     types.Hash                `json:"rulesDigest"`
+	RuleActivations map[types.RuleName]string `json:"ruleActivations"`
 }
 
 // Improvement is an enabled improvement: its name and where it was turned

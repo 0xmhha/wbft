@@ -466,3 +466,24 @@ requirement that lost all its vectors is a coverage loss and needs a reason.
 or (at your option) any later version (SPDX: `LGPL-3.0-or-later`,
 [LICENSE](LICENSE)). The LGPL supplements the GNU General Public License
 v3.0 ([COPYING](COPYING)).
+
+## Chain rules
+
+Chain-level rules come only from the genesis chain configuration's
+`wbftRules.consensusRules`. The supported key is `rejectNumberJump`; a
+missing or null value disables it, and a non-negative JSON integer sets
+its activation height. Node profiles and local options do not override
+these values. Unknown consensus or feature rule keys refuse startup.
+
+`types.Config.Rules` reads activation using full heights. Header rules use
+`parent.Number + 1`, including during proposal and batch verification.
+`NODE_START`, configuration logs and `wbft_nodeInfo` expose the configured
+activation heights and the rules digest.
+
+The digest is Keccak-256 of the canonical JSON object containing
+`anzeon.wbft`, `transitions` and every `wbftRules` group. Object keys are
+sorted, array order is preserved, missing selected sections are null,
+and numbers use an exact decimal coefficient without trailing zeroes
+plus a base-ten exponent (omitted when zero). No floating-point conversion
+is used; `100`, `100.0` and `1e2` have the same digest representation.
+Activation values themselves must be integer tokens, not exponent notation.

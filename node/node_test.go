@@ -224,7 +224,7 @@ func TestStartChecks(t *testing.T) {
 			if err := json.Unmarshal(r.ChainConfigJSON, &m); err != nil {
 				t.Fatal(err)
 			}
-			m["wbftRules"] = map[string]any{"consensusRules": map[string]any{"rejectNumberJump": 10}}
+			m["wbftRules"] = map[string]any{"consensusRules": map[string]any{"unknownRule": 10}}
 			raw, err := json.Marshal(m)
 			if err != nil {
 				t.Fatal(err)

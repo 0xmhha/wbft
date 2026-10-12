@@ -42,6 +42,7 @@ var (
 	ErrParentRootEmpty     = errors.New("WBFT: parent state root is empty")
 	ErrSnapshotMissing     = errors.New("authority snapshot of the parent is missing")
 	ErrInvalidProposal     = errors.New("invalid proposal")
+	ErrInvalidNumber       = errors.New("invalid header number")
 	ErrBlacklistedHash     = errors.New("blacklisted hash")
 	ErrUnknownParentHash   = errors.New("unknown parent hash")
 	ErrUnsupportedOption   = errors.New("header: option not available")
