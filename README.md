@@ -542,6 +542,33 @@ Protocol steps and structured step errors include the source `writer_run`,
 `engine_run` and `step`; callers do not need to parse diagnostic text.
 
 
+### Recorded application answer context
+
+The default `-answer-scope step` preserves closed replay: application responses
+are consumed once by call kind and argument key from their original step.
+Explicit `-answer-scope context` permits a missing local answer to be found in
+other recorded steps of the same writer, engine, head number/hash and validator
+context. Local original responses take precedence. Cross-step lookup refuses
+conflicting original responses, including a conflict whose other response has
+already been consumed. Absent answers remain `env_exhausted`; conflicts are
+`env_ambiguous` and source/context changes are `env_source_mismatch`.
+
+`stepdriver.NewAnswerPool` reads the retained source separately; `RunTrace`
+validates the recorded configuration and step response fingerprint. Each replay
+gets a new consumption session. Successful calls retain their original writer,
+engine, step and one-based call index. The pool is bounded to one million source
+records, 100000 steps, 100000 application answers and 16 MiB encoded responses.
+Journal sequence gaps, duplicate coordinates and unsupported response kinds are
+refused. Head lookups verify both the full number and hash, including fallbacks.
+
+This option permits counterfactual application lookup; it does not reconstruct
+unrecorded application execution or the reactions of other nodes. CLI returns 3
+and protocol results mark the mode counterfactual even if all outputs match.
+Hello advertises `context_answers_v1`; replay requests use `answer_scope`, steps
+carry `context_answers` and `answer_sources`, and completion echoes the scope.
+Input-change scheduling and the validity boundary of an open-loop experiment
+must still be handled by its caller.
+
 ### Bounded replay warmup
 
 Closed trace replay still requires a recorded engine start. Callers can explicitly
