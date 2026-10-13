@@ -27,6 +27,7 @@ import (
 	"bufio"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -35,6 +36,7 @@ import (
 	"github.com/0xmhha/wbft/conformance/sim"
 	"github.com/0xmhha/wbft/conformance/stepdriver"
 	"github.com/0xmhha/wbft/consensus/inputlog"
+	"github.com/0xmhha/wbft/internal/buildmeta"
 	"github.com/0xmhha/wbft/internal/fsys"
 	"github.com/0xmhha/wbft/observe/journal"
 )
@@ -152,7 +154,7 @@ func serve(in io.Reader, out io.Writer) error {
 		}
 		switch req.Type {
 		case "hello":
-			if err := send(map[string]any{"type": "hello", "protocol": Protocol, "impl": "wbft"}); err != nil {
+			if err := send(map[string]any{"type": "hello", "protocol": Protocol, "impl": "wbft", "version": buildmeta.Version()}); err != nil {
 				return err
 			}
 		case "replay":
@@ -172,7 +174,11 @@ func serve(in io.Reader, out io.Writer) error {
 				return send(m)
 			})
 			if err != nil {
-				if err := send(map[string]any{"type": "error", "id": req.ID, "error": err.Error()}); err != nil {
+				code := "replay_error"
+				if errors.Is(err, stepdriver.ErrTraceGap) || errors.Is(err, stepdriver.ErrTraceNoSegment) {
+					code = "input_gap"
+				}
+				if err := send(map[string]any{"type": "error", "id": req.ID, "code": code, "error": err.Error()}); err != nil {
 					return err
 				}
 				continue

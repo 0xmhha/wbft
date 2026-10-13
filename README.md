@@ -487,3 +487,14 @@ and numbers use an exact decimal coefficient without trailing zeroes
 plus a base-ten exponent (omitted when zero). No floating-point conversion
 is used; `100`, `100.0` and `1e2` have the same digest representation.
 Activation values themselves must be integer tokens, not exponent notation.
+
+Replay protocol `hello` includes the embedded WBFT module version. Simulator
+journal segments use the same version resolver. A locally replaced dependency
+without version metadata remains `unknown`, and a modified main module carries
+a `-modified` suffix. These labels do not prove a matching clean core revision.
+
+Trace replay refuses journal gap records instead of claiming matches across
+lost inputs. Protocol errors include a bounded code: `input_gap` for missing
+segment/step continuity or explicit journal loss, and `replay_error` otherwise.
+Readable steps emitted before an error are only a prefix. Independent payload
+completeness checks are still required when step inputs contain inline bytes.
