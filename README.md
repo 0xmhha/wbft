@@ -566,8 +566,7 @@ unrecorded application execution or the reactions of other nodes. CLI returns 3
 and protocol results mark the mode counterfactual even if all outputs match.
 Hello advertises `context_answers_v1`; replay requests use `answer_scope`, steps
 carry `context_answers` and `answer_sources`, and completion echoes the scope.
-Input-change scheduling and the validity boundary of an open-loop experiment
-must still be handled by its caller.
+The validity boundary of an open-loop experiment must still be handled by its caller.
 
 ### Bounded replay warmup
 
@@ -595,3 +594,36 @@ check it before sending `warmup_from_height` and `compare_from_height`.
 Protocol steps expose `approximate` and `warmup`, and completion reports separate
 `approximate_steps` and `warmup_steps` totals. Warmup failures use
 `warmup_unavailable` with structured source coordinates when available.
+
+### External input schedule experiments
+
+`TraceOptions.Schedule` and `wbft-replay -input-schedule FILE` apply one explicit
+`drop`, `delay`, or `swap` to a recorded external input identified by writer,
+engine and original step. Delay places that input after `other_step`; swap
+exchanges two external inputs only when recorded wire stamps prove that both
+were available before the earlier position. Inline transport timestamps with an
+unknown journal clock origin cannot prove that boundary. Internal inputs and
+lifecycle boundaries cannot be moved by these operations.
+
+Source continuity is validated before altered execution. Original step and
+journal sequence coordinates remain distinct from execution order and slot
+coordinates. Source bytes and receipt timestamps are not rewritten. A drop
+compares an actual empty output list at its original position. Reserved
+self-deliveries, replays, requests and timer inputs must match outputs actually
+produced by prior replayed handlers; unavailable reservations are retained as
+empty positions with `reservation_unavailable` after the change. They are not
+implicitly executed. Unprocessed newly reserved events remain pending at the
+end of the finite input tape.
+
+Experiments require explicit context application answers and a complete recorded
+start; missing application responses remain failures. Moved inputs read the
+recorded execution slot's head and actual validator context, rather than reusing
+an old source-step head. No signing, sending, application execution, timer-length
+change, or automatic reaction of other nodes is performed here. Changed timer
+policies and open-loop validity boundaries require the caller's recorded evidence
+and simulator scheduling integration. CLI returns 3 for a completed experiment
+even when every output matches. Protocol hello advertises `input_schedule_v1`,
+requests use `input_schedule`, steps retain `scheduled_input` source/slot fields
+and `suppression_reason`, and completion echoes the experiment with
+`counterfactual: true`. Scheduled source buffering is limited to one million
+records, 100000 steps and 256 MiB encoded step inputs and responses.

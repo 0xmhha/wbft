@@ -33,6 +33,10 @@ type JournalReader interface {
 
 // TraceOptions configure RunTrace.
 type TraceOptions struct {
+	// Schedule explicitly enables an open-loop external-input experiment.
+	// Source continuity is checked before any altered input is executed.
+	Schedule *TraceSchedule
+
 	// AnswerScope context explicitly enables cross-step recorded application answers.
 	// The caller supplies an AnswerPool built from the same retained source.
 	AnswerScope string
@@ -63,6 +67,9 @@ type TraceWarmup struct {
 
 // StepResult is one replayed core Step.
 type StepResult struct {
+	Scheduled         *TraceInputPosition
+	SuppressionReason string
+
 	ContextAnswers bool
 	AnswerSources  []AnswerSource
 	// Approximate remains true until an actual recorded start resets the core.
@@ -132,6 +139,21 @@ func RunTrace(j JournalReader, opts TraceOptions, yield func(StepResult) error) 
 	if opts.Warmup != nil && (opts.Warmup.FromHeight == 0 || opts.Warmup.CompareFromHeight <= opts.Warmup.FromHeight || opts.Warmup.CompareFromHeight-opts.Warmup.FromHeight > 10000) {
 		return ErrTraceWarmupUnavailable
 	}
+	var schedule *scheduledJournal
+	if opts.Schedule != nil {
+		if opts.AnswerScope != "context" || opts.OmitMissingCaptured || opts.Warmup != nil {
+			return ErrTraceSchedule
+		}
+		var err error
+		schedule, err = newScheduledJournal(j, *opts.Schedule)
+		if err != nil {
+			return err
+		}
+		j = schedule
+	}
+	ledger := &reservationLedger{}
+	ledger.reset()
+	changed := false
 	var cfg *types.Config
 	var copts consensus.Options
 	var core *consensus.State
@@ -183,20 +205,35 @@ func RunTrace(j JournalReader, opts TraceOptions, yield func(StepResult) error) 
 			// A readable step prefix cannot prove reproduction across lost inputs.
 			return fmt.Errorf("%w: journal dropped %d records", ErrTraceGap, b.Dropped)
 		case *journal.StepRec:
+			original, slot := b, b
+			var position *TraceInputPosition
+			if schedule != nil {
+				entry, ok := schedule.entries[b]
+				if !ok {
+					return ErrTraceSchedule
+				}
+				original, slot = entry.original, entry.slot
+				p := entry.position
+				position = &p
+				if p.Removed || original.Step != slot.Step {
+					changed = true
+				}
+			}
 			if cfg == nil {
 				return ErrTraceNoSegment
 			}
 			if answers != nil {
-				if _, err := answers.source(writerRun, b); err != nil {
-					return &TraceError{Approximate: approximate, WriterRun: writerRun, EngineRun: b.EngineRun, Step: b.Step, Err: err}
+				if _, err := answers.source(writerRun, original); err != nil {
+					return &TraceError{Approximate: approximate, WriterRun: writerRun, EngineRun: original.EngineRun, Step: original.Step, Err: err}
 				}
 			}
 			if b.Step == 0 {
-				return &TraceError{Approximate: approximate, WriterRun: writerRun, EngineRun: b.EngineRun, Step: b.Step, Err: ErrTraceGap}
+				return &TraceError{Approximate: approximate, WriterRun: writerRun, EngineRun: original.EngineRun, Step: original.Step, Err: ErrTraceGap}
 			}
 			if b.InputKind == inputlog.KindStart {
 				approximate = false
 				core = consensus.NewState(copts)
+				ledger.reset()
 				everStarted = true
 				var g [3]uint64
 				copy(g[:], b.TimerGens)
@@ -207,17 +244,17 @@ func RunTrace(j JournalReader, opts TraceOptions, yield func(StepResult) error) 
 				if opts.Warmup != nil {
 					active, err := warmupHeight(b)
 					if err != nil {
-						return &TraceError{WriterRun: writerRun, EngineRun: b.EngineRun, Step: b.Step, Err: err}
+						return &TraceError{WriterRun: writerRun, EngineRun: original.EngineRun, Step: original.Step, Err: err}
 					}
 					if active < opts.Warmup.FromHeight {
 						continue
 					}
 					if active != opts.Warmup.FromHeight {
-						return &TraceError{WriterRun: writerRun, EngineRun: b.EngineRun, Step: b.Step, Err: ErrTraceWarmupUnavailable}
+						return &TraceError{WriterRun: writerRun, EngineRun: original.EngineRun, Step: original.Step, Err: ErrTraceWarmupUnavailable}
 					}
 					core, err = bootstrapWarmup(copts, cfg, opts.Blocks, b)
 					if err != nil {
-						return &TraceError{WriterRun: writerRun, EngineRun: b.EngineRun, Step: b.Step, Err: err}
+						return &TraceError{WriterRun: writerRun, EngineRun: original.EngineRun, Step: original.Step, Err: err}
 					}
 					run, last = b.EngineRun, b.Step-1
 					approximate = true
@@ -229,7 +266,7 @@ func RunTrace(j JournalReader, opts TraceOptions, yield func(StepResult) error) 
 				}
 			}
 			if b.EngineRun != run || b.Step != last+1 {
-				return &TraceError{Approximate: approximate, WriterRun: writerRun, EngineRun: b.EngineRun, Step: b.Step, Err: fmt.Errorf("%w: after engine run %d step %d", ErrTraceGap, run, last)}
+				return &TraceError{Approximate: approximate, WriterRun: writerRun, EngineRun: original.EngineRun, Step: original.Step, Err: fmt.Errorf("%w: after engine run %d step %d", ErrTraceGap, run, last)}
 			}
 			last = b.Step
 			var captured *consensus.Message
@@ -238,7 +275,7 @@ func RunTrace(j JournalReader, opts TraceOptions, yield func(StepResult) error) 
 				captured, err = resolveCaptured(j, writerRun, b)
 				if err != nil {
 					if !opts.OmitMissingCaptured || !errors.Is(err, ErrTraceMissingInput) {
-						return &TraceError{Approximate: approximate, WriterRun: writerRun, EngineRun: b.EngineRun, Step: b.Step, Err: err}
+						return &TraceError{Approximate: approximate, WriterRun: writerRun, EngineRun: original.EngineRun, Step: original.Step, Err: err}
 					}
 					d, e := inputlog.OutDigest(nil)
 					if e != nil {
@@ -256,18 +293,51 @@ func RunTrace(j JournalReader, opts TraceOptions, yield func(StepResult) error) 
 					continue
 				}
 			}
-			res, err := replayStep(core, cfg, opts.Blocks, b, captured, writerRun, answers)
+			var res StepResult
+			var err error
+			if schedule != nil {
+				in, e := decodeTraceInput(original, captured)
+				if e != nil {
+					return &TraceError{WriterRun: writerRun, EngineRun: original.EngineRun, Step: original.Step, Err: e}
+				}
+				reason := ""
+				if position.Removed {
+					reason = "requested_drop"
+				} else {
+					allowed, e := ledger.allowed(in, original.Via, copts.Self)
+					if e != nil {
+						return e
+					}
+					if !allowed {
+						if !changed {
+							return &TraceError{WriterRun: writerRun, EngineRun: original.EngineRun, Step: original.Step, Err: ErrTraceScheduleReservation}
+						}
+						reason = "reservation_unavailable"
+					}
+				}
+				if reason != "" {
+					res, err = scheduledEmpty(core, original, answers != nil, reason)
+				} else {
+					res, err = replayStepExecution(core, cfg, opts.Blocks, original, captured, writerRun, answers, slot)
+				}
+				if err == nil {
+					err = ledger.produced(res.Outputs)
+				}
+				res.Scheduled = position
+			} else {
+				res, err = replayStep(core, cfg, opts.Blocks, b, captured, writerRun, answers)
+			}
 			if err != nil {
-				return &TraceError{Approximate: approximate, WriterRun: writerRun, EngineRun: b.EngineRun, Step: b.Step, Err: err}
+				return &TraceError{Approximate: approximate, WriterRun: writerRun, EngineRun: original.EngineRun, Step: original.Step, Err: err}
 			}
 			res.WriterRun = writerRun
-			if err = markWarmup(&res, b, opts.Warmup, approximate); err != nil {
+			if err = markWarmup(&res, original, opts.Warmup, approximate); err != nil {
 				return err
 			}
 			if opts.WithVars {
 				res.Vars = core.Vars()
 			}
-			if b.Step < opts.FromStep || opts.ToStep != 0 && b.Step > opts.ToStep {
+			if original.Step < opts.FromStep || opts.ToStep != 0 && original.Step > opts.ToStep {
 				continue
 			}
 			if err := yield(res); err != nil {
@@ -279,6 +349,9 @@ func RunTrace(j JournalReader, opts TraceOptions, yield func(StepResult) error) 
 
 // replayStep feeds one recorded step to core.
 func replayStep(core *consensus.State, cfg *types.Config, blocks BlockSource, b *journal.StepRec, captured *consensus.Message, writer string, session *answerSession) (StepResult, error) {
+	return replayStepExecution(core, cfg, blocks, b, captured, writer, session, nil)
+}
+func replayStepExecution(core *consensus.State, cfg *types.Config, blocks BlockSource, b *journal.StepRec, captured *consensus.Message, writer string, session *answerSession, execution *journal.StepRec) (StepResult, error) {
 	in, err := inputlog.Decode(b.InputKind, b.Input, func(uint64) ([]byte, error) {
 		if captured == nil {
 			return nil, ErrTraceMissingInput
@@ -300,8 +373,22 @@ func replayStep(core *consensus.State, cfg *types.Config, blocks BlockSource, b 
 			return StepResult{}, ErrTraceEnvSource
 		}
 		env.head = nh.Header
-	} else if env.head, err = headOf(blocks, b.HeadNumber, b.HeadHash); err != nil {
-		return StepResult{}, err
+	} else {
+		context := b
+		if execution != nil {
+			context = execution
+		}
+		env.head, err = headOf(blocks, context.HeadNumber, context.HeadHash)
+		if err != nil {
+			return StepResult{}, err
+		}
+	}
+	if execution != nil && session != nil {
+		current := answerContext{writer: writer, engine: b.EngineRun, head: env.head.Number.String(), hash: codec.BlockHash(env.head), valset: consensus.ValsetDigest(core.Snapshot().Validators)}
+		if current != env.source.context {
+			env.source.context = current
+			env.source.entries = nil
+		}
 	}
 	for _, e := range b.Env {
 		c, err := inputlog.DecodeEnv(e)

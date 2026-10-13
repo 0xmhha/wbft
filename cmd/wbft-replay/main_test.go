@@ -14,6 +14,7 @@ import (
 
 	"github.com/0xmhha/wbft/conformance/sim"
 	"github.com/0xmhha/wbft/conformance/stepdriver"
+	"github.com/0xmhha/wbft/consensus/inputlog"
 	"github.com/0xmhha/wbft/crypto/keccak"
 	"github.com/0xmhha/wbft/observe/journal"
 )
@@ -160,5 +161,64 @@ func TestContextAnswerProtocolAndCLIKeepCounterfactualStatus(t *testing.T) {
 	}
 	if !done || sourceCalls == 0 || !refused {
 		t.Fatal(done, sourceCalls, refused)
+	}
+}
+
+func TestInputScheduleProtocolMarksOriginalCoordinatesAndCounterfactual(t *testing.T) {
+	jd, chain := export(t)
+	records, err := journal.ReadAll(nil, jd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writer := ""
+	var target *journal.StepRec
+	for _, r := range records {
+		if seg, ok := r.Body.(*journal.SegmentRec); ok {
+			writer = seg.Run
+		}
+		if b, ok := r.Body.(*journal.StepRec); ok && b.InputKind == inputlog.KindCapturedMessage {
+			target = b
+			break
+		}
+	}
+	if target == nil {
+		t.Fatal("no captured input")
+	}
+	schedule := &stepdriver.TraceSchedule{Action: "drop", WriterRun: writer, EngineRun: target.EngineRun, Step: target.Step}
+	request, _ := json.Marshal(map[string]any{"type": "replay", "id": 12, "journal": jd, "chain": chain, "answer_scope": "context", "input_schedule": schedule, "to_step": target.Step})
+	var out bytes.Buffer
+	if err := serve(bytes.NewReader(append(request, '\n')), &out); err != nil {
+		t.Fatal(err)
+	}
+	scanner := bufio.NewScanner(&out)
+	found, done := false, false
+	for scanner.Scan() {
+		var row map[string]any
+		if err := json.Unmarshal(scanner.Bytes(), &row); err != nil {
+			t.Fatal(err)
+		}
+		switch row["type"] {
+		case "step":
+			position, ok := row["scheduled_input"].(map[string]any)
+			if !ok || position["writer_run"] != writer || position["step"] != row["step"] || position["source_seq"] == nil {
+				t.Fatal(row)
+			}
+			if row["step"] == float64(target.Step) {
+				found = true
+				if row["omitted"] != true || row["suppression_reason"] != "requested_drop" {
+					t.Fatal(row)
+				}
+			}
+		case "done":
+			done = true
+			if row["counterfactual"] != true || row["input_schedule"] == nil {
+				t.Fatal(row)
+			}
+		case "error":
+			t.Fatal(row)
+		}
+	}
+	if !found || !done {
+		t.Fatal(found, done, out.String())
 	}
 }

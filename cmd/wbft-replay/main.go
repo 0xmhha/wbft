@@ -25,6 +25,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -49,12 +50,21 @@ func main() {
 	chain := flag.String("chain", "", "chain file (RLP list of blocks from genesis)")
 	omit := flag.Bool("omit-missing-captures", false, "counterfactual: omit missing referenced peer inputs")
 	answerScope := flag.String("answer-scope", "step", "recorded application answers: step or explicit counterfactual context")
+	schedulePath := flag.String("input-schedule", "", "explicit counterfactual external-input schedule JSON")
 	verbose := flag.Bool("v", false, "print every step")
 	warmupFrom := flag.Uint64("warmup-from", 0, "first active height of explicit approximate warmup")
 	compareFrom := flag.Uint64("compare-from", 0, "first comparison height after approximate warmup")
 	flag.Parse()
 	if *jdir != "" {
 		opts := stepdriver.TraceOptions{OmitMissingCaptured: *omit, AnswerScope: *answerScope}
+		if *schedulePath != "" {
+			spec, err := loadSchedule(*schedulePath)
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "wbft-replay:", err)
+				os.Exit(2)
+			}
+			opts.Schedule = spec
+		}
 		if *warmupFrom != 0 || *compareFrom != 0 {
 			opts.Warmup = &stepdriver.TraceWarmup{FromHeight: *warmupFrom, CompareFromHeight: *compareFrom}
 		}
@@ -98,6 +108,10 @@ func replayOnceTrace(dir, chain string, verbose bool, opts stepdriver.TraceOptio
 	if steps == 0 {
 		fmt.Fprintln(w, "no recorded engine start or replayed steps")
 		return 2
+	}
+	if opts.Schedule != nil {
+		fmt.Fprintln(w, "scheduled open-loop experiment; other nodes and application events follow the recording")
+		return 3
 	}
 	if opts.AnswerScope == "context" {
 		fmt.Fprintln(w, "context application answers; original reproduction is not established")
@@ -170,18 +184,19 @@ func replay(dir, chain string, opts stepdriver.TraceOptions, yield func(stepdriv
 }
 
 type request struct {
-	AnswerScope string `json:"answer_scope"`
-	Type        string `json:"type"`
-	ID          uint64 `json:"id"`
-	Protocol    string `json:"protocol"`
-	Journal     string `json:"journal"`
-	Chain       string `json:"chain"`
-	FromStep    uint64 `json:"from_step"`
-	ToStep      uint64 `json:"to_step"`
-	WithVars    bool   `json:"with_vars"`
-	OmitMissing bool   `json:"omit_missing_captures"`
-	WarmupFrom  uint64 `json:"warmup_from_height"`
-	CompareFrom uint64 `json:"compare_from_height"`
+	Schedule    *stepdriver.TraceSchedule `json:"input_schedule,omitempty"`
+	AnswerScope string                    `json:"answer_scope"`
+	Type        string                    `json:"type"`
+	ID          uint64                    `json:"id"`
+	Protocol    string                    `json:"protocol"`
+	Journal     string                    `json:"journal"`
+	Chain       string                    `json:"chain"`
+	FromStep    uint64                    `json:"from_step"`
+	ToStep      uint64                    `json:"to_step"`
+	WithVars    bool                      `json:"with_vars"`
+	OmitMissing bool                      `json:"omit_missing_captures"`
+	WarmupFrom  uint64                    `json:"warmup_from_height"`
+	CompareFrom uint64                    `json:"compare_from_height"`
 }
 
 // serve answers protocol requests until "bye" or the end of the input.
@@ -200,12 +215,12 @@ func serve(in io.Reader, out io.Writer) error {
 		}
 		switch req.Type {
 		case "hello":
-			if err := send(map[string]any{"type": "hello", "protocol": Protocol, "impl": "wbft", "version": buildmeta.Version(), "features": []string{"bounded_warmup_v1", "context_answers_v1"}}); err != nil {
+			if err := send(map[string]any{"type": "hello", "protocol": Protocol, "impl": "wbft", "version": buildmeta.Version(), "features": []string{"bounded_warmup_v1", "context_answers_v1", "input_schedule_v1"}}); err != nil {
 				return err
 			}
 		case "replay":
 			steps, bad, approximate, warmup := 0, 0, 0, 0
-			opts := stepdriver.TraceOptions{AnswerScope: req.AnswerScope, FromStep: req.FromStep, ToStep: req.ToStep, WithVars: req.WithVars, OmitMissingCaptured: req.OmitMissing}
+			opts := stepdriver.TraceOptions{Schedule: req.Schedule, AnswerScope: req.AnswerScope, FromStep: req.FromStep, ToStep: req.ToStep, WithVars: req.WithVars, OmitMissingCaptured: req.OmitMissing}
 			if req.WarmupFrom != 0 || req.CompareFrom != 0 {
 				opts.Warmup = &stepdriver.TraceWarmup{FromHeight: req.WarmupFrom, CompareFromHeight: req.CompareFrom}
 			}
@@ -223,6 +238,10 @@ func serve(in io.Reader, out io.Writer) error {
 				m := map[string]any{"type": "step", "id": req.ID, "writer_run": s.WriterRun, "engine_run": s.EngineRun, "step": s.Step,
 					"input": s.RecordedInputKind, "omitted": s.Omitted, "out_digest": "0x" + hex.EncodeToString(s.OutDigest[:]),
 					"match": s.Match, "outputs": len(s.Outputs), "context_answers": s.ContextAnswers, "answer_sources": s.AnswerSources, "approximate": s.Approximate, "warmup": s.Warmup}
+				if s.Scheduled != nil {
+					m["scheduled_input"] = s.Scheduled
+					m["suppression_reason"] = s.SuppressionReason
+				}
 				if s.Vars != nil {
 					m["vars"] = json.RawMessage(stepdriver.VarsJSON(s.Vars))
 				}
@@ -230,7 +249,11 @@ func serve(in io.Reader, out io.Writer) error {
 			})
 			if err != nil {
 				code := "replay_error"
-				if errors.Is(err, stepdriver.ErrTraceGap) || errors.Is(err, stepdriver.ErrTraceNoSegment) || errors.Is(err, stepdriver.ErrTraceMissingInput) || errors.Is(err, stepdriver.ErrTraceInvalidInput) {
+				if errors.Is(err, stepdriver.ErrTraceScheduleReservation) {
+					code = "reservation_unavailable"
+				} else if errors.Is(err, stepdriver.ErrTraceSchedule) {
+					code = "input_schedule"
+				} else if errors.Is(err, stepdriver.ErrTraceGap) || errors.Is(err, stepdriver.ErrTraceNoSegment) || errors.Is(err, stepdriver.ErrTraceMissingInput) || errors.Is(err, stepdriver.ErrTraceInvalidInput) {
 					code = "input_gap"
 				} else if errors.Is(err, stepdriver.ErrTraceWarmupUnavailable) {
 					code = "warmup_unavailable"
@@ -258,7 +281,7 @@ func serve(in io.Reader, out io.Writer) error {
 				}
 				continue
 			}
-			if err := send(map[string]any{"type": "done", "id": req.ID, "steps": steps, "mismatches": bad, "counterfactual": req.OmitMissing || req.AnswerScope == "context", "answer_scope": req.AnswerScope, "approximate_steps": approximate, "warmup_steps": warmup}); err != nil {
+			if err := send(map[string]any{"type": "done", "id": req.ID, "steps": steps, "mismatches": bad, "counterfactual": req.Schedule != nil || req.OmitMissing || req.AnswerScope == "context", "input_schedule": req.Schedule, "answer_scope": req.AnswerScope, "approximate_steps": approximate, "warmup_steps": warmup}); err != nil {
 				return err
 			}
 		case "bye":
@@ -270,4 +293,23 @@ func serve(in io.Reader, out io.Writer) error {
 		}
 	}
 	return sc.Err()
+}
+
+func loadSchedule(path string) (*stepdriver.TraceSchedule, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	raw, err := io.ReadAll(io.LimitReader(f, 4097))
+	if err != nil || len(raw) > 4096 {
+		return nil, stepdriver.ErrTraceSchedule
+	}
+	d := json.NewDecoder(bytes.NewReader(raw))
+	d.DisallowUnknownFields()
+	var out stepdriver.TraceSchedule
+	if d.Decode(&out) != nil || d.Decode(new(any)) != io.EOF {
+		return nil, stepdriver.ErrTraceSchedule
+	}
+	return &out, nil
 }
