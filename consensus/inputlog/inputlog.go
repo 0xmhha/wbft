@@ -27,6 +27,7 @@ const (
 	KindNewHead         = "new_head"
 	KindRequest         = "request"
 	KindMessage         = "message"
+	KindCapturedMessage = "captured_message"
 	KindBacklog         = "backlog"
 	KindTimeout         = "timeout"
 	KindCommitResult    = "commit_result"
@@ -259,7 +260,7 @@ func Decode(kind string, body []byte, msgs func(jseq uint64) ([]byte, error)) (c
 			return fail(err)
 		}
 		return consensus.Request{Block: b}, nil
-	case KindMessage:
+	case KindMessage, KindCapturedMessage:
 		var m messageRLP
 		if err := rlp.DecodeStrict(body, &m); err != nil {
 			return fail(err)
@@ -573,4 +574,25 @@ func bytesOrEmpty(b []byte) []byte {
 		return []byte{}
 	}
 	return b
+}
+
+// EncodeCapturedMessage references a received frame without duplicating bytes.
+// It is journal-only; the WAL retains Encode's inline input for crash recovery.
+func EncodeCapturedMessage(m consensus.Message, capture uint64) ([]byte, error) {
+	if capture == 0 {
+		return nil, fmt.Errorf("%w: zero capture identifier", ErrDecode)
+	}
+	return rlp.Encode(&messageRLP{Code: uint64(m.Code), Payload: []byte{}, Peer: m.Peer, RecvMono: uint64(int64(m.RecvMono)), Ref: capture})
+}
+
+// CapturedReference returns the token of a captured_message journal input.
+func CapturedReference(body []byte) (uint64, error) {
+	var m messageRLP
+	if err := rlp.DecodeStrict(body, &m); err != nil {
+		return 0, err
+	}
+	if m.Ref == 0 || len(m.Payload) != 0 {
+		return 0, ErrDecode
+	}
+	return m.Ref, nil
 }

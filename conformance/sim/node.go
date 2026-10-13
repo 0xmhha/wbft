@@ -36,13 +36,15 @@ type crashSignal struct{ point string }
 // node is one simulated node: its file system and application outlive its
 // incarnations; the runner, the logs and the signer belong to one.
 type node struct {
-	s         *simulation
-	i         int
-	v         Validator
-	spec      NodeSpec
-	fs        *fsys.Mem
-	app       *app
-	adversary bool
+	capture       uint64
+	recordedPeers map[uint32]bool
+	s             *simulation
+	i             int
+	v             Validator
+	spec          NodeSpec
+	fs            *fsys.Mem
+	app           *app
+	adversary     bool
 
 	inc    int
 	alive  bool
@@ -167,6 +169,8 @@ func (n *node) start() {
 		return
 	}
 	n.jw = jw
+	n.capture = 0
+	n.recordedPeers = map[uint32]bool{}
 
 	// Start-up handshake.
 	st, err := runner.InspectWAL(n.fs, walDir)

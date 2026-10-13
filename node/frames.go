@@ -2,6 +2,7 @@ package node
 
 import (
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/0xmhha/wbft/codec"
@@ -16,10 +17,11 @@ import (
 // journal msg and peer records (observe.md 11.3). Peers are numbered in the
 // order the recorder first sees them, from 1.
 type frameRecorder struct {
-	jw     journal.Writer
-	clock  stampClock
-	offset uint64        // wire code offset (Identity.WireOffset)
-	engine func() string // engine state for received frames; nil: unknown
+	capture atomic.Uint64
+	jw      journal.Writer
+	clock   stampClock
+	offset  uint64        // wire code offset (Identity.WireOffset)
+	engine  func() string // engine state for received frames; nil: unknown
 
 	mu    sync.Mutex
 	index map[types.Address]uint32
@@ -74,9 +76,14 @@ func (f *frameRecorder) msg(dir string, peer types.Address, code uint64, payload
 }
 
 // Received implements transport.FrameObserver.
+func (f *frameRecorder) Capture() uint64 { return f.capture.Add(1) }
 func (f *frameRecorder) Received(peer types.Address, code uint64, size int, payload []byte, offer string) {
+	f.ReceivedCapture(peer, code, size, payload, offer, 0)
+}
+func (f *frameRecorder) ReceivedCapture(peer types.Address, code uint64, size int, payload []byte, offer string, capture uint64) {
 	m := f.msg(journal.In, peer, code, payload)
 	m.Offer = offer
+	m.Capture = capture
 	if f.engine != nil {
 		m.Engine = f.engine()
 	}

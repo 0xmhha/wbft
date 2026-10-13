@@ -165,8 +165,9 @@ var (
 
 // queued is one input with where it came from.
 type queued struct {
-	in  consensus.Input
-	via string
+	capture uint64
+	in      consensus.Input
+	via     string
 }
 
 // Values of the via of journal step records.

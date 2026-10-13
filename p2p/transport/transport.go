@@ -36,6 +36,7 @@ type Receiver interface {
 // Inbound is one received message after the frame stage: data is the payload
 // of codes 0x12 .. 0x15 and the unwrapped payload of 0x11.
 type Inbound struct {
+	Capture  uint64 // optional journal provenance, never a consensus input field
 	Peer     types.Address
 	Code     uint64
 	Payload  []byte

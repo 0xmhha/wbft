@@ -47,10 +47,11 @@ const Protocol = "wbft-replay/1"
 func main() {
 	jdir := flag.String("journal", "", "journal directory to replay")
 	chain := flag.String("chain", "", "chain file (RLP list of blocks from genesis)")
+	omit := flag.Bool("omit-missing-captures", false, "counterfactual: omit missing referenced peer inputs")
 	verbose := flag.Bool("v", false, "print every step")
 	flag.Parse()
 	if *jdir != "" {
-		os.Exit(replayOnce(*jdir, *chain, *verbose, os.Stdout))
+		os.Exit(replayOnceOptions(*jdir, *chain, *verbose, *omit, os.Stdout))
 	}
 	if err := serve(os.Stdin, os.Stdout); err != nil {
 		fmt.Fprintln(os.Stderr, "wbft-replay:", err)
@@ -59,8 +60,11 @@ func main() {
 }
 
 func replayOnce(dir, chain string, verbose bool, w io.Writer) int {
+	return replayOnceOptions(dir, chain, verbose, false, w)
+}
+func replayOnceOptions(dir, chain string, verbose, omit bool, w io.Writer) int {
 	var steps, bad int
-	err := replay(dir, chain, stepdriver.TraceOptions{}, func(s stepdriver.StepResult) error {
+	err := replay(dir, chain, stepdriver.TraceOptions{OmitMissingCaptured: omit}, func(s stepdriver.StepResult) error {
 		steps++
 		if !s.Match {
 			bad++
@@ -128,14 +132,15 @@ func replay(dir, chain string, opts stepdriver.TraceOptions, yield func(stepdriv
 }
 
 type request struct {
-	Type     string `json:"type"`
-	ID       uint64 `json:"id"`
-	Protocol string `json:"protocol"`
-	Journal  string `json:"journal"`
-	Chain    string `json:"chain"`
-	FromStep uint64 `json:"from_step"`
-	ToStep   uint64 `json:"to_step"`
-	WithVars bool   `json:"with_vars"`
+	Type        string `json:"type"`
+	ID          uint64 `json:"id"`
+	Protocol    string `json:"protocol"`
+	Journal     string `json:"journal"`
+	Chain       string `json:"chain"`
+	FromStep    uint64 `json:"from_step"`
+	ToStep      uint64 `json:"to_step"`
+	WithVars    bool   `json:"with_vars"`
+	OmitMissing bool   `json:"omit_missing_captures"`
 }
 
 // serve answers protocol requests until "bye" or the end of the input.
@@ -159,14 +164,14 @@ func serve(in io.Reader, out io.Writer) error {
 			}
 		case "replay":
 			steps, bad := 0, 0
-			opts := stepdriver.TraceOptions{FromStep: req.FromStep, ToStep: req.ToStep, WithVars: req.WithVars}
+			opts := stepdriver.TraceOptions{FromStep: req.FromStep, ToStep: req.ToStep, WithVars: req.WithVars, OmitMissingCaptured: req.OmitMissing}
 			err := replay(req.Journal, req.Chain, opts, func(s stepdriver.StepResult) error {
 				steps++
 				if !s.Match {
 					bad++
 				}
 				m := map[string]any{"type": "step", "id": req.ID, "engine_run": s.EngineRun, "step": s.Step,
-					"input": inputlog.Kind(s.Input), "out_digest": "0x" + hex.EncodeToString(s.OutDigest[:]),
+					"input": s.RecordedInputKind, "omitted": s.Omitted, "out_digest": "0x" + hex.EncodeToString(s.OutDigest[:]),
 					"match": s.Match, "outputs": len(s.Outputs)}
 				if s.Vars != nil {
 					m["vars"] = json.RawMessage(stepdriver.VarsJSON(s.Vars))
@@ -175,15 +180,17 @@ func serve(in io.Reader, out io.Writer) error {
 			})
 			if err != nil {
 				code := "replay_error"
-				if errors.Is(err, stepdriver.ErrTraceGap) || errors.Is(err, stepdriver.ErrTraceNoSegment) {
+				if errors.Is(err, stepdriver.ErrTraceGap) || errors.Is(err, stepdriver.ErrTraceNoSegment) || errors.Is(err, stepdriver.ErrTraceMissingInput) || errors.Is(err, stepdriver.ErrTraceInvalidInput) {
 					code = "input_gap"
+				} else if errors.Is(err, stepdriver.ErrTraceEnvExhausted) {
+					code = "env_exhausted"
 				}
 				if err := send(map[string]any{"type": "error", "id": req.ID, "code": code, "error": err.Error()}); err != nil {
 					return err
 				}
 				continue
 			}
-			if err := send(map[string]any{"type": "done", "id": req.ID, "steps": steps, "mismatches": bad}); err != nil {
+			if err := send(map[string]any{"type": "done", "id": req.ID, "steps": steps, "mismatches": bad, "counterfactual": req.OmitMissing}); err != nil {
 				return err
 			}
 		case "bye":

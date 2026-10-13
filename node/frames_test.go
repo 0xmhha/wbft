@@ -171,3 +171,23 @@ func TestEngineState(t *testing.T) {
 	}
 	stop(t, n)
 }
+
+func TestFrameRecorderBindsCaptureWithoutChangingLegacyObserver(t *testing.T) {
+	jw := &memJournal{}
+	rec := newFrameRecorder(jw, fixedClock{}, 0)
+	peer := types.Address{4}
+	rec.Attached(peer, "")
+	first := transport.BeginCapture(rec)
+	second := transport.BeginCapture(rec)
+	if first == 0 || second != first+1 {
+		t.Fatal(first, second)
+	}
+	rec.inbound(peer, true, false)
+	transport.ReportReceived(rec, peer, 0x13, 1, []byte{0xc0}, transport.OfferQueued, second)
+	rec.Received(peer, 0x13, 1, []byte{0xc0}, transport.OfferQueued)
+	bound := jw.recs[len(jw.recs)-2].Body.(*journal.MsgRec)
+	legacy := jw.recs[len(jw.recs)-1].Body.(*journal.MsgRec)
+	if bound.Capture != second || bound.Dedup == nil || !bound.Dedup.Known || legacy.Capture != 0 {
+		t.Fatal(bound, legacy)
+	}
+}

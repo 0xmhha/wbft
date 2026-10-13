@@ -366,7 +366,7 @@ func (b *inbox) hasReady() bool {
 }
 
 // take returns the next checked message, one per peer in turn.
-func (b *inbox) take() (consensus.Message, bool) {
+func (b *inbox) take() (consensus.Message, uint64, bool) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	n := len(b.order)
@@ -381,10 +381,10 @@ func (b *inbox) take() (consensus.Message, bool) {
 				continue
 			}
 			delete(b.slots, k)
-			return consensus.Message{Code: codec.Code(s.in.Code), Payload: s.in.Payload, Peer: s.in.Peer, RecvMono: s.in.RecvMono}, true
+			return consensus.Message{Code: codec.Code(s.in.Code), Payload: s.in.Payload, Peer: s.in.Peer, RecvMono: s.in.RecvMono}, s.in.Capture, true
 		}
 	}
-	return consensus.Message{}, false
+	return consensus.Message{}, 0, false
 }
 
 // InboundBytes returns the payload bytes waiting in the per-peer receive

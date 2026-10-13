@@ -115,3 +115,28 @@ type CauseSender interface {
 // SuppressRecentCache is the reason of a send left out because the peer's
 // recent cache holds the message (R-01 send_suppressed.reason).
 const SuppressRecentCache = "peer_recent_cache"
+
+// CaptureObserver binds an inbound frame to the core input that Offer queues.
+// Capture is called before Offer; ReceivedCapture follows it in the same read
+// loop. Old observers continue to receive Received with no reference claim.
+type CaptureObserver interface {
+	Capture() uint64
+	ReceivedCapture(peer types.Address, code uint64, size int, payload []byte, offer string, capture uint64)
+}
+
+func BeginCapture(o FrameObserver) uint64 {
+	if c, ok := o.(CaptureObserver); ok {
+		return c.Capture()
+	}
+	return 0
+}
+func ReportReceived(o FrameObserver, peer types.Address, code uint64, size int, payload []byte, offer string, capture uint64) {
+	if o == nil {
+		return
+	}
+	if c, ok := o.(CaptureObserver); ok && capture != 0 {
+		c.ReceivedCapture(peer, code, size, payload, offer, capture)
+		return
+	}
+	o.Received(peer, code, size, payload, offer)
+}
