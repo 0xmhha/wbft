@@ -361,6 +361,8 @@ bin/wbft-journal prune --dir <data dir>/journal --keep-heights 100000
 # when it starts at the start of a writer run:
 bin/wbft-journal export --dir <data dir>/journal --out node.tar --from 100 --to 200
 bin/wbft-replay -journal node.tar -chain <chain.rlp>
+# Explicit approximation when the bundle omits the recorded engine start:
+# bin/wbft-replay -journal node.tar -chain <chain.rlp> -warmup-from 98 -compare-from 100
 # R-01 frame dump (frames-<run>.jsonl and payloads/) of heights 100 to 200:
 bin/wbft-journal export --dir <data dir>/journal --out <dir> --format r01 --from 100 --to 200
 ```
@@ -538,3 +540,31 @@ argument key within their source step; repeated answers for the same key are
 consumed in recorded order and never reused. Missing answers remain failures.
 Protocol steps and structured step errors include the source `writer_run`,
 `engine_run` and `step`; callers do not need to parse diagnostic text.
+
+
+### Bounded replay warmup
+
+Closed trace replay still requires a recorded engine start. Callers can explicitly
+set `TraceOptions.Warmup` with a positive `FromHeight` and a later
+`CompareFromHeight` (at most 10000 heights apart) to process a retained prefix
+whose original start is absent. The first available step at `FromHeight` must
+have a verified recorded head and a valid validator set. The driver starts a
+fresh core there; its synthetic initial outputs are neither executed nor
+reported as an original step. Backlog, prior views and unknown timer generations
+are not reconstructed. Journal gaps, missing captures, discontinuous steps,
+missing application answers and unavailable prefix heads still fail closed.
+
+Every subsequent result carries `Approximate`, and approximate steps before the
+comparison height also carry `Warmup`. Matching outputs alone do not establish
+original reproduction. An actual recorded start restores its original timer
+generations and clears the approximation marker. Available complete histories
+use the normal exact path even when the fallback is configured.
+
+`wbft-replay` accepts `-warmup-from N -compare-from M` with `-journal`. It returns
+exit 3 when approximate results were emitted, separately from exact success (0),
+different outputs (1) and failed/unavailable replay (2). Zero replayed steps are
+not success. The `wbft-replay/1` hello advertises `bounded_warmup_v1`; clients must
+check it before sending `warmup_from_height` and `compare_from_height`.
+Protocol steps expose `approximate` and `warmup`, and completion reports separate
+`approximate_steps` and `warmup_steps` totals. Warmup failures use
+`warmup_unavailable` with structured source coordinates when available.

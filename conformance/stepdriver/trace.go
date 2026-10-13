@@ -33,6 +33,9 @@ type JournalReader interface {
 
 // TraceOptions configure RunTrace.
 type TraceOptions struct {
+	// Warmup explicitly permits approximate state initialisation when the
+	// recorded engine start is absent. Nil preserves closed replay behavior.
+	Warmup *TraceWarmup
 	// OmitMissingCaptured explicitly models intentional received-message loss.
 	// The missing input is not fed; its actual empty output list is compared.
 	// Default closed replay refuses missing captures instead.
@@ -47,8 +50,19 @@ type TraceOptions struct {
 	WithVars bool
 }
 
+// TraceWarmup bounds an approximate prefix before the comparison height.
+// The caller must keep approximate results distinct from original reproduction.
+type TraceWarmup struct {
+	FromHeight        uint64
+	CompareFromHeight uint64
+}
+
 // StepResult is one replayed core Step.
 type StepResult struct {
+	// Approximate remains true until an actual recorded start resets the core.
+	Approximate bool
+	// Warmup reports an approximate step before CompareFromHeight.
+	Warmup            bool
 	WriterRun         string
 	RecordedInputKind string
 	Omitted           bool
@@ -67,10 +81,11 @@ type StepResult struct {
 
 // TraceError locates a failed input without parsing diagnostic text.
 type TraceError struct {
-	WriterRun string
-	EngineRun uint64
-	Step      uint64
-	Err       error
+	Approximate bool
+	WriterRun   string
+	EngineRun   uint64
+	Step        uint64
+	Err         error
 }
 
 func (e *TraceError) Error() string {
@@ -80,12 +95,13 @@ func (e *TraceError) Unwrap() error { return e.Err }
 
 // Errors of RunTrace.
 var (
-	ErrTraceConfiguration = errors.New("stepdriver: inconsistent writer configuration")
-	ErrTraceInvalidInput  = errors.New("stepdriver: captured input is invalid")
-	ErrTraceMissingInput  = errors.New("stepdriver: captured input is unavailable")
-	ErrTraceEnvExhausted  = errors.New("stepdriver: recorded application answer unavailable")
-	ErrTraceNoSegment     = errors.New("stepdriver: journal has no segment record before its steps")
-	ErrTraceGap           = errors.New("stepdriver: journal steps are not contiguous")
+	ErrTraceConfiguration     = errors.New("stepdriver: inconsistent writer configuration")
+	ErrTraceInvalidInput      = errors.New("stepdriver: captured input is invalid")
+	ErrTraceMissingInput      = errors.New("stepdriver: captured input is unavailable")
+	ErrTraceEnvExhausted      = errors.New("stepdriver: recorded application answer unavailable")
+	ErrTraceNoSegment         = errors.New("stepdriver: journal has no segment record before its steps")
+	ErrTraceGap               = errors.New("stepdriver: journal steps are not contiguous")
+	ErrTraceWarmupUnavailable = errors.New("stepdriver: bounded warmup prefix unavailable")
 )
 
 // RunTrace rebuilds consensus.State from the journal "segment" record and
@@ -96,15 +112,23 @@ var (
 // header.CommitHeader. Each writer uses its own recorded configuration. yield is
 // called for every step within [FromStep, ToStep].
 func RunTrace(j JournalReader, opts TraceOptions, yield func(StepResult) error) error {
+	if opts.Warmup != nil && (opts.Warmup.FromHeight == 0 || opts.Warmup.CompareFromHeight <= opts.Warmup.FromHeight || opts.Warmup.CompareFromHeight-opts.Warmup.FromHeight > 10000) {
+		return ErrTraceWarmupUnavailable
+	}
 	var cfg *types.Config
 	var copts consensus.Options
 	var core *consensus.State
 	var run, last uint64
 	var writerRun string
 	var configuration []byte
+	approximate := false
+	everStarted := false
 	for {
 		rec, err := j.Next()
 		if err == io.EOF {
+			if opts.Warmup != nil && !everStarted {
+				return ErrTraceWarmupUnavailable
+			}
 			return nil
 		}
 		if err != nil {
@@ -127,6 +151,7 @@ func RunTrace(j JournalReader, opts TraceOptions, yield func(StepResult) error) 
 				cfg = c
 				copts = consensus.Options{Config: cfg, Self: b.Core.Self, Improvements: consensus.ImprovementSet(b.Core.Improvements), BacklogLimit: int(b.Core.BacklogLimit)}
 				core = nil
+				approximate = false
 				run, last = 0, 0
 				writerRun = b.Run
 				configuration = encoded
@@ -139,20 +164,45 @@ func RunTrace(j JournalReader, opts TraceOptions, yield func(StepResult) error) 
 			if cfg == nil {
 				return ErrTraceNoSegment
 			}
+			if b.Step == 0 {
+				return &TraceError{Approximate: approximate, WriterRun: writerRun, EngineRun: b.EngineRun, Step: b.Step, Err: ErrTraceGap}
+			}
 			if b.InputKind == inputlog.KindStart {
+				approximate = false
 				core = consensus.NewState(copts)
+				everStarted = true
 				var g [3]uint64
 				copy(g[:], b.TimerGens)
 				core.RestoreTimerGens(g)
 				run, last = b.EngineRun, b.Step-1
 			}
 			if core == nil {
-				// Steps of an engine run whose start is not in the journal
-				// (pruned or lost) cannot be replayed.
-				continue
+				if opts.Warmup != nil {
+					active, err := warmupHeight(b)
+					if err != nil {
+						return &TraceError{WriterRun: writerRun, EngineRun: b.EngineRun, Step: b.Step, Err: err}
+					}
+					if active < opts.Warmup.FromHeight {
+						continue
+					}
+					if active != opts.Warmup.FromHeight {
+						return &TraceError{WriterRun: writerRun, EngineRun: b.EngineRun, Step: b.Step, Err: ErrTraceWarmupUnavailable}
+					}
+					core, err = bootstrapWarmup(copts, cfg, opts.Blocks, b)
+					if err != nil {
+						return &TraceError{WriterRun: writerRun, EngineRun: b.EngineRun, Step: b.Step, Err: err}
+					}
+					run, last = b.EngineRun, b.Step-1
+					approximate = true
+					everStarted = true
+				} else {
+					// Steps of an engine run whose start is not in the journal
+					// (pruned or lost) cannot be replayed.
+					continue
+				}
 			}
 			if b.EngineRun != run || b.Step != last+1 {
-				return &TraceError{WriterRun: writerRun, EngineRun: b.EngineRun, Step: b.Step, Err: fmt.Errorf("%w: after engine run %d step %d", ErrTraceGap, run, last)}
+				return &TraceError{Approximate: approximate, WriterRun: writerRun, EngineRun: b.EngineRun, Step: b.Step, Err: fmt.Errorf("%w: after engine run %d step %d", ErrTraceGap, run, last)}
 			}
 			last = b.Step
 			var captured *consensus.Message
@@ -161,13 +211,16 @@ func RunTrace(j JournalReader, opts TraceOptions, yield func(StepResult) error) 
 				captured, err = resolveCaptured(j, writerRun, b)
 				if err != nil {
 					if !opts.OmitMissingCaptured || !errors.Is(err, ErrTraceMissingInput) {
-						return &TraceError{WriterRun: writerRun, EngineRun: b.EngineRun, Step: b.Step, Err: err}
+						return &TraceError{Approximate: approximate, WriterRun: writerRun, EngineRun: b.EngineRun, Step: b.Step, Err: err}
 					}
 					d, e := inputlog.OutDigest(nil)
 					if e != nil {
 						return e
 					}
 					result := StepResult{WriterRun: writerRun, RecordedInputKind: b.InputKind, Omitted: true, EngineRun: b.EngineRun, Step: b.Step, Outputs: []consensus.Output{}, OutDigest: d, Match: d == b.OutDigest && consensus.ValsetDigest(core.Snapshot().Validators) == b.ValsetDigest}
+					if err = markWarmup(&result, b, opts.Warmup, approximate); err != nil {
+						return err
+					}
 					if b.Step >= opts.FromStep && (opts.ToStep == 0 || b.Step <= opts.ToStep) {
 						if e = yield(result); e != nil {
 							return e
@@ -178,9 +231,12 @@ func RunTrace(j JournalReader, opts TraceOptions, yield func(StepResult) error) 
 			}
 			res, err := replayStep(core, cfg, opts.Blocks, b, captured)
 			if err != nil {
-				return &TraceError{WriterRun: writerRun, EngineRun: b.EngineRun, Step: b.Step, Err: err}
+				return &TraceError{Approximate: approximate, WriterRun: writerRun, EngineRun: b.EngineRun, Step: b.Step, Err: err}
 			}
 			res.WriterRun = writerRun
+			if err = markWarmup(&res, b, opts.Warmup, approximate); err != nil {
+				return err
+			}
 			if opts.WithVars {
 				res.Vars = core.Vars()
 			}
