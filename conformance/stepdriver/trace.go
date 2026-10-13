@@ -1,6 +1,8 @@
 package stepdriver
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -47,6 +49,7 @@ type TraceOptions struct {
 
 // StepResult is one replayed core Step.
 type StepResult struct {
+	WriterRun         string
 	RecordedInputKind string
 	Omitted           bool
 	EngineRun         uint64
@@ -62,20 +65,35 @@ type StepResult struct {
 	Vars  *consensus.Vars
 }
 
+// TraceError locates a failed input without parsing diagnostic text.
+type TraceError struct {
+	WriterRun string
+	EngineRun uint64
+	Step      uint64
+	Err       error
+}
+
+func (e *TraceError) Error() string {
+	return fmt.Sprintf("stepdriver: writer %s engine run %d step %d: %v", e.WriterRun, e.EngineRun, e.Step, e.Err)
+}
+func (e *TraceError) Unwrap() error { return e.Err }
+
 // Errors of RunTrace.
 var (
-	ErrTraceInvalidInput = errors.New("stepdriver: captured input is invalid")
-	ErrTraceMissingInput = errors.New("stepdriver: captured input is unavailable")
-	ErrTraceEnvExhausted = errors.New("stepdriver: recorded application answer unavailable")
-	ErrTraceNoSegment    = errors.New("stepdriver: journal has no segment record before its steps")
-	ErrTraceGap          = errors.New("stepdriver: journal steps are not contiguous")
+	ErrTraceConfiguration = errors.New("stepdriver: inconsistent writer configuration")
+	ErrTraceInvalidInput  = errors.New("stepdriver: captured input is invalid")
+	ErrTraceMissingInput  = errors.New("stepdriver: captured input is unavailable")
+	ErrTraceEnvExhausted  = errors.New("stepdriver: recorded application answer unavailable")
+	ErrTraceNoSegment     = errors.New("stepdriver: journal has no segment record before its steps")
+	ErrTraceGap           = errors.New("stepdriver: journal steps are not contiguous")
 )
 
 // RunTrace rebuilds consensus.State from the journal "segment" record and
 // feeds the recorded steps in order: every "start" step creates a new core
 // (with the timer generations the step records). Head and ValidatorsAt are
 // answered from opts.Blocks, ValidateProposal and IsBadBlock from the
-// answers the step records, CommitHeader by header.CommitHeader. yield is
+// answers the step records by call kind and argument key, CommitHeader by
+// header.CommitHeader. Each writer uses its own recorded configuration. yield is
 // called for every step within [FromStep, ToStep].
 func RunTrace(j JournalReader, opts TraceOptions, yield func(StepResult) error) error {
 	var cfg *types.Config
@@ -83,6 +101,7 @@ func RunTrace(j JournalReader, opts TraceOptions, yield func(StepResult) error) 
 	var core *consensus.State
 	var run, last uint64
 	var writerRun string
+	var configuration []byte
 	for {
 		rec, err := j.Next()
 		if err == io.EOF {
@@ -93,16 +112,26 @@ func RunTrace(j JournalReader, opts TraceOptions, yield func(StepResult) error) 
 		}
 		switch b := rec.Body.(type) {
 		case *journal.SegmentRec:
-			writerRun = b.Run
-			if cfg == nil {
+			encoded, err := json.Marshal(b.Core)
+			if err != nil {
+				return err
+			}
+			if cfg != nil && b.Run == writerRun && !bytes.Equal(encoded, configuration) {
+				return ErrTraceConfiguration
+			}
+			if cfg == nil || b.Run != writerRun {
 				c, err := types.ParseChainConfig(b.Core.ChainConfig)
 				if err != nil {
 					return fmt.Errorf("stepdriver: segment chain configuration: %w", err)
 				}
 				cfg = c
-				copts = consensus.Options{Config: cfg, Self: b.Core.Self, Improvements: consensus.ImprovementSet(b.Core.Improvements),
-					BacklogLimit: int(b.Core.BacklogLimit)}
+				copts = consensus.Options{Config: cfg, Self: b.Core.Self, Improvements: consensus.ImprovementSet(b.Core.Improvements), BacklogLimit: int(b.Core.BacklogLimit)}
+				core = nil
+				run, last = 0, 0
+				writerRun = b.Run
+				configuration = encoded
 			}
+
 		case *journal.GapRec:
 			// A readable step prefix cannot prove reproduction across lost inputs.
 			return fmt.Errorf("%w: journal dropped %d records", ErrTraceGap, b.Dropped)
@@ -123,7 +152,7 @@ func RunTrace(j JournalReader, opts TraceOptions, yield func(StepResult) error) 
 				continue
 			}
 			if b.EngineRun != run || b.Step != last+1 {
-				return fmt.Errorf("%w: engine run %d step %d after run %d step %d", ErrTraceGap, b.EngineRun, b.Step, run, last)
+				return &TraceError{WriterRun: writerRun, EngineRun: b.EngineRun, Step: b.Step, Err: fmt.Errorf("%w: after engine run %d step %d", ErrTraceGap, run, last)}
 			}
 			last = b.Step
 			var captured *consensus.Message
@@ -132,13 +161,13 @@ func RunTrace(j JournalReader, opts TraceOptions, yield func(StepResult) error) 
 				captured, err = resolveCaptured(j, writerRun, b)
 				if err != nil {
 					if !opts.OmitMissingCaptured || !errors.Is(err, ErrTraceMissingInput) {
-						return fmt.Errorf("stepdriver: run %d step %d: %w", b.EngineRun, b.Step, err)
+						return &TraceError{WriterRun: writerRun, EngineRun: b.EngineRun, Step: b.Step, Err: err}
 					}
 					d, e := inputlog.OutDigest(nil)
 					if e != nil {
 						return e
 					}
-					result := StepResult{RecordedInputKind: b.InputKind, Omitted: true, EngineRun: b.EngineRun, Step: b.Step, Outputs: []consensus.Output{}, OutDigest: d, Match: d == b.OutDigest && consensus.ValsetDigest(core.Snapshot().Validators) == b.ValsetDigest}
+					result := StepResult{WriterRun: writerRun, RecordedInputKind: b.InputKind, Omitted: true, EngineRun: b.EngineRun, Step: b.Step, Outputs: []consensus.Output{}, OutDigest: d, Match: d == b.OutDigest && consensus.ValsetDigest(core.Snapshot().Validators) == b.ValsetDigest}
 					if b.Step >= opts.FromStep && (opts.ToStep == 0 || b.Step <= opts.ToStep) {
 						if e = yield(result); e != nil {
 							return e
@@ -149,8 +178,9 @@ func RunTrace(j JournalReader, opts TraceOptions, yield func(StepResult) error) 
 			}
 			res, err := replayStep(core, cfg, opts.Blocks, b, captured)
 			if err != nil {
-				return fmt.Errorf("stepdriver: engine run %d step %d: %w", b.EngineRun, b.Step, err)
+				return &TraceError{WriterRun: writerRun, EngineRun: b.EngineRun, Step: b.Step, Err: err}
 			}
+			res.WriterRun = writerRun
 			if opts.WithVars {
 				res.Vars = core.Vars()
 			}
@@ -244,14 +274,15 @@ func (e *traceEnv) pop(kind uint8, key types.Hash) (inputlog.EnvCall, bool) {
 	if e.err != nil {
 		return inputlog.EnvCall{}, false
 	}
-	if len(e.answers) == 0 || e.answers[0].Kind != kind || e.answers[0].Key != key {
-		e.err = fmt.Errorf("%w: call %d on %x", ErrTraceEnvExhausted, kind, key[:4])
-		return inputlog.EnvCall{}, false
+	for i, c := range e.answers {
+		if c.Kind == kind && c.Key == key {
+			e.answers = append(e.answers[:i], e.answers[i+1:]...)
+			e.calls = append(e.calls, c)
+			return c, true
+		}
 	}
-	c := e.answers[0]
-	e.answers = e.answers[1:]
-	e.calls = append(e.calls, c)
-	return c, true
+	e.err = fmt.Errorf("%w: call %d on %x", ErrTraceEnvExhausted, kind, key[:4])
+	return inputlog.EnvCall{}, false
 }
 
 func (e *traceEnv) ValidateProposal(b *types.Block) (time.Duration, error) {

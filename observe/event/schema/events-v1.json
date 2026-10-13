@@ -87,6 +87,7 @@
         "t_mono_ns": { "type": "integer" },
         "kind": { "type": "string" },
         "view": { "$ref": "#/$defs/view" },
+        "engine_run": { "description": "Engine generation of a core step; absent in older records.", "type": "integer", "minimum": 0 },
         "step": { "description": "Input number of the core within the engine run, shared with the message journal.", "type": "integer", "minimum": 0 },
         "imp": { "description": "Optional behaviours that decided this event.", "type": "array", "items": { "type": "string" } }
       },

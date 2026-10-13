@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"math/rand/v2"
 	"runtime"
 	"sync"
@@ -541,6 +542,11 @@ func (r *Runner) emit(rec event.Record, step *uint64) {
 	at := event.Stamp{Wall: r.d.Clock.Now(), Mono: r.d.Clock.Mono(), Step: step}
 	if step != nil {
 		at.Wall, at.Mono = r.stepAt.Wall, r.stepAt.Mono
+		rec.Fields = maps.Clone(rec.Fields)
+		if rec.Fields == nil {
+			rec.Fields = map[string]any{}
+		}
+		rec.Fields["engine_run"] = r.engineRun
 	}
 	if r.d.Events != nil {
 		if err := r.d.Events.Write(rec, at); err != nil {
