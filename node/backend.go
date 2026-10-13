@@ -4,9 +4,9 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"github.com/0xmhha/wbft/internal/buildmeta"
 	"maps"
 	"math/big"
-	"runtime/debug"
 	"time"
 
 	"github.com/0xmhha/wbft/codec"
@@ -203,27 +203,4 @@ func (b backend) Peers() []transport.PeerInfo {
 // moduleVersion is the version of the wbft module in the running binary:
 // its module version as a dependency, or the VCS revision when wbft is the
 // main module ("unknown" without build information).
-func moduleVersion() string {
-	bi, ok := debug.ReadBuildInfo()
-	if !ok {
-		return "unknown"
-	}
-	const path = "github.com/0xmhha/wbft"
-	for _, d := range bi.Deps {
-		if d.Path == path {
-			if d.Replace != nil {
-				return d.Replace.Version
-			}
-			return d.Version
-		}
-	}
-	if bi.Main.Path == path {
-		for _, s := range bi.Settings {
-			if s.Key == "vcs.revision" {
-				return s.Value
-			}
-		}
-		return bi.Main.Version
-	}
-	return "unknown"
-}
+func moduleVersion() string { return buildmeta.Version() }

@@ -90,6 +90,9 @@ func RunTrace(j JournalReader, opts TraceOptions, yield func(StepResult) error) 
 				copts = consensus.Options{Config: cfg, Self: b.Core.Self, Improvements: consensus.ImprovementSet(b.Core.Improvements),
 					BacklogLimit: int(b.Core.BacklogLimit)}
 			}
+		case *journal.GapRec:
+			// A readable step prefix cannot prove reproduction across lost inputs.
+			return fmt.Errorf("%w: journal dropped %d records", ErrTraceGap, b.Dropped)
 		case *journal.StepRec:
 			if cfg == nil {
 				return ErrTraceNoSegment

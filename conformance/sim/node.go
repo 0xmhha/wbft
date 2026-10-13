@@ -13,6 +13,7 @@ import (
 	"github.com/0xmhha/wbft/consensus/privval"
 	"github.com/0xmhha/wbft/consensus/runner"
 	"github.com/0xmhha/wbft/consensus/wal"
+	"github.com/0xmhha/wbft/internal/buildmeta"
 	"github.com/0xmhha/wbft/internal/faultpoint"
 	"github.com/0xmhha/wbft/internal/fsys"
 	"github.com/0xmhha/wbft/observe/event"
@@ -155,7 +156,7 @@ func (n *node) start() {
 	}
 	opts := n.spec.Options
 	opts.Config, opts.Self = n.s.cfg, n.v.address
-	id := journal.Identity{Self: n.v.address, BLSPublicKey: n.v.blsPub, Run: n.runID(), Commit: "sim", ChainID: big.NewInt(ChainID),
+	id := journal.Identity{Self: n.v.address, BLSPublicKey: n.v.blsPub, Run: n.runID(), Commit: buildmeta.Version(), ChainID: big.NewInt(ChainID),
 		GenesisHash: codec.BlockHash(n.s.genesis.Header), Mode: "standalone",
 		Core: journal.CoreOptions{ChainConfig: n.s.cfgJSON, Self: n.v.address, Improvements: uint64(opts.Improvements),
 			BacklogLimit: uint64(opts.BacklogLimit), Profile: n.spec.Profile}}

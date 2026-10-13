@@ -69,6 +69,15 @@ func TestProtocol(t *testing.T) {
 		if m["type"] == "step" && m["match"] != true {
 			t.Fatalf("step does not match: %v", m)
 		}
+		if m["type"] == "hello" {
+			v, ok := m["version"].(string)
+			if !ok || v == "" {
+				t.Fatal("helper version unavailable", m)
+			}
+		}
+		if m["type"] == "error" && m["code"] != "replay_error" {
+			t.Fatal("missing structured replay error", m)
+		}
 		if m["type"] == "done" && m["mismatches"].(float64) != 0 {
 			t.Fatal(m)
 		}
