@@ -111,6 +111,10 @@ const (
 
 // MsgRec is one consensus message on the wire.
 type MsgRec struct {
+	// Capture identifies this received frame within its writer run. It is
+	// assigned before Offer and remains stable when recording is asynchronous.
+	Capture uint64
+
 	Dir      string
 	PeerIdx  uint32
 	Mono     time.Duration
@@ -302,6 +306,27 @@ type msgRLP struct {
 	Size     uint64
 	Engine   string
 	Dedup    uint64 // rlpDedup
+	Capture  uint64
+}
+
+type msgRLPNoCapture struct {
+	Format   uint64
+	JSeq     uint64
+	Dir      string
+	PeerIdx  uint64
+	Mono     uint64
+	WallNs   uint64
+	Code     uint64
+	WireCode uint64
+	Payload  []byte
+	DedupKey types.Hash
+	Offer    string
+	Cause    string
+	RelayOf  uint64
+	Write    string
+	Size     uint64
+	Engine   string
+	Dedup    uint64 // rlpDedup
 }
 
 // msgRLPNoDedup is a msg record written before records carried the dedup
@@ -472,7 +497,7 @@ func encodeBody(r Record, jseq uint64) ([]byte, error) {
 		return rlp.Encode(&msgRLP{Format: Format, JSeq: jseq, Dir: b.Dir, PeerIdx: uint64(b.PeerIdx), Mono: uint64(int64(b.Mono)),
 			WallNs: uint64(b.WallNs), Code: b.Code, WireCode: b.WireCode, Payload: bytesOrEmpty(b.Payload), DedupKey: b.DedupKey,
 			Offer: b.Offer, Cause: string(b.Cause), RelayOf: b.RelayOf, Write: b.Write, Size: b.Size, Engine: b.Engine,
-			Dedup: rlpDedup(b.Dedup)})
+			Dedup: rlpDedup(b.Dedup), Capture: b.Capture})
 	case *OutcomeRec:
 		return rlp.Encode(&outcomeRLP{Format: Format, JSeq: jseq, Of: b.Of, Code: b.Code, Peer: b.Peer, DedupKey: b.DedupKey,
 			Outcome: string(b.Outcome), Check: b.Check, Row: uint64(b.Row + 1), Reason: b.Reason, ErrorClass: b.ErrorClass,
@@ -548,10 +573,13 @@ func decodeBody(k Kind, body []byte) (Record, error) {
 	case KindMsg:
 		var w msgRLP
 		if err := rlp.DecodeStrict(body, &w); err != nil {
+			var noCapture msgRLPNoCapture
 			var noDedup msgRLPNoDedup
 			var noEngine msgRLPNoEngine
 			var noSize msgRLPNoSize
 			switch {
+			case rlp.DecodeStrict(body, &noCapture) == nil:
+				w = msgRLP{Format: noCapture.Format, JSeq: noCapture.JSeq, Dir: noCapture.Dir, PeerIdx: noCapture.PeerIdx, Mono: noCapture.Mono, WallNs: noCapture.WallNs, Code: noCapture.Code, WireCode: noCapture.WireCode, Payload: noCapture.Payload, DedupKey: noCapture.DedupKey, Offer: noCapture.Offer, Cause: noCapture.Cause, RelayOf: noCapture.RelayOf, Write: noCapture.Write, Size: noCapture.Size, Engine: noCapture.Engine, Dedup: noCapture.Dedup}
 			case rlp.DecodeStrict(body, &noDedup) == nil:
 				w = msgRLP{Format: noDedup.Format, JSeq: noDedup.JSeq, Dir: noDedup.Dir, PeerIdx: noDedup.PeerIdx, Mono: noDedup.Mono,
 					WallNs: noDedup.WallNs, Code: noDedup.Code, WireCode: noDedup.WireCode, Payload: noDedup.Payload,
@@ -574,7 +602,7 @@ func decodeBody(k Kind, body []byte) (Record, error) {
 		return Record{Kind: k, JSeq: w.JSeq, Body: &MsgRec{Dir: w.Dir, PeerIdx: uint32(w.PeerIdx), Mono: time.Duration(int64(w.Mono)),
 			WallNs: int64(w.WallNs), Code: w.Code, WireCode: w.WireCode, Payload: w.Payload, DedupKey: w.DedupKey, Offer: w.Offer,
 			Cause: event.SendCause(w.Cause), RelayOf: w.RelayOf, Write: w.Write, Size: w.Size, Engine: w.Engine,
-			Dedup: dedupOf(w.Dedup)}}, nil
+			Dedup: dedupOf(w.Dedup), Capture: w.Capture}}, nil
 	case KindOutcome:
 		var w outcomeRLP
 		if err := rlp.DecodeStrict(body, &w); err != nil {

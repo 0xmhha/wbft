@@ -590,7 +590,12 @@ func readIndex(fs fsys.FS, dir, name string) (SegmentIndex, bool) {
 
 // Reader reads the records of a journal directory in order.
 type Reader struct {
-	r *wal.Reader
+	fs         fsys.FS
+	dir        string
+	captures   map[captureKey]capturePosition
+	captureErr error
+	indexed    bool
+	r          *wal.Reader
 }
 
 // OpenReader returns a reader of the journal in dir, from its first
@@ -603,7 +608,7 @@ func OpenReader(fs fsys.FS, dir string) (*Reader, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Reader{r: r}, nil
+	return &Reader{r: r, fs: fs, dir: dir}, nil
 }
 
 // Next returns the next record, or io.EOF after the last one.

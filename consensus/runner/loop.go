@@ -123,8 +123,8 @@ func (r *Runner) next() (queued, bool) {
 		}
 	}
 	if hasPeer {
-		if m, ok := r.inbox.take(); ok {
-			return queued{in: m, via: viaPeer}, true
+		if m, capture, ok := r.inbox.take(); ok {
+			return queued{in: m, via: viaPeer, capture: capture}, true
 		}
 	}
 	return queued{}, false
@@ -490,6 +490,15 @@ func (r *Runner) journalStep(sc *stepCtx, kind string, body []byte, after *conse
 		if err == nil {
 			envs = append(envs, b)
 		}
+	}
+	if m, ok := sc.q.in.(consensus.Message); ok && sc.q.capture != 0 {
+		var err error
+		body, err = inputlog.EncodeCapturedMessage(m, sc.q.capture)
+		if err != nil {
+			r.log.Warn("journal capture encoding failed", "err", err)
+			return
+		}
+		kind = inputlog.KindCapturedMessage
 	}
 	rec := &journal.StepRec{EngineRun: r.engineRun, Step: sc.step, Mono: r.d.Clock.Mono(), WallNs: r.d.Clock.Now().UnixNano(),
 		InputKind: kind, Input: body, Via: sc.q.via, Env: envs, ValsetDigest: consensus.ValsetDigest(after.Validators), OutDigest: d}

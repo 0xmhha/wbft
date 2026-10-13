@@ -113,10 +113,15 @@ func (t *adapter) sendOne(dst *node, code uint64, payload []byte) {
 func (n *node) receive(from types.Address, code uint64, payload []byte) {
 	s := n.s
 	offer := "queued"
+	var capture uint64
+	if n.jw != nil {
+		n.capture++
+		capture = n.capture
+	}
 	data, deliver, act, _ := transport.DecodeFrame(code, payload)
 	switch act {
 	case transport.FrameDeliver:
-		if !n.r.Receiver().Offer(transport.Inbound{Peer: from, Code: deliver, Payload: data, RecvMono: s.l.now}) {
+		if !n.r.Receiver().Offer(transport.Inbound{Peer: from, Code: deliver, Payload: data, RecvMono: s.l.now, Capture: capture}) {
 			offer = "queue_full"
 		}
 	case transport.FrameDisconnect:
@@ -130,7 +135,11 @@ func (n *node) receive(from types.Address, code uint64, payload []byte) {
 		if src != nil {
 			idx = uint32(src.i)
 		}
-		n.jw.Put(journal.Record{Body: &journal.MsgRec{Dir: journal.In, PeerIdx: idx, Mono: s.l.now, WallNs: n.clock.Now().UnixNano(),
+		if src != nil && !n.recordedPeers[idx] {
+			n.jw.Put(journal.Record{Body: &journal.PeerRec{PeerIdx: idx, Addr: src.v.address, Event: "attached"}})
+			n.recordedPeers[idx] = true
+		}
+		n.jw.Put(journal.Record{Body: &journal.MsgRec{Capture: capture, Dir: journal.In, PeerIdx: idx, Mono: s.l.now, WallNs: n.clock.Now().UnixNano(),
 			Code: code, WireCode: code, Payload: payload, DedupKey: codec.DedupKey(payload), Offer: offer}})
 	}
 }

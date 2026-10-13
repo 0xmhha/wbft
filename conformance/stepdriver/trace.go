@@ -12,6 +12,7 @@ import (
 	"github.com/0xmhha/wbft/consensus"
 	"github.com/0xmhha/wbft/consensus/inputlog"
 	"github.com/0xmhha/wbft/observe/journal"
+	"github.com/0xmhha/wbft/p2p/transport"
 	"github.com/0xmhha/wbft/types"
 )
 
@@ -30,6 +31,11 @@ type JournalReader interface {
 
 // TraceOptions configure RunTrace.
 type TraceOptions struct {
+	// OmitMissingCaptured explicitly models intentional received-message loss.
+	// The missing input is not fed; its actual empty output list is compared.
+	// Default closed replay refuses missing captures instead.
+	OmitMissingCaptured bool
+
 	Blocks BlockSource
 	// FromStep and ToStep limit the reported steps of every engine run
 	// (0: from the start, to the end); every step is still fed.
@@ -41,9 +47,11 @@ type TraceOptions struct {
 
 // StepResult is one replayed core Step.
 type StepResult struct {
-	EngineRun uint64
-	Step      uint64
-	Input     consensus.Input
+	RecordedInputKind string
+	Omitted           bool
+	EngineRun         uint64
+	Step              uint64
+	Input             consensus.Input
 	// EnvCalls are the Env calls the core made, with the answers given.
 	EnvCalls  []inputlog.EnvCall
 	Outputs   []consensus.Output
@@ -56,8 +64,11 @@ type StepResult struct {
 
 // Errors of RunTrace.
 var (
-	ErrTraceNoSegment = errors.New("stepdriver: journal has no segment record before its steps")
-	ErrTraceGap       = errors.New("stepdriver: journal steps are not contiguous")
+	ErrTraceInvalidInput = errors.New("stepdriver: captured input is invalid")
+	ErrTraceMissingInput = errors.New("stepdriver: captured input is unavailable")
+	ErrTraceEnvExhausted = errors.New("stepdriver: recorded application answer unavailable")
+	ErrTraceNoSegment    = errors.New("stepdriver: journal has no segment record before its steps")
+	ErrTraceGap          = errors.New("stepdriver: journal steps are not contiguous")
 )
 
 // RunTrace rebuilds consensus.State from the journal "segment" record and
@@ -71,6 +82,7 @@ func RunTrace(j JournalReader, opts TraceOptions, yield func(StepResult) error) 
 	var copts consensus.Options
 	var core *consensus.State
 	var run, last uint64
+	var writerRun string
 	for {
 		rec, err := j.Next()
 		if err == io.EOF {
@@ -81,6 +93,7 @@ func RunTrace(j JournalReader, opts TraceOptions, yield func(StepResult) error) 
 		}
 		switch b := rec.Body.(type) {
 		case *journal.SegmentRec:
+			writerRun = b.Run
 			if cfg == nil {
 				c, err := types.ParseChainConfig(b.Core.ChainConfig)
 				if err != nil {
@@ -113,7 +126,28 @@ func RunTrace(j JournalReader, opts TraceOptions, yield func(StepResult) error) 
 				return fmt.Errorf("%w: engine run %d step %d after run %d step %d", ErrTraceGap, b.EngineRun, b.Step, run, last)
 			}
 			last = b.Step
-			res, err := replayStep(core, cfg, opts.Blocks, b)
+			var captured *consensus.Message
+			if b.InputKind == inputlog.KindCapturedMessage {
+				var err error
+				captured, err = resolveCaptured(j, writerRun, b)
+				if err != nil {
+					if !opts.OmitMissingCaptured || !errors.Is(err, ErrTraceMissingInput) {
+						return fmt.Errorf("stepdriver: run %d step %d: %w", b.EngineRun, b.Step, err)
+					}
+					d, e := inputlog.OutDigest(nil)
+					if e != nil {
+						return e
+					}
+					result := StepResult{RecordedInputKind: b.InputKind, Omitted: true, EngineRun: b.EngineRun, Step: b.Step, Outputs: []consensus.Output{}, OutDigest: d, Match: d == b.OutDigest && consensus.ValsetDigest(core.Snapshot().Validators) == b.ValsetDigest}
+					if b.Step >= opts.FromStep && (opts.ToStep == 0 || b.Step <= opts.ToStep) {
+						if e = yield(result); e != nil {
+							return e
+						}
+					}
+					continue
+				}
+			}
+			res, err := replayStep(core, cfg, opts.Blocks, b, captured)
 			if err != nil {
 				return fmt.Errorf("stepdriver: engine run %d step %d: %w", b.EngineRun, b.Step, err)
 			}
@@ -131,8 +165,13 @@ func RunTrace(j JournalReader, opts TraceOptions, yield func(StepResult) error) 
 }
 
 // replayStep feeds one recorded step to core.
-func replayStep(core *consensus.State, cfg *types.Config, blocks BlockSource, b *journal.StepRec) (StepResult, error) {
-	in, err := inputlog.Decode(b.InputKind, b.Input, nil)
+func replayStep(core *consensus.State, cfg *types.Config, blocks BlockSource, b *journal.StepRec, captured *consensus.Message) (StepResult, error) {
+	in, err := inputlog.Decode(b.InputKind, b.Input, func(uint64) ([]byte, error) {
+		if captured == nil {
+			return nil, ErrTraceMissingInput
+		}
+		return captured.Payload, nil
+	})
 	if err != nil {
 		return StepResult{}, err
 	}
@@ -158,7 +197,7 @@ func replayStep(core *consensus.State, cfg *types.Config, blocks BlockSource, b 
 		return StepResult{}, err
 	}
 	vd := consensus.ValsetDigest(core.Snapshot().Validators)
-	return StepResult{EngineRun: b.EngineRun, Step: b.Step, Input: in, EnvCalls: env.calls, Outputs: outs, OutDigest: d,
+	return StepResult{RecordedInputKind: b.InputKind, EngineRun: b.EngineRun, Step: b.Step, Input: in, EnvCalls: env.calls, Outputs: outs, OutDigest: d,
 		Match: d == b.OutDigest && vd == b.ValsetDigest}, nil
 }
 
@@ -206,7 +245,7 @@ func (e *traceEnv) pop(kind uint8, key types.Hash) (inputlog.EnvCall, bool) {
 		return inputlog.EnvCall{}, false
 	}
 	if len(e.answers) == 0 || e.answers[0].Kind != kind || e.answers[0].Key != key {
-		e.err = fmt.Errorf("the journal holds no answer for Env call %d on %x", kind, key[:4])
+		e.err = fmt.Errorf("%w: call %d on %x", ErrTraceEnvExhausted, kind, key[:4])
 		return inputlog.EnvCall{}, false
 	}
 	c := e.answers[0]
@@ -266,3 +305,43 @@ func (c chainOf) HeaderByHash(hash types.Hash) *types.Header {
 	return b.Header
 }
 func (c chainOf) HasBlock(hash types.Hash, idx uint64) bool { return c.Header(hash, idx) != nil }
+
+type captureResolver interface {
+	ResolveCapture(run string, id uint64) (journal.CapturedFrame, error)
+}
+
+func resolveCaptured(reader JournalReader, run string, step *journal.StepRec) (*consensus.Message, error) {
+	id, err := inputlog.CapturedReference(step.Input)
+	if err != nil {
+		return nil, fmt.Errorf("%w: malformed reference", ErrTraceInvalidInput)
+	}
+	resolver, ok := reader.(captureResolver)
+	if !ok {
+		return nil, ErrTraceInvalidInput
+	}
+	frame, err := resolver.ResolveCapture(run, id)
+	if err != nil {
+		if errors.Is(err, journal.ErrCaptureMissing) {
+			return nil, fmt.Errorf("%w: %v", ErrTraceMissingInput, err)
+		}
+		return nil, fmt.Errorf("%w: %v", ErrTraceInvalidInput, err)
+	}
+	data, code, action, _ := transport.DecodeFrame(frame.Record.Code, frame.Record.Payload)
+	if action != transport.FrameDeliver {
+		return nil, ErrTraceInvalidInput
+	}
+	input, err := inputlog.Decode(step.InputKind, step.Input, func(ref uint64) ([]byte, error) {
+		if ref != id {
+			return nil, ErrTraceMissingInput
+		}
+		return data, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	message, ok := input.(consensus.Message)
+	if !ok || uint64(message.Code) != code || message.Peer != frame.Peer {
+		return nil, ErrTraceInvalidInput
+	}
+	return &message, nil
+}

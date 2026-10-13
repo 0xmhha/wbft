@@ -498,3 +498,27 @@ lost inputs. Protocol errors include a bounded code: `input_gap` for missing
 segment/step continuity or explicit journal loss, and `replay_error` otherwise.
 Readable steps emitted before an error are only a prefix. Independent payload
 completeness checks are still required when step inputs contain inline bytes.
+
+
+### Received-frame replay references
+
+Adapters that support `transport.CaptureObserver` reserve a run-local capture
+ID before `Receiver.Offer` and report it with the original received frame after
+the offer. `transport.Inbound.Capture` carries only journal provenance. The
+runner stores peer journal steps as `captured_message` references; the WAL
+continues to store the original inline input for recovery. Legacy adapters keep
+their existing inline journal steps without claiming a frame association.
+
+The journal reader resolves references with a bounded, position-only index,
+including frames recorded after their steps. Source runs, peer mappings, frame
+stage delivery and message codes must agree. Missing, ambiguous or truncated
+captures are refused in normal closed replay. Older journal layouts still
+read; new capture metadata does not change wire or block encodings.
+
+`wbft-replay -omit-missing-captures` (protocol
+`omit_missing_captures: true`) explicitly models intentional input loss. The
+missing received input is not fed to the core; its actual empty output list is
+compared at the original recorded position. Each omitted step is labelled and
+the protocol summary marks the run counterfactual. Invalid or ambiguous
+references are not treated as intentional omissions. App answers are never
+invented; an unrecorded application call reports `env_exhausted`.
