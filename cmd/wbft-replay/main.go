@@ -170,7 +170,7 @@ func serve(in io.Reader, out io.Writer) error {
 				if !s.Match {
 					bad++
 				}
-				m := map[string]any{"type": "step", "id": req.ID, "engine_run": s.EngineRun, "step": s.Step,
+				m := map[string]any{"type": "step", "id": req.ID, "writer_run": s.WriterRun, "engine_run": s.EngineRun, "step": s.Step,
 					"input": s.RecordedInputKind, "omitted": s.Omitted, "out_digest": "0x" + hex.EncodeToString(s.OutDigest[:]),
 					"match": s.Match, "outputs": len(s.Outputs)}
 				if s.Vars != nil {
@@ -185,7 +185,14 @@ func serve(in io.Reader, out io.Writer) error {
 				} else if errors.Is(err, stepdriver.ErrTraceEnvExhausted) {
 					code = "env_exhausted"
 				}
-				if err := send(map[string]any{"type": "error", "id": req.ID, "code": code, "error": err.Error()}); err != nil {
+				reply := map[string]any{"type": "error", "id": req.ID, "code": code, "error": err.Error()}
+				var failed *stepdriver.TraceError
+				if errors.As(err, &failed) {
+					reply["writer_run"] = failed.WriterRun
+					reply["engine_run"] = failed.EngineRun
+					reply["step"] = failed.Step
+				}
+				if err := send(reply); err != nil {
 					return err
 				}
 				continue

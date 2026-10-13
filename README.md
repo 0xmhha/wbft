@@ -522,3 +522,19 @@ compared at the original recorded position. Each omitted step is labelled and
 the protocol summary marks the run counterfactual. Invalid or ambiguous
 references are not treated as intentional omissions. App answers are never
 invented; an unrecorded application call reports `env_exhausted`.
+
+
+### Replay execution identity
+
+Core-step events include `engine_run` alongside their step number. The writer
+run, engine generation and step identify the corresponding journal input,
+including when a restarted engine reuses step numbers. Older events may omit
+the engine generation and require an explicitly unambiguous association.
+
+Trace replay loads each new writer's recorded configuration and requires its
+engine start before feeding its steps. A changed configuration within the same
+writer is refused. Recorded application answers are matched by call kind and
+argument key within their source step; repeated answers for the same key are
+consumed in recorded order and never reused. Missing answers remain failures.
+Protocol steps and structured step errors include the source `writer_run`,
+`engine_run` and `step`; callers do not need to parse diagnostic text.
