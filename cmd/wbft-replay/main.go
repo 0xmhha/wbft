@@ -48,12 +48,13 @@ func main() {
 	jdir := flag.String("journal", "", "journal directory to replay")
 	chain := flag.String("chain", "", "chain file (RLP list of blocks from genesis)")
 	omit := flag.Bool("omit-missing-captures", false, "counterfactual: omit missing referenced peer inputs")
+	answerScope := flag.String("answer-scope", "step", "recorded application answers: step or explicit counterfactual context")
 	verbose := flag.Bool("v", false, "print every step")
 	warmupFrom := flag.Uint64("warmup-from", 0, "first active height of explicit approximate warmup")
 	compareFrom := flag.Uint64("compare-from", 0, "first comparison height after approximate warmup")
 	flag.Parse()
 	if *jdir != "" {
-		opts := stepdriver.TraceOptions{OmitMissingCaptured: *omit}
+		opts := stepdriver.TraceOptions{OmitMissingCaptured: *omit, AnswerScope: *answerScope}
 		if *warmupFrom != 0 || *compareFrom != 0 {
 			opts.Warmup = &stepdriver.TraceWarmup{FromHeight: *warmupFrom, CompareFromHeight: *compareFrom}
 		}
@@ -97,6 +98,10 @@ func replayOnceTrace(dir, chain string, verbose bool, opts stepdriver.TraceOptio
 	if steps == 0 {
 		fmt.Fprintln(w, "no recorded engine start or replayed steps")
 		return 2
+	}
+	if opts.AnswerScope == "context" {
+		fmt.Fprintln(w, "context application answers; original reproduction is not established")
+		return 3
 	}
 	if approximate > 0 {
 		fmt.Fprintf(w, "approximate %d warmup %d; original reproduction is not established\n", approximate, warmup)
@@ -150,11 +155,22 @@ func replay(dir, chain string, opts stepdriver.TraceOptions, yield func(stepdriv
 	if err != nil {
 		return err
 	}
+	if opts.AnswerScope == "context" {
+		answers, err := journal.OpenReader(fsys.OS{}, dir)
+		if err != nil {
+			return err
+		}
+		opts.Answers, err = stepdriver.NewAnswerPool(answers)
+		if err != nil {
+			return err
+		}
+	}
 	opts.Blocks = src
 	return stepdriver.RunTrace(r, opts, yield)
 }
 
 type request struct {
+	AnswerScope string `json:"answer_scope"`
 	Type        string `json:"type"`
 	ID          uint64 `json:"id"`
 	Protocol    string `json:"protocol"`
@@ -184,12 +200,12 @@ func serve(in io.Reader, out io.Writer) error {
 		}
 		switch req.Type {
 		case "hello":
-			if err := send(map[string]any{"type": "hello", "protocol": Protocol, "impl": "wbft", "version": buildmeta.Version(), "features": []string{"bounded_warmup_v1"}}); err != nil {
+			if err := send(map[string]any{"type": "hello", "protocol": Protocol, "impl": "wbft", "version": buildmeta.Version(), "features": []string{"bounded_warmup_v1", "context_answers_v1"}}); err != nil {
 				return err
 			}
 		case "replay":
 			steps, bad, approximate, warmup := 0, 0, 0, 0
-			opts := stepdriver.TraceOptions{FromStep: req.FromStep, ToStep: req.ToStep, WithVars: req.WithVars, OmitMissingCaptured: req.OmitMissing}
+			opts := stepdriver.TraceOptions{AnswerScope: req.AnswerScope, FromStep: req.FromStep, ToStep: req.ToStep, WithVars: req.WithVars, OmitMissingCaptured: req.OmitMissing}
 			if req.WarmupFrom != 0 || req.CompareFrom != 0 {
 				opts.Warmup = &stepdriver.TraceWarmup{FromHeight: req.WarmupFrom, CompareFromHeight: req.CompareFrom}
 			}
@@ -206,7 +222,7 @@ func serve(in io.Reader, out io.Writer) error {
 				}
 				m := map[string]any{"type": "step", "id": req.ID, "writer_run": s.WriterRun, "engine_run": s.EngineRun, "step": s.Step,
 					"input": s.RecordedInputKind, "omitted": s.Omitted, "out_digest": "0x" + hex.EncodeToString(s.OutDigest[:]),
-					"match": s.Match, "outputs": len(s.Outputs), "approximate": s.Approximate, "warmup": s.Warmup}
+					"match": s.Match, "outputs": len(s.Outputs), "context_answers": s.ContextAnswers, "answer_sources": s.AnswerSources, "approximate": s.Approximate, "warmup": s.Warmup}
 				if s.Vars != nil {
 					m["vars"] = json.RawMessage(stepdriver.VarsJSON(s.Vars))
 				}
@@ -218,6 +234,14 @@ func serve(in io.Reader, out io.Writer) error {
 					code = "input_gap"
 				} else if errors.Is(err, stepdriver.ErrTraceWarmupUnavailable) {
 					code = "warmup_unavailable"
+				} else if errors.Is(err, stepdriver.ErrTraceEnvAmbiguous) {
+					code = "env_ambiguous"
+				} else if errors.Is(err, stepdriver.ErrTraceEnvSource) {
+					code = "env_source_mismatch"
+				} else if errors.Is(err, stepdriver.ErrTraceHeadMismatch) {
+					code = "head_mismatch"
+				} else if errors.Is(err, stepdriver.ErrTraceAnswerLimit) {
+					code = "answer_limit"
 				} else if errors.Is(err, stepdriver.ErrTraceEnvExhausted) {
 					code = "env_exhausted"
 				}
@@ -234,7 +258,7 @@ func serve(in io.Reader, out io.Writer) error {
 				}
 				continue
 			}
-			if err := send(map[string]any{"type": "done", "id": req.ID, "steps": steps, "mismatches": bad, "counterfactual": req.OmitMissing, "approximate_steps": approximate, "warmup_steps": warmup}); err != nil {
+			if err := send(map[string]any{"type": "done", "id": req.ID, "steps": steps, "mismatches": bad, "counterfactual": req.OmitMissing || req.AnswerScope == "context", "answer_scope": req.AnswerScope, "approximate_steps": approximate, "warmup_steps": warmup}); err != nil {
 				return err
 			}
 		case "bye":

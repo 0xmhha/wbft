@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/0xmhha/wbft/conformance/sim"
+	"github.com/0xmhha/wbft/conformance/stepdriver"
 	"github.com/0xmhha/wbft/crypto/keccak"
 	"github.com/0xmhha/wbft/observe/journal"
 )
@@ -112,5 +113,52 @@ func TestReplayBundle(t *testing.T) {
 	}
 	if fromBundle.String() != fromDir.String() || !strings.Contains(fromBundle.String(), "mismatches 0") {
 		t.Fatalf("bundle replay %q, directory replay %q", fromBundle.String(), fromDir.String())
+	}
+}
+
+func TestContextAnswerProtocolAndCLIKeepCounterfactualStatus(t *testing.T) {
+	jd, chain := export(t)
+	var out bytes.Buffer
+	if code := replayOnceTrace(jd, chain, false, stepdriver.TraceOptions{AnswerScope: "context"}, &out); code != 3 || !strings.Contains(out.String(), "original reproduction is not established") {
+		t.Fatal(code, out.String())
+	}
+	input := fmt.Sprintf(`{"type":"hello","protocol":"wbft-replay/1"}
+{"type":"replay","id":9,"journal":%q,"chain":%q,"answer_scope":"context"}
+{"type":"replay","id":10,"journal":%q,"chain":%q,"answer_scope":"unbounded"}
+{"type":"bye"}
+`, jd, chain, jd, chain)
+	out.Reset()
+	if err := serve(strings.NewReader(input), &out); err != nil {
+		t.Fatal(err)
+	}
+	scanner := bufio.NewScanner(&out)
+	done, sourceCalls, refused := false, 0, false
+	for scanner.Scan() {
+		var row map[string]any
+		if err := json.Unmarshal(scanner.Bytes(), &row); err != nil {
+			t.Fatal(err)
+		}
+		switch row["type"] {
+		case "step":
+			if row["context_answers"] != true || row["match"] != true {
+				t.Fatal(row)
+			}
+			if sources, ok := row["answer_sources"].([]any); ok {
+				sourceCalls += len(sources)
+			}
+		case "done":
+			if row["counterfactual"] != true || row["answer_scope"] != "context" || row["mismatches"] != float64(0) {
+				t.Fatal(row)
+			}
+			done = true
+		case "error":
+			if row["id"] != float64(10) || row["code"] != "env_source_mismatch" {
+				t.Fatal(row)
+			}
+			refused = true
+		}
+	}
+	if !done || sourceCalls == 0 || !refused {
+		t.Fatal(done, sourceCalls, refused)
 	}
 }

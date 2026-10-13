@@ -33,6 +33,10 @@ type JournalReader interface {
 
 // TraceOptions configure RunTrace.
 type TraceOptions struct {
+	// AnswerScope context explicitly enables cross-step recorded application answers.
+	// The caller supplies an AnswerPool built from the same retained source.
+	AnswerScope string
+	Answers     *AnswerPool
 	// Warmup explicitly permits approximate state initialisation when the
 	// recorded engine start is absent. Nil preserves closed replay behavior.
 	Warmup *TraceWarmup
@@ -59,6 +63,8 @@ type TraceWarmup struct {
 
 // StepResult is one replayed core Step.
 type StepResult struct {
+	ContextAnswers bool
+	AnswerSources  []AnswerSource
 	// Approximate remains true until an actual recorded start resets the core.
 	Approximate bool
 	// Warmup reports an approximate step before CompareFromHeight.
@@ -98,6 +104,7 @@ var (
 	ErrTraceConfiguration     = errors.New("stepdriver: inconsistent writer configuration")
 	ErrTraceInvalidInput      = errors.New("stepdriver: captured input is invalid")
 	ErrTraceMissingInput      = errors.New("stepdriver: captured input is unavailable")
+	ErrTraceHeadMismatch      = errors.New("stepdriver: recorded head identity mismatch")
 	ErrTraceEnvExhausted      = errors.New("stepdriver: recorded application answer unavailable")
 	ErrTraceNoSegment         = errors.New("stepdriver: journal has no segment record before its steps")
 	ErrTraceGap               = errors.New("stepdriver: journal steps are not contiguous")
@@ -112,6 +119,16 @@ var (
 // header.CommitHeader. Each writer uses its own recorded configuration. yield is
 // called for every step within [FromStep, ToStep].
 func RunTrace(j JournalReader, opts TraceOptions, yield func(StepResult) error) error {
+	var answers *answerSession
+	if opts.AnswerScope != "" && opts.AnswerScope != "step" && opts.AnswerScope != "context" {
+		return ErrTraceEnvSource
+	}
+	if opts.AnswerScope == "context" {
+		if opts.Answers == nil {
+			return ErrTraceEnvSource
+		}
+		answers = opts.Answers.session()
+	}
 	if opts.Warmup != nil && (opts.Warmup.FromHeight == 0 || opts.Warmup.CompareFromHeight <= opts.Warmup.FromHeight || opts.Warmup.CompareFromHeight-opts.Warmup.FromHeight > 10000) {
 		return ErrTraceWarmupUnavailable
 	}
@@ -136,6 +153,11 @@ func RunTrace(j JournalReader, opts TraceOptions, yield func(StepResult) error) 
 		}
 		switch b := rec.Body.(type) {
 		case *journal.SegmentRec:
+			if answers != nil {
+				if err := answers.validateSegment(b); err != nil {
+					return err
+				}
+			}
 			encoded, err := json.Marshal(b.Core)
 			if err != nil {
 				return err
@@ -163,6 +185,11 @@ func RunTrace(j JournalReader, opts TraceOptions, yield func(StepResult) error) 
 		case *journal.StepRec:
 			if cfg == nil {
 				return ErrTraceNoSegment
+			}
+			if answers != nil {
+				if _, err := answers.source(writerRun, b); err != nil {
+					return &TraceError{Approximate: approximate, WriterRun: writerRun, EngineRun: b.EngineRun, Step: b.Step, Err: err}
+				}
 			}
 			if b.Step == 0 {
 				return &TraceError{Approximate: approximate, WriterRun: writerRun, EngineRun: b.EngineRun, Step: b.Step, Err: ErrTraceGap}
@@ -217,7 +244,7 @@ func RunTrace(j JournalReader, opts TraceOptions, yield func(StepResult) error) 
 					if e != nil {
 						return e
 					}
-					result := StepResult{WriterRun: writerRun, RecordedInputKind: b.InputKind, Omitted: true, EngineRun: b.EngineRun, Step: b.Step, Outputs: []consensus.Output{}, OutDigest: d, Match: d == b.OutDigest && consensus.ValsetDigest(core.Snapshot().Validators) == b.ValsetDigest}
+					result := StepResult{ContextAnswers: answers != nil, WriterRun: writerRun, RecordedInputKind: b.InputKind, Omitted: true, EngineRun: b.EngineRun, Step: b.Step, Outputs: []consensus.Output{}, OutDigest: d, Match: d == b.OutDigest && consensus.ValsetDigest(core.Snapshot().Validators) == b.ValsetDigest}
 					if err = markWarmup(&result, b, opts.Warmup, approximate); err != nil {
 						return err
 					}
@@ -229,7 +256,7 @@ func RunTrace(j JournalReader, opts TraceOptions, yield func(StepResult) error) 
 					continue
 				}
 			}
-			res, err := replayStep(core, cfg, opts.Blocks, b, captured)
+			res, err := replayStep(core, cfg, opts.Blocks, b, captured, writerRun, answers)
 			if err != nil {
 				return &TraceError{Approximate: approximate, WriterRun: writerRun, EngineRun: b.EngineRun, Step: b.Step, Err: err}
 			}
@@ -251,7 +278,7 @@ func RunTrace(j JournalReader, opts TraceOptions, yield func(StepResult) error) 
 }
 
 // replayStep feeds one recorded step to core.
-func replayStep(core *consensus.State, cfg *types.Config, blocks BlockSource, b *journal.StepRec, captured *consensus.Message) (StepResult, error) {
+func replayStep(core *consensus.State, cfg *types.Config, blocks BlockSource, b *journal.StepRec, captured *consensus.Message, writer string, session *answerSession) (StepResult, error) {
 	in, err := inputlog.Decode(b.InputKind, b.Input, func(uint64) ([]byte, error) {
 		if captured == nil {
 			return nil, ErrTraceMissingInput
@@ -261,8 +288,17 @@ func replayStep(core *consensus.State, cfg *types.Config, blocks BlockSource, b 
 	if err != nil {
 		return StepResult{}, err
 	}
-	env := &traceEnv{cfg: cfg, blocks: blocks}
+	env := &traceEnv{cfg: cfg, blocks: blocks, session: session}
+	if session != nil {
+		env.source, err = session.source(writer, b)
+		if err != nil {
+			return StepResult{}, err
+		}
+	}
 	if nh, ok := in.(consensus.NewHead); ok && nh.Header != nil {
+		if session != nil && (nh.Header.Number.Cmp(b.HeadNumber) != 0 || codec.BlockHash(nh.Header) != b.HeadHash) {
+			return StepResult{}, ErrTraceEnvSource
+		}
 		env.head = nh.Header
 	} else if env.head, err = headOf(blocks, b.HeadNumber, b.HeadHash); err != nil {
 		return StepResult{}, err
@@ -283,7 +319,7 @@ func replayStep(core *consensus.State, cfg *types.Config, blocks BlockSource, b 
 		return StepResult{}, err
 	}
 	vd := consensus.ValsetDigest(core.Snapshot().Validators)
-	return StepResult{RecordedInputKind: b.InputKind, EngineRun: b.EngineRun, Step: b.Step, Input: in, EnvCalls: env.calls, Outputs: outs, OutDigest: d,
+	return StepResult{RecordedInputKind: b.InputKind, EngineRun: b.EngineRun, Step: b.Step, Input: in, ContextAnswers: session != nil, AnswerSources: env.sources, EnvCalls: env.calls, Outputs: outs, OutDigest: d,
 		Match: d == b.OutDigest && vd == b.ValsetDigest}, nil
 }
 
@@ -291,19 +327,26 @@ func headOf(blocks BlockSource, n types.Height, h types.Hash) (*types.Header, er
 	if blocks == nil {
 		return nil, errors.New("no block source")
 	}
+	matches := func(hd *types.Header) bool { return hd != nil && hd.Number.Cmp(n) == 0 && codec.BlockHash(hd) == h }
 	hd, err := blocks.HeaderByNumber(n)
-	if err == nil && codec.BlockHash(hd) == h {
+	if err == nil && matches(hd) {
 		return hd, nil
 	}
 	b, err := blocks.BlockByHash(h)
 	if err != nil {
 		return nil, fmt.Errorf("head %s %x: %w", n, h[:4], err)
 	}
+	if b == nil || !matches(b.Header) {
+		return nil, ErrTraceHeadMismatch
+	}
 	return b.Header, nil
 }
 
 // traceEnv answers a replayed step.
 type traceEnv struct {
+	session *answerSession
+	source  answerStep
+	sources []AnswerSource
 	cfg     *types.Config
 	blocks  BlockSource
 	head    *types.Header
@@ -329,6 +372,16 @@ func (e *traceEnv) ValidatorsAt(n types.Height, parent types.Hash) (*validator.S
 func (e *traceEnv) pop(kind uint8, key types.Hash) (inputlog.EnvCall, bool) {
 	if e.err != nil {
 		return inputlog.EnvCall{}, false
+	}
+	if e.session != nil {
+		c, source, err := e.session.pop(e.source, kind, key)
+		if err != nil {
+			e.err = err
+			return inputlog.EnvCall{}, false
+		}
+		e.calls = append(e.calls, c)
+		e.sources = append(e.sources, source)
+		return c, true
 	}
 	for i, c := range e.answers {
 		if c.Kind == kind && c.Key == key {

@@ -103,7 +103,13 @@ func TestApproximateCLIHasDistinctExitAndProtocolLabels(t *testing.T) {
 		switch r["type"] {
 		case "hello":
 			features, _ := r["features"].([]any)
-			if len(features) != 1 || features[0] != "bounded_warmup_v1" {
+			found := false
+			for _, f := range features {
+				if f == "bounded_warmup_v1" {
+					found = true
+				}
+			}
+			if !found {
 				t.Fatal("capability missing", r)
 			}
 			hello = true
