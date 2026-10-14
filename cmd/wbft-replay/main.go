@@ -50,12 +50,25 @@ func main() {
 	chain := flag.String("chain", "", "chain file (RLP list of blocks from genesis)")
 	omit := flag.Bool("omit-missing-captures", false, "counterfactual: omit missing referenced peer inputs")
 	answerScope := flag.String("answer-scope", "step", "recorded application answers: step or explicit counterfactual context")
+	timerPolicyPath := flag.String("timer-policy", "", "counterfactual timer policy JSON with decimal string seconds")
 	schedulePath := flag.String("input-schedule", "", "explicit counterfactual external-input schedule JSON")
 	verbose := flag.Bool("v", false, "print every step")
 	warmupFrom := flag.Uint64("warmup-from", 0, "first active height of explicit approximate warmup")
 	compareFrom := flag.Uint64("compare-from", 0, "first comparison height after approximate warmup")
 	flag.Parse()
 	if *jdir != "" {
+		if *timerPolicyPath != "" {
+			if *answerScope != "context" || *schedulePath != "" || *omit || *warmupFrom != 0 || *compareFrom != 0 {
+				fmt.Fprintln(os.Stderr, "wbft-replay: timer policy requires context answers and complete input")
+				os.Exit(2)
+			}
+			policy, err := loadTimerPolicy(*timerPolicyPath)
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "wbft-replay:", err)
+				os.Exit(2)
+			}
+			os.Exit(replayTimedOnce(*jdir, *chain, policy, os.Stdout))
+		}
 		opts := stepdriver.TraceOptions{OmitMissingCaptured: *omit, AnswerScope: *answerScope}
 		if *schedulePath != "" {
 			spec, err := loadSchedule(*schedulePath)
@@ -184,6 +197,7 @@ func replay(dir, chain string, opts stepdriver.TraceOptions, yield func(stepdriv
 }
 
 type request struct {
+	TimerPolicy *stepdriver.TimerPolicy   `json:"timer_policy,omitempty"`
 	Schedule    *stepdriver.TraceSchedule `json:"input_schedule,omitempty"`
 	AnswerScope string                    `json:"answer_scope"`
 	Type        string                    `json:"type"`
@@ -215,10 +229,20 @@ func serve(in io.Reader, out io.Writer) error {
 		}
 		switch req.Type {
 		case "hello":
-			if err := send(map[string]any{"type": "hello", "protocol": Protocol, "impl": "wbft", "version": buildmeta.Version(), "features": []string{"bounded_warmup_v1", "context_answers_v1", "input_schedule_v1"}}); err != nil {
+			if err := send(map[string]any{"type": "hello", "protocol": Protocol, "impl": "wbft", "version": buildmeta.Version(), "features": []string{"bounded_warmup_v1", "context_answers_v1", "input_schedule_v1", "timed_inputs_v1"}}); err != nil {
+				return err
+			}
+		case "timed_replay":
+			if err := timedRequest(req, send); err != nil {
 				return err
 			}
 		case "replay":
+			if req.TimerPolicy != nil {
+				if err := send(map[string]any{"type": "error", "id": req.ID, "code": "timer_policy", "error": "use timed_replay for timer policy experiments"}); err != nil {
+					return err
+				}
+				continue
+			}
 			steps, bad, approximate, warmup := 0, 0, 0, 0
 			opts := stepdriver.TraceOptions{Schedule: req.Schedule, AnswerScope: req.AnswerScope, FromStep: req.FromStep, ToStep: req.ToStep, WithVars: req.WithVars, OmitMissingCaptured: req.OmitMissing}
 			if req.WarmupFrom != 0 || req.CompareFrom != 0 {

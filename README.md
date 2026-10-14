@@ -676,3 +676,52 @@ Timer input bytes count toward journal queue limits; loss remains explicit as
 gap records. Segment rotation and journal bundles preserve the records and
 capability. These observations are prerequisites for timer-policy execution,
 not a claim that every journal can already be used for what-if replay.
+
+
+### Timer policy experiments
+
+`wbft-replay -journal DIR -chain FILE -answer-scope context -timer-policy POLICY`
+regenerates timeout inputs from actual `ArmTimer`/`CancelTimers` outputs through
+`runner.TimerQueue`. Policy JSON uses decimal string seconds, for example
+`{"request_timeout_seconds":"2","max_request_timeout_seconds":"30"}`.
+Unknown fields, duplicates, numeric JSON values, zero base timeout and duration
+overflow are refused. The original configuration and height transitions remain
+intact apart from these explicit parameters.
+
+A complete source with measured step entry timing is required. The source must declare measured timer operation tracing; legacy operation
+clocks remain unavailable. The untouched
+baseline must reproduce outputs and timer contexts before any experiment step
+is emitted. Internal `Schedule` inputs are regenerated in runner FIFO order.
+Recorded signing results can be reused only for identical full Broadcast requests,
+writer/engine/head context and recorded signing order; nested signatures remain
+unchanged. Missing or conflicting signing results and new application questions
+stop execution. This does not execute a new signer or block builder.
+
+The explicit execution model is `recorded-external-slots/zero-generated-processing/recorded-signing-results/1`.
+External processing slots and their recorded busy intervals are fixed. Generated
+handlers have zero modeled processing cost. Recorded wall anchors are used at
+source slots, with monotonic extrapolation between them. These are conditional
+open-loop assumptions, not proof of physical execution or another node's response.
+All experiment results remain counterfactual, including identical policy values.
+The finite source horizon is preserved and remaining outputs are not run beyond it.
+
+Hello advertises `timed_inputs_v1`. Use `timed_replay` with `timer_policy` and
+`answer_scope:"context"`; partial ranges, missing-input omission, warmup, input
+schedule combinations and vars are refused. Replies use `timed_step` and
+`timed_done`. Execution/source coordinates, monotonic nanoseconds and policy
+seconds are decimal strings. Generated inputs have no source step; timer arm,
+causal execution parent and reused signing evidence are distinct fields. Errors
+retain execution and available source/causal coordinates. CLI exits 3 for a
+finished experiment and 2 for a refused or incomplete run. These experiments
+still need analyzer storage, UI and explicit open-loop validity boundaries.
+
+The baseline uses measured arm/cancel operation times and observed callback
+queue times through the official scheduler. Complete operation sequence,
+source-output joins, FIFO dequeue and full timeout contexts are validated before
+emitting results. Missing or conflicting timing evidence is refused. Changed
+policy execution uses the deterministic clock and ordinary FIFO Pop. Reused
+application questions require complete output and writer/engine/head/validator
+context identity; original question source and output index remain explicit.
+Completion reports each writer horizon and pending internal, queued and armed
+timers. A recorded Stop applies its measured runtime cleanup; no future tail is
+manufactured.
