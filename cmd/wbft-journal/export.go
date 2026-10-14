@@ -451,6 +451,13 @@ func (w *r01Writer) msg(seq uint64, b *journal.MsgRec) error {
 	}
 	r["code"] = fmt.Sprintf("%#x", b.Code)
 	r["wire_code"] = b.WireCode
+	if b.IO != nil {
+		r["io"] = map[string]any{
+			"start_wall":    time.Unix(0, b.IO.StartWallNs).UTC().Format(time.RFC3339Nano),
+			"end_wall":      time.Unix(0, b.IO.EndWallNs).UTC().Format(time.RFC3339Nano),
+			"start_mono_ns": int64(b.IO.StartMono), "end_mono_ns": int64(b.IO.EndMono),
+		}
+	}
 	// A record with a size kept only the size (the frame was too large to
 	// keep); otherwise the payload, possibly empty, is the frame's.
 	if b.Size > 0 && uint64(len(b.Payload)) != b.Size {
@@ -473,6 +480,9 @@ func (w *r01Writer) msg(seq uint64, b *journal.MsgRec) error {
 			r["dedup"] = map[string]bool{"known_hit": b.Dedup.Known, "peer_recent_hit": b.Dedup.PeerRecent}
 		}
 	} else {
+		if b.Write != "" {
+			r["write_result"] = b.Write
+		}
 		if b.Write != "" && b.Write != transport.WriteOK {
 			r["write_error"] = b.Write
 		}

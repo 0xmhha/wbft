@@ -45,6 +45,7 @@ type sendKey struct {
 const maxPendingCauses = 1 << 14
 
 var _ transport.FrameObserver = (*frameRecorder)(nil)
+var _ transport.IOObserver = (*frameRecorder)(nil)
 
 // stampClock is the part of runner.Clock that stamps records.
 type stampClock interface {
@@ -77,11 +78,26 @@ func (f *frameRecorder) msg(dir string, peer types.Address, code uint64, payload
 
 // Received implements transport.FrameObserver.
 func (f *frameRecorder) Capture() uint64 { return f.capture.Add(1) }
+func (f *frameRecorder) Moment() transport.IOMoment {
+	return transport.IOMoment{Mono: f.clock.Mono(), WallNs: f.clock.Now().UnixNano()}
+}
+
+func recordedIO(interval transport.IOInterval) *journal.IOInterval {
+	return &journal.IOInterval{StartMono: interval.Start.Mono, StartWallNs: interval.Start.WallNs, EndMono: interval.End.Mono, EndWallNs: interval.End.WallNs}
+}
+
+func (f *frameRecorder) ReceivedIO(peer types.Address, code uint64, size int, payload []byte, offer string, capture uint64, interval transport.IOInterval) {
+	f.received(peer, code, size, payload, offer, capture, recordedIO(interval))
+}
 func (f *frameRecorder) Received(peer types.Address, code uint64, size int, payload []byte, offer string) {
 	f.ReceivedCapture(peer, code, size, payload, offer, 0)
 }
 func (f *frameRecorder) ReceivedCapture(peer types.Address, code uint64, size int, payload []byte, offer string, capture uint64) {
+	f.received(peer, code, size, payload, offer, capture, nil)
+}
+func (f *frameRecorder) received(peer types.Address, code uint64, size int, payload []byte, offer string, capture uint64, io *journal.IOInterval) {
 	m := f.msg(journal.In, peer, code, payload)
+	m.IO = io
 	m.Offer = offer
 	m.Capture = capture
 	if f.engine != nil {
@@ -109,7 +125,14 @@ func (f *frameRecorder) inbound(peer types.Address, known, peerRecent bool) {
 
 // Wrote implements transport.FrameObserver.
 func (f *frameRecorder) Wrote(peer types.Address, code uint64, payload []byte, write string) {
+	f.wrote(peer, code, payload, write, nil)
+}
+func (f *frameRecorder) WroteIO(peer types.Address, code uint64, payload []byte, write string, interval transport.IOInterval) {
+	f.wrote(peer, code, payload, write, recordedIO(interval))
+}
+func (f *frameRecorder) wrote(peer types.Address, code uint64, payload []byte, write string, io *journal.IOInterval) {
 	m := f.msg(journal.Out, peer, code, payload)
+	m.IO = io
 	m.Write = write
 	k := sendKey{peer, m.DedupKey}
 	f.mu.Lock()

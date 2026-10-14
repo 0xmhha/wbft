@@ -504,6 +504,17 @@ completeness checks are still required when step inputs contain inline bytes.
 
 ### Received-frame replay references
 
+Adapters implementing `transport.IOObserver` retain the observer clock's
+monotonic and wall-clock endpoints around transport I/O. Writes end at the
+underlying write return; reads end after consuming the payload and before
+validation or queue delivery. A read interval may include waiting for a frame.
+The existing callback timestamp remains unchanged. Optional journal intervals
+and R-01 `io` fields are absent when the adapter did not measure them. Wall-clock
+regressions are preserved. Interval overlap neither proves a clock fault nor
+establishes a corrected one-way latency; clock agreement and message pairing
+still need independent evidence. R-01 outgoing frames retain explicit write
+results when recorded, including successful writes.
+
 Adapters that support `transport.CaptureObserver` reserve a run-local capture
 ID before `Receiver.Offer` and report it with the original received frame after
 the offer. `transport.Inbound.Capture` carries only journal provenance. The
