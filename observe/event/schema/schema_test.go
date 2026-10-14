@@ -141,3 +141,21 @@ func TestCompile(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestEngineReplayPolicyFieldsRemainOptionalAndTyped(t *testing.T) {
+	s, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	prefix := `{"v":1,"kind":"ENGINE_START","node":"0x` + strings.Repeat("00", 20) + `","run":"r","seq":0,"t_wall":"2020-01-01T00:00:00Z","t_mono_ns":0,"engine_run":1,"reason":"start","replay":{"records":0,"stopped":null,"replayed":false`
+	for _, suffix := range []string{`}}`, `,"enabled":true,"available":true}}`, `,"enabled":false,"available":true}}`, `,"enabled":true,"available":false}}`} {
+		if err := s.Validate([]byte(prefix + suffix)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, suffix := range []string{`,"enabled":"true"}}`, `,"available":1}}`, `,"enabled":null}}`, `,"extra":false}}`} {
+		if err := s.Validate([]byte(prefix + suffix)); err == nil {
+			t.Fatal("untyped or extra replay field accepted", suffix)
+		}
+	}
+}

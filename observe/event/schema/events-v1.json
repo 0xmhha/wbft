@@ -178,7 +178,9 @@
           "properties": {
             "records": { "type": "integer", "minimum": 0 },
             "stopped": { "description": "Why the replay stopped early; null when it read every record.", "type": ["string", "null"] },
-            "replayed": { "type": "boolean" }
+            "replayed": { "type": "boolean" },
+            "enabled": { "description": "Whether WAL replay was configured for this engine start; absent in older records.", "type": "boolean" },
+            "available": { "description": "Whether this engine start had a WAL dependency; independent of replay success.", "type": "boolean" }
           },
           "required": ["records", "stopped", "replayed"],
           "additionalProperties": false

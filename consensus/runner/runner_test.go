@@ -766,3 +766,37 @@ func TestEngineRestartMoment(t *testing.T) {
 		t.Fatalf("round timer deadline %v, restart at %v", recs[arm].Fields["deadline_mono_ns"], restart)
 	}
 }
+
+// An empty WAL reports no replayed records even when replay was configured.
+func TestEngineStartSeparatesReplayPolicyFromResult(t *testing.T) {
+	for _, tc := range []struct {
+		name               string
+		enabled, available bool
+	}{{"enabled", true, true}, {"disabled", false, true}, {"missing_wal", true, false}} {
+		t.Run(tc.name, func(t *testing.T) {
+			n := newTNode(t, newKeys(t, 4), 1)
+			n.boot()
+			if err := n.r.Stop(); err != nil {
+				t.Fatal(err)
+			}
+			n.r.cfg.ReplayWAL = tc.enabled
+			if !tc.available {
+				n.r.d.WAL = nil
+			}
+			from := len(n.events.recs)
+			if err := n.r.Start(context.Background(), n.chain.head.Number.AddUint64(1)); err != nil {
+				t.Fatal(err)
+			}
+			n.events.mu.Lock()
+			defer n.events.mu.Unlock()
+			recs := n.events.recs[from:]
+			if len(recs) == 0 || recs[0].Kind != event.EngineStart {
+				t.Fatal("missing engine start")
+			}
+			replay, ok := recs[0].Fields["replay"].(map[string]any)
+			if !ok || replay["enabled"] != tc.enabled || replay["available"] != tc.available || replay["replayed"] != false {
+				t.Fatalf("replay policy/result %+v", replay)
+			}
+		})
+	}
+}
