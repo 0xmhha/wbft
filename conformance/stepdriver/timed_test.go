@@ -55,6 +55,13 @@ func TestTimedTraceRegeneratesRecordedBaselineAndChangedExpiry(t *testing.T) {
 			t.Fatal(e)
 		}
 		e = stepdriver.RunTimedTrace(reader, stepdriver.TimedOptions{Blocks: blocks, Answers: pool}, func(r stepdriver.TimedResult) error {
+			if _, stopped := r.Result.Input.(consensus.Stop); stopped {
+				if r.State.Running || r.State.Height != nil || r.State.Round != nil || r.State.State != "" {
+					t.Fatal("stopped state acquired a fabricated view", r.State)
+				}
+			} else if !r.State.Running || r.State.Height == nil || r.State.Round == nil {
+				t.Fatal("active execution view missing", r.State)
+			}
 			if r.Source == nil || !r.Result.Match {
 				t.Fatal("baseline source or output lost", r)
 			}

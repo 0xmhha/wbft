@@ -54,7 +54,29 @@ type TimedSource struct {
 
 // TimedResult distinguishes source input comparisons from generated expiries.
 // Generated timers have an arm source, never a manufactured source ordinal.
+// TimedState is the post-execution core state. A stopped core has no view;
+// consumers must not substitute source input height or round for that absence.
+type TimedState struct {
+	Running bool    `json:"running"`
+	Height  *string `json:"height"`
+	Round   *string `json:"round"`
+	State   string  `json:"state,omitempty"`
+}
+
+func timedState(state *consensus.State) TimedState {
+	return timedSnapshot(state.Snapshot())
+}
+func timedSnapshot(snapshot *consensus.Snapshot) TimedState {
+	out := TimedState{Running: snapshot.Running}
+	if snapshot.Running {
+		height, round := snapshot.View.Sequence.String(), snapshot.View.Round.String()
+		out.Height, out.Round, out.State = &height, &round, snapshot.State.String()
+	}
+	return out
+}
+
 type TimedResult struct {
+	State              TimedState
 	Model              string
 	Counterfactual     bool
 	Execution          uint64
@@ -555,7 +577,7 @@ func runTimedEntries(entries []timedSourceEntry, j JournalReader, opts TimedOpti
 		if reference != nil {
 			model = TimedExperimentModel
 		}
-		return yield(TimedResult{Model: model, Counterfactual: reference != nil, Deadline: deadline, ArmExecution: parent, Execution: execution, Mono: mono, Source: source, Arm: arm, Cause: cause, ParentExecution: causalParent, Evidence: activeEvidence, ApplicationSources: applicationSources, Generated: source == nil, Suppression: suppression, Result: result})
+		return yield(TimedResult{State: timedState(state), Model: model, Counterfactual: reference != nil, Deadline: deadline, ArmExecution: parent, Execution: execution, Mono: mono, Source: source, Arm: arm, Cause: cause, ParentExecution: causalParent, Evidence: activeEvidence, ApplicationSources: applicationSources, Generated: source == nil, Suppression: suppression, Result: result})
 	}
 	drainInternal := func(mono time.Duration) error {
 		for len(internal) > 0 {
