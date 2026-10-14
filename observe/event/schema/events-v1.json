@@ -106,6 +106,17 @@
         "impl": { "const": "wbft" },
         "mode": { "enum": ["embedded", "standalone"] },
         "profile": { "enum": ["compat", "improved"] },
+        "application_model": {
+          "type": "object",
+          "properties": {
+            "build_queue": { "const": "serial-latest" },
+            "done_result": { "enum": ["failed", "submitted"] },
+            "assembly_return": { "const": "sampled" },
+            "selection": { "const": "callbacks_then_done_then_pending" }
+          },
+          "required": ["build_queue", "done_result", "assembly_return", "selection"],
+          "additionalProperties": false
+        },
         "handshake": { "enum": ["start", "refinalize", "start_after_rollback", "refuse"] },
         "improvements": {
           "type": "array",

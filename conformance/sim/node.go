@@ -114,6 +114,9 @@ func (n *node) faults(name string) {
 // start starts a new incarnation: open the logs and the signer, run the
 // start-up handshake and start the engine.
 func (n *node) start() {
+	if n.app.serial != nil && n.app.serial.deferStart() {
+		return
+	}
 	n.inc++
 	inc := n.inc
 	n.alive, n.down = true, false
@@ -215,9 +218,11 @@ func (n *node) start() {
 		return
 	}
 	n.r, n.signer = r, signer
-	_ = n.ev.Write(event.Record{Kind: event.NodeStart, Fields: map[string]any{"impl": "wbft", "mode": "standalone",
-		"profile": n.spec.Profile, "sign_floor": floor, "wal_recovery": map[string]any{
-			"records": recov.Records, "torn_bytes": recov.TornBytes, "corrupted": len(recov.Corrupted)}}}, n.stamp())
+	fields := map[string]any{"impl": "wbft", "mode": "standalone", "profile": n.spec.Profile, "sign_floor": floor, "wal_recovery": map[string]any{"records": recov.Records, "torn_bytes": recov.TornBytes, "corrupted": len(recov.Corrupted)}}
+	if n.spec.BuildQueuePolicy != "" {
+		fields["application_model"] = map[string]any{"build_queue": n.spec.BuildQueuePolicy, "done_result": n.spec.BuildDoneResult, "assembly_return": "sampled", "selection": "callbacks_then_done_then_pending"}
+	}
+	_ = n.ev.Write(event.Record{Kind: event.NodeStart, Fields: fields}, n.stamp())
 	if !n.guard(func() {
 		if err := r.Start(n.s.ctx, n.app.chain.head.Header.Number.AddUint64(1)); err != nil {
 			fail(err)
@@ -227,6 +232,9 @@ func (n *node) start() {
 	}
 	if !n.alive {
 		return
+	}
+	if n.app.serial != nil {
+		n.app.serial.start()
 	}
 	info := r.LastReplay()
 	n.s.replays = append(n.s.replays, info)
@@ -329,7 +337,7 @@ func (n *node) stop() {
 		_ = n.jw.Close()
 	}
 	n.alive, n.down, n.r = false, true, nil
-	n.app.dropPending()
+	n.app.stopPending()
 }
 
 // crash kills the node: only synced data survive.
