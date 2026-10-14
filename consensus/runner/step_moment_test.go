@@ -7,6 +7,7 @@ import (
 	"github.com/0xmhha/wbft/codec"
 	"github.com/0xmhha/wbft/consensus"
 	"github.com/0xmhha/wbft/observe/event"
+	"github.com/0xmhha/wbft/observe/journal"
 )
 
 // The events of one step carry one moment, the start of the step, and the
@@ -68,4 +69,41 @@ func TestStepEventsShareTheStepMoment(t *testing.T) {
 		}
 	}
 	t.Fatalf("no live timer at the reported deadline %v", last)
+}
+
+func TestJournalEntryMatchesEventMomentAndPrecedesCompletion(t *testing.T) {
+	k := newKeys(t, 4)
+	n := newTNode(t, k, 1)
+	n.clock.tick = time.Microsecond
+	n.boot()
+	a := block(t, 10, 0, k.addrs[0], codec.BlockHash(n.chain.head))
+	n.deliver(0, codec.CodePreprepare, k.preprepare(t, 0, view(10, 0), a))
+	if e := n.r.d.Journal.(*journal.FileWriter).Sync(); e != nil {
+		t.Fatal(e)
+	}
+	records, e := journal.ReadAll(n.jfs, "/j")
+	if e != nil {
+		t.Fatal(e)
+	}
+	n.events.mu.Lock()
+	defer n.events.mu.Unlock()
+	moments := map[uint64]event.Stamp{}
+	for _, s := range n.events.stamps {
+		if s.Step != nil {
+			moments[*s.Step] = s
+		}
+	}
+	checked := 0
+	for _, r := range records {
+		if s, ok := r.Body.(*journal.StepRec); ok {
+			m, exists := moments[s.Step]
+			if !exists || s.Entry == nil || s.Entry.Mono != m.Mono || s.Entry.WallNs != m.Wall.UnixNano() || s.Entry.Mono >= s.Mono {
+				t.Fatal("entry/completion evidence inconsistent", s, m)
+			}
+			checked++
+		}
+	}
+	if checked < 2 {
+		t.Fatal("start and peer input not covered")
+	}
 }

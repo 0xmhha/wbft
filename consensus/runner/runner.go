@@ -294,7 +294,8 @@ func New(cfg Config, d Deps) (*Runner, error) {
 		r.modLogs = map[logcat.Module]*slog.Logger{logcat.ConsensusRound: d.ModuleLogger(logcat.ConsensusRound),
 			logcat.ConsensusMsg: d.ModuleLogger(logcat.ConsensusMsg)}
 	}
-	r.timers.r = r
+	r.timers.clock = r.d.Clock
+	r.timers.wake = r.wake
 	r.inbox.init(r)
 	r.commitCond = sync.NewCond(&r.commitMu)
 	r.snap.Store(&consensus.Snapshot{})

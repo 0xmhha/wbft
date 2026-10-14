@@ -500,7 +500,7 @@ func (r *Runner) journalStep(sc *stepCtx, kind string, body []byte, after *conse
 		}
 		kind = inputlog.KindCapturedMessage
 	}
-	rec := &journal.StepRec{EngineRun: r.engineRun, Step: sc.step, Mono: r.d.Clock.Mono(), WallNs: r.d.Clock.Now().UnixNano(),
+	rec := &journal.StepRec{Entry: &journal.StepMoment{Mono: r.stepAt.Mono, WallNs: r.stepAt.Wall.UnixNano()}, EngineRun: r.engineRun, Step: sc.step, Mono: r.d.Clock.Mono(), WallNs: r.d.Clock.Now().UnixNano(),
 		InputKind: kind, Input: body, Via: sc.q.via, Env: envs, ValsetDigest: consensus.ValsetDigest(after.Validators), OutDigest: d}
 	if r.env.head != nil {
 		rec.HeadNumber, rec.HeadHash = r.env.head.Number, codec.BlockHash(r.env.head)

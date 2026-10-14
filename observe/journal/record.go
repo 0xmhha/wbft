@@ -198,8 +198,16 @@ type SuppressedRec struct {
 	Reason   string
 }
 
+// StepMoment is a measured step-entry clock pair from the runner.
+// Absence means unknown; completion time is never substituted for entry time.
+type StepMoment struct {
+	Mono   time.Duration
+	WallNs int64
+}
+
 // StepRec is one input of the core.
 type StepRec struct {
+	Entry     *StepMoment
 	EngineRun uint64
 	Step      uint64
 	Mono      time.Duration
@@ -449,6 +457,7 @@ type stepRLP struct {
 	ValsetDigest types.Hash
 	OutDigest    types.Hash
 	TimerGens    []uint64
+	Entry        []uint64 `rlp:"optional"`
 }
 
 type gapRLP struct {
@@ -514,9 +523,16 @@ func encodeBody(r Record, jseq uint64) ([]byte, error) {
 		if gens == nil {
 			gens = []uint64{}
 		}
+		var entry []uint64
+		if b.Entry != nil {
+			if b.Entry.Mono < 0 || b.Entry.Mono > b.Mono {
+				return nil, fmt.Errorf("journal: invalid step entry moment")
+			}
+			entry = []uint64{uint64(b.Entry.Mono), uint64(b.Entry.WallNs)}
+		}
 		return rlp.Encode(&stepRLP{Format: Format, JSeq: jseq, EngineRun: b.EngineRun, Step: b.Step, Mono: uint64(int64(b.Mono)),
 			WallNs: uint64(b.WallNs), InputKind: b.InputKind, Input: bytesOrEmpty(b.Input), Via: b.Via,
-			HeadNumber: heightBig(b.HeadNumber), HeadHash: b.HeadHash, Env: env, ValsetDigest: b.ValsetDigest, OutDigest: b.OutDigest, TimerGens: gens})
+			HeadNumber: heightBig(b.HeadNumber), HeadHash: b.HeadHash, Env: env, ValsetDigest: b.ValsetDigest, OutDigest: b.OutDigest, TimerGens: gens, Entry: entry})
 	case *GapRec:
 		bk := b.ByKind
 		if bk == nil {
@@ -636,13 +652,20 @@ func decodeBody(k Kind, body []byte) (Record, error) {
 		if err := check(w.Format); err != nil {
 			return fail(err)
 		}
+		var entry *StepMoment
+		if len(w.Entry) > 0 {
+			if len(w.Entry) != 2 || int64(w.Entry[0]) < 0 || int64(w.Entry[0]) > int64(w.Mono) {
+				return fail(fmt.Errorf("journal: invalid step entry moment"))
+			}
+			entry = &StepMoment{Mono: time.Duration(w.Entry[0]), WallNs: int64(w.Entry[1])}
+		}
 		hn, err := types.HeightFromBig(bigOrZero(w.HeadNumber))
 		if err != nil {
 			return fail(err)
 		}
 		return Record{Kind: k, JSeq: w.JSeq, Body: &StepRec{EngineRun: w.EngineRun, Step: w.Step, Mono: time.Duration(int64(w.Mono)),
 			WallNs: int64(w.WallNs), InputKind: w.InputKind, Input: w.Input, Via: w.Via, HeadNumber: hn, HeadHash: w.HeadHash,
-			Env: w.Env, ValsetDigest: w.ValsetDigest, OutDigest: w.OutDigest, TimerGens: w.TimerGens}}, nil
+			Env: w.Env, ValsetDigest: w.ValsetDigest, OutDigest: w.OutDigest, TimerGens: w.TimerGens, Entry: entry}}, nil
 	case KindGap:
 		var w gapRLP
 		if err := rlp.DecodeStrict(body, &w); err != nil {

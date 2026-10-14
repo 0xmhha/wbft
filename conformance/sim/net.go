@@ -39,7 +39,7 @@ func (s *simulation) linkOf(a, b types.Address) Link {
 // cut reports whether the link from a to b is cut now.
 func (s *simulation) cut(a, b types.Address) bool {
 	for _, p := range s.sc.Partitions {
-		if s.l.now < p.From || s.l.now >= p.To {
+		if s.l.c.Mono() < p.From || s.l.c.Mono() >= p.To {
 			continue
 		}
 		for _, c := range p.Cut {
@@ -94,7 +94,7 @@ func (t *adapter) Send(peers []types.Address, code uint64, payload []byte) []tra
 func (t *adapter) sendOne(dst *node, code uint64, payload []byte) {
 	s := t.n.s
 	if t.n.jw != nil {
-		t.n.jw.Put(journal.Record{Body: &journal.MsgRec{Dir: journal.Out, PeerIdx: uint32(dst.i), Mono: s.l.now,
+		t.n.jw.Put(journal.Record{Body: &journal.MsgRec{Dir: journal.Out, PeerIdx: uint32(dst.i), Mono: s.l.c.Mono(),
 			WallNs: t.n.clock.Now().UnixNano(), Code: code, WireCode: code, Payload: payload,
 			DedupKey: codec.DedupKey(payload), Cause: event.CauseBroadcast, Write: "ok"}})
 	}
@@ -121,7 +121,7 @@ func (n *node) receive(from types.Address, code uint64, payload []byte) {
 	data, deliver, act, _ := transport.DecodeFrame(code, payload)
 	switch act {
 	case transport.FrameDeliver:
-		if !n.r.Receiver().Offer(transport.Inbound{Peer: from, Code: deliver, Payload: data, RecvMono: s.l.now, Capture: capture}) {
+		if !n.r.Receiver().Offer(transport.Inbound{Peer: from, Code: deliver, Payload: data, RecvMono: s.l.c.Mono(), Capture: capture}) {
 			offer = "queue_full"
 		}
 	case transport.FrameDisconnect:
@@ -139,7 +139,7 @@ func (n *node) receive(from types.Address, code uint64, payload []byte) {
 			n.jw.Put(journal.Record{Body: &journal.PeerRec{PeerIdx: idx, Addr: src.v.address, Event: "attached"}})
 			n.recordedPeers[idx] = true
 		}
-		n.jw.Put(journal.Record{Body: &journal.MsgRec{Capture: capture, Dir: journal.In, PeerIdx: idx, Mono: s.l.now, WallNs: n.clock.Now().UnixNano(),
+		n.jw.Put(journal.Record{Body: &journal.MsgRec{Capture: capture, Dir: journal.In, PeerIdx: idx, Mono: s.l.c.Mono(), WallNs: n.clock.Now().UnixNano(),
 			Code: code, WireCode: code, Payload: payload, DedupKey: codec.DedupKey(payload), Offer: offer}})
 	}
 }
@@ -166,7 +166,7 @@ func (t *adapter) Peers() []transport.PeerInfo {
 // for a second in both directions.
 func (t *adapter) Disconnect(peer types.Address, reason string) {
 	s := t.n.s
-	s.sc.Partitions = append(s.sc.Partitions, Partition{From: s.l.now, To: s.l.now + time.Second, Cut: [][2]types.Address{{t.n.v.address, peer}}})
+	s.sc.Partitions = append(s.sc.Partitions, Partition{From: s.l.c.Mono(), To: s.l.c.Mono() + time.Second, Cut: [][2]types.Address{{t.n.v.address, peer}}})
 	if t.n.ev != nil {
 		_ = t.n.ev.Write(event.Record{Kind: event.Health, Fields: map[string]any{"what": "disconnect", "peer": hexAddr(peer), "reason": reason}}, t.n.stamp())
 	}
@@ -268,7 +268,7 @@ func (s *simulation) adversaryOf(n *node) *Adversary {
 }
 
 func (s *simulation) advContext(n *node, a *Adversary) *AdvContext {
-	c := &AdvContext{Now: s.l.now, Secret: n.v.ECDSA, Rand: s.rng, Head: n.app.chain.head.Header.Number,
+	c := &AdvContext{Now: s.l.c.Mono(), Secret: n.v.ECDSA, Rand: s.rng, Head: n.app.chain.head.Header.Number,
 		Block: func(h uint64) *types.Block { return n.app.chain.byNum[h] }}
 	if n.r != nil {
 		c.View = n.r.Snapshot().View
@@ -295,7 +295,7 @@ func (s *simulation) startAdversary(a Adversary) {
 	n := s.byAddr[a.Node]
 	var tick func()
 	tick = func() {
-		if a.Until > 0 && s.l.now >= a.Until {
+		if a.Until > 0 && s.l.c.Mono() >= a.Until {
 			return
 		}
 		if n.alive {
