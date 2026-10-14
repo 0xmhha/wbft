@@ -295,6 +295,15 @@ func New(cfg Config, d Deps) (*Runner, error) {
 			logcat.ConsensusMsg: d.ModuleLogger(logcat.ConsensusMsg)}
 	}
 	r.timers.clock = r.d.Clock
+	if enabled, ok := d.Journal.(interface{ TimerTraceEnabled() bool }); ok && enabled.TimerTraceEnabled() {
+		r.timers.trace = func(rec *journal.TimerRec) {
+			if len(rec.Input) == 0 && rec.Action != "clear" && rec.Action != "cancel" {
+				d.Journal.Put(journal.Record{Body: &journal.GapRec{Dropped: 1, ByKind: []journal.KindCount{{Kind: uint64(journal.KindTimer), Count: 1}}, FirstMono: rec.Mono, LastMono: rec.Mono}})
+				return
+			}
+			d.Journal.Put(journal.Record{Body: rec})
+		}
+	}
 	r.timers.wake = r.wake
 	r.inbox.init(r)
 	r.commitCond = sync.NewCond(&r.commitMu)

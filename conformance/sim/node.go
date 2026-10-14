@@ -160,7 +160,7 @@ func (n *node) start() {
 	opts.Config, opts.Self = n.s.cfg, n.v.address
 	id := journal.Identity{Self: n.v.address, BLSPublicKey: n.v.blsPub, Run: n.runID(), Commit: buildmeta.Version(), ChainID: big.NewInt(ChainID),
 		GenesisHash: codec.BlockHash(n.s.genesis.Header), Mode: "standalone",
-		Core: journal.CoreOptions{ChainConfig: n.s.cfgJSON, Self: n.v.address, Improvements: uint64(opts.Improvements),
+		Core: journal.CoreOptions{TimerTrace: journal.TimerTraceVersion, ChainConfig: n.s.cfgJSON, Self: n.v.address, Improvements: uint64(opts.Improvements),
 			BacklogLimit: uint64(opts.BacklogLimit), Profile: n.spec.Profile}}
 	jw, err := journal.Open(journal.Options{FS: n.fs, Dir: journalDir, KeepHeights: 100000, MaxBytes: 8 << 30,
 		SegmentBytes: 1 << 20, Synchronous: true}, id)

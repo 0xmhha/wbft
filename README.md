@@ -649,3 +649,30 @@ must be upgraded before consuming new steps with entry metadata.
 These are the timing and scheduling prerequisites for timer-policy replay.
 Recorded-input schedule experiments still use their finite recorded timer tape;
 they do not yet regenerate timer inputs under changed duration parameters.
+
+
+### Measured timer operation journal
+
+New node and simulator journals declare `Core.TimerTrace = 1` in a trailing
+optional segment field and include `timer` records (kind 8). Readers must be
+upgraded before reading these journals. The absent capability preserves the
+legacy segment encoding and does not enable timer recording. Custom writers
+opt in through `TimerTraceEnabled`.
+
+The runner measures scheduler mutations under the queue mutex. A sequence
+orders equal monotonic timestamps. Records include arm/replacement, actual
+cancellation, the cancellation request even when every timer has expired,
+callback queue insertion, dequeue and lifecycle clear. Each arm keeps its
+writer/engine/step/output cause, entry-based deadline and full encoded timeout
+context. Output indices are one-based; zero identifies lifecycle, dequeue or
+WAL restoration rather than an invented core output. Queued callbacks retain
+the arm's original cause and never inherit the currently running step.
+
+Operation timestamps are distinct from step entry and completion. In particular,
+a callback can queue during processing before a later cancellation, and that
+expiry remains available for dequeue. Sequence and full-context records allow
+this ordering to be checked without choosing a guessed cancellation instant.
+Timer input bytes count toward journal queue limits; loss remains explicit as
+gap records. Segment rotation and journal bundles preserve the records and
+capability. These observations are prerequisites for timer-policy execution,
+not a claim that every journal can already be used for what-if replay.

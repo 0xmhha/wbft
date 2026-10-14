@@ -152,6 +152,7 @@ func (r *Runner) stopEngine(reason string) {
 		r.journalStep(sc, inputlog.KindStop, body, snap)
 	}
 	r.stopHousekeeping()
+	r.timers.setOwner(r.engineRun, r.step, 0, "lifecycle")
 	r.timers.clear()
 	r.inbox.clear()
 	r.internal = nil
@@ -415,6 +416,7 @@ func (r *Runner) afterReplay(timers [3]*consensus.ArmTimer, snap *consensus.Snap
 	vars := r.core.Vars()
 	for _, t := range timers {
 		if t != nil {
+			r.timers.setOwner(r.engineRun, 0, 0, "restore")
 			r.timers.arm(*t, r.d.Clock.Mono())
 			r.emit(event.Record{Kind: event.TimerArm, View: event.ViewOf(t.View), Fields: map[string]any{
 				"timer": t.Kind.String(), "duration_ms": t.Duration.Milliseconds(), "gen": t.Gen, "engine_run": r.engineRun, "rearmed": true}}, nil)

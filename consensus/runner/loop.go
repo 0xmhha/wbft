@@ -118,6 +118,7 @@ func (r *Runner) next() (queued, bool) {
 		}
 	}
 	if hasTimer {
+		r.timers.setOwner(r.engineRun, r.step+1, 0, "dequeue")
 		if t, ok := r.timers.pop(); ok {
 			return queued{in: t, via: viaTimer}, true
 		}
@@ -235,7 +236,8 @@ func (r *Runner) endHeight(snap *consensus.Snapshot, gens [3]uint64) {
 
 // execute runs the outputs of one step in order.
 func (r *Runner) execute(sc *stepCtx) {
-	for _, o := range sc.outs {
+	for index, o := range sc.outs {
+		r.timers.setOwner(r.engineRun, sc.step, uint64(index)+1, "core")
 		if r.Halted() != nil {
 			return
 		}
