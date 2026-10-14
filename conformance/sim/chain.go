@@ -19,7 +19,7 @@ const ChainID = 8282
 // chainConfigJSON writes the chain configuration of a scenario as the
 // "config" object of a genesis file.
 func chainConfigJSON(p Params, genesis []Validator) ([]byte, error) {
-	pol := uint64(0)
+	pol := p.ProposerPolicy
 	type wbftJSON struct {
 		RequestTimeoutSeconds    uint64  `json:"requestTimeoutSeconds"`
 		BlockPeriodSeconds       uint64  `json:"blockPeriodSeconds"`
