@@ -35,7 +35,7 @@ func TestTimedReplayProtocolAndCLIKeepExactCoordinatesAndAssumptions(t *testing.
 		t.Fatal(err)
 	}
 	decoder := json.NewDecoder(&output)
-	steps, done, capability := 0, false, false
+	steps, done, capability, actionCapability := 0, false, false, false
 	for decoder.More() {
 		var record map[string]any
 		if err := decoder.Decode(&record); err != nil {
@@ -44,12 +44,23 @@ func TestTimedReplayProtocolAndCLIKeepExactCoordinatesAndAssumptions(t *testing.
 		switch record["type"] {
 		case "hello":
 			for _, f := range record["features"].([]any) {
+				if f == "timed_actions_v1" {
+					actionCapability = true
+				}
 				if f == "timed_inputs_v1" {
 					capability = true
 				}
 			}
 		case "timed_step":
 			steps++
+			actions, ok := record["output_actions"].([]any)
+			if !ok || len(actions) != int(record["outputs"].(float64)) {
+				t.Fatal("output action count lost", record)
+			}
+			recorded, ok := record["recorded_output_actions"].([]any)
+			if !ok || record["generated"] == true && len(recorded) != 0 {
+				t.Fatal("generated output acquired a source slot", record)
+			}
 			state, ok := record["execution_state"].(map[string]any)
 			if !ok {
 				t.Fatal("execution state missing", record)
@@ -85,7 +96,7 @@ func TestTimedReplayProtocolAndCLIKeepExactCoordinatesAndAssumptions(t *testing.
 			t.Fatal("unexpected reply", record)
 		}
 	}
-	if steps == 0 || !done || !capability {
+	if steps == 0 || !done || !capability || !actionCapability {
 		t.Fatal(steps, done, capability)
 	}
 	source := timedSource(&stepdriver.TimedSource{Writer: "synthetic", Engine: 9007199254740993, Step: 9007199254740994, Ordinal: 9007199254740995}).(map[string]string)

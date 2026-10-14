@@ -731,3 +731,19 @@ from the core snapshot after each execution slot. Height and round are decimal
 strings while the core runs; a stopped core returns null for both. Suppressed
 original internal slots report the unchanged execution state, never the source
 input view. This state is counterfactual metadata, not a canonical chain fact.
+
+Timed helpers declaring `timed_actions_v1` return `output_actions` and
+`recorded_output_actions` independently. Every action retains its one-based
+output index and SHA256 of the complete encoded output. Network descriptors
+separate unsigned broadcast requests, recorded signing results/failures and
+actual relay bytes. Signing evidence points to both the original producer
+output and its later signing input. Application build/commit requests retain
+exact original-question locations and full decimal-string views; no payload,
+signature or block hash is exported. Eligible recipients describe validator
+membership intent, not observed transmission or delivery.
+
+`parent_output` identifies the precise parent execution output that reserved a
+regenerated input, including a broadcast awaiting unrecorded signing results.
+Generated executions have no invented original output slot. A changed timer
+fingerprint does not imply changed network bytes. No action descriptor proves
+an arrival time or establishes other nodes' counterfactual reactions.

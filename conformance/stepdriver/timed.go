@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"math"
+	"strconv"
 	"time"
 
 	"github.com/0xmhha/wbft/codec"
@@ -48,12 +49,12 @@ type TimedCompletion struct {
 	TimerTraceValidated                        bool
 }
 type TimedSource struct {
-	Writer                string
-	Engine, Step, Ordinal uint64
+	Writer  string `json:"writer_run"`
+	Engine  uint64 `json:"engine_run,string"`
+	Step    uint64 `json:"step,string"`
+	Ordinal uint64 `json:"ordinal,string"`
 }
 
-// TimedResult distinguishes source input comparisons from generated expiries.
-// Generated timers have an arm source, never a manufactured source ordinal.
 // TimedState is the post-execution core state. A stopped core has no view;
 // consumers must not substitute source input height or round for that absence.
 type TimedState struct {
@@ -75,7 +76,11 @@ func timedSnapshot(snapshot *consensus.Snapshot) TimedState {
 	return out
 }
 
+// TimedResult separates regenerated outputs from original-slot evidence.
+// Generated inputs never receive an invented source ordinal.
 type TimedResult struct {
+	Actions            []TimedAction
+	RecordedActions    []TimedAction
 	State              TimedState
 	Model              string
 	Counterfactual     bool
@@ -87,6 +92,7 @@ type TimedResult struct {
 	Deadline           *time.Duration
 	Cause              *TimedSource
 	ParentExecution    uint64
+	ParentOutput       uint64
 	Evidence           *TimedSource
 	ApplicationSources []TimedQuestionSource
 	Generated          bool
@@ -336,6 +342,15 @@ func RunTimedTrace(j JournalReader, opts TimedOptions, yield func(TimedResult) e
 	}
 	if baseline {
 		for _, result := range validated {
+			for i := range result.Actions {
+				key := timedOutputKey{Source: *result.Source, Output: i}
+				if result.Actions[i].Kind == "request_build" || result.Actions[i].Kind == "commit" {
+					result.Actions[i].ApplicationSource = &TimedOutputSource{Source: *result.Source, Output: strconv.Itoa(i + 1)}
+				}
+				if proof, exists := signing[key]; exists {
+					result.Actions[i].signed(proof, key)
+				}
+			}
 			if err := yield(result); err != nil {
 				return err
 			}
@@ -383,18 +398,22 @@ func runTimedEntries(entries []timedSourceEntry, j JournalReader, opts TimedOpti
 	app := &timedApplicationLedger{}
 	arms := map[[2]uint64]TimedSource{}
 	armExecutions := map[[2]uint64]uint64{}
+	armOutputs := map[[2]uint64]uint64{}
 	armDeadlines := map[[2]uint64]time.Duration{}
 	var internal []timedInternal
 	var activeCause *TimedSource
 	var activeParent uint64
+	var activeOutput uint64
 	var activeEvidence *TimedSource
 	session := opts.Answers.session()
 	execution := uint64(0)
 	emit := func(in consensus.Input, source *TimedSource, arm *TimedSource, original *journal.StepRec, mono time.Duration, suppression string) (emitErr error) {
 		var parent uint64
+		var parentOutput uint64
 		var deadline *time.Duration
 		if timeout, ok := in.(consensus.Timeout); ok {
 			parent = armExecutions[[2]uint64{uint64(timeout.Kind), timeout.Gen}]
+			parentOutput = armOutputs[[2]uint64{uint64(timeout.Kind), timeout.Gen}]
 			if d, ok := armDeadlines[[2]uint64{uint64(timeout.Kind), timeout.Gen}]; ok {
 				deadline = &d
 			}
@@ -409,7 +428,11 @@ func runTimedEntries(entries []timedSourceEntry, j JournalReader, opts TimedOpti
 				if parentExecution == 0 {
 					parentExecution = parent
 				}
-				emitErr = &TimedError{Execution: execution, Source: source, Cause: cause, ParentExecution: parentExecution, Err: emitErr}
+				output := activeOutput
+				if output == 0 {
+					output = parentOutput
+				}
+				emitErr = &TimedError{Execution: execution, Source: source, Cause: cause, ParentExecution: parentExecution, ParentOutput: output, Err: emitErr}
 			}
 		}()
 		execution++
@@ -418,6 +441,7 @@ func runTimedEntries(entries []timedSourceEntry, j JournalReader, opts TimedOpti
 		}
 		result := StepResult{ContextAnswers: true, Outputs: []consensus.Output{}}
 		var applicationSources []TimedQuestionSource
+		var actions []TimedAction
 		if suppression != "" {
 			result, e = scheduledEmpty(state, original, true, suppression)
 		} else {
@@ -461,6 +485,10 @@ func runTimedEntries(entries []timedSourceEntry, j JournalReader, opts TimedOpti
 				result.Step = original.Step
 				result.Match = result.OutDigest == original.OutDigest && consensus.ValsetDigest(state.Snapshot().Validators) == original.ValsetDigest
 			}
+			actions, e = timedActions(result.Outputs, self)
+			if e != nil {
+				return e
+			}
 			if e = ledger.produced(result.Outputs); e != nil {
 				return e
 			}
@@ -470,6 +498,24 @@ func runTimedEntries(entries []timedSourceEntry, j JournalReader, opts TimedOpti
 				return err
 			}
 			applicationSources = sources
+			questionSources := map[[32]byte]TimedQuestionSource{}
+			for i, question := range recorded {
+				digest, _, err := questionDigest(question)
+				if err != nil {
+					return err
+				}
+				questionSources[digest] = sources[i]
+			}
+			for i, output := range result.Outputs {
+				digest, question, err := questionDigest(output)
+				if err != nil {
+					return err
+				}
+				if proof, known := questionSources[digest]; question && known {
+					actions[i].ApplicationSource = &TimedOutputSource{Source: proof.Source, Output: strconv.FormatUint(proof.Output, 10)}
+				}
+			}
+
 			if err := app.produced(result.Outputs, recorded, reference == nil, wallNow()); err != nil {
 				return err
 			}
@@ -487,7 +533,7 @@ func runTimedEntries(entries []timedSourceEntry, j JournalReader, opts TimedOpti
 						if len(internal) >= MaxReservedInputs {
 							return ErrTraceAnswerLimit
 						}
-						internal = append(internal, timedInternal{Input: out.In, Cause: cause, ParentExecution: execution})
+						internal = append(internal, timedInternal{Input: out.In, Cause: cause, ParentExecution: execution, ParentOutput: uint64(outputIndex + 1)})
 					case consensus.Broadcast:
 						if len(internal) >= MaxReservedInputs {
 							return ErrTraceAnswerLimit
@@ -497,15 +543,16 @@ func runTimedEntries(entries []timedSourceEntry, j JournalReader, opts TimedOpti
 							return err
 						}
 						if !known {
-							internal = append(internal, timedInternal{Broadcast: &out, Cause: cause, ParentExecution: execution})
+							internal = append(internal, timedInternal{Broadcast: &out, Cause: cause, ParentExecution: execution, ParentOutput: uint64(outputIndex + 1)})
 						} else {
 							input := proof.Input
 							if m, ok := input.(consensus.Message); ok {
 								m.RecvMono = mono
 								input = m
 							}
+							actions[outputIndex].signed(proof, signing.origins[proof.Source])
 							evidence := proof.Source
-							internal = append(internal, timedInternal{Input: input, Cause: cause, ParentExecution: execution, Evidence: &evidence})
+							internal = append(internal, timedInternal{Input: input, Cause: cause, ParentExecution: execution, ParentOutput: uint64(outputIndex + 1), Evidence: &evidence})
 						}
 					}
 				}
@@ -543,6 +590,7 @@ func runTimedEntries(entries []timedSourceEntry, j JournalReader, opts TimedOpti
 						return recordedClock.err
 					}
 					armExecutions[[2]uint64{uint64(o.Kind), o.Gen}] = execution
+					armOutputs[[2]uint64{uint64(o.Kind), o.Gen}] = uint64(outputIndex + 1)
 					armDeadlines[[2]uint64{uint64(o.Kind), o.Gen}] = mono + o.Duration
 					if source != nil {
 						arms[[2]uint64{uint64(o.Kind), o.Gen}] = *source
@@ -573,18 +621,41 @@ func runTimedEntries(entries []timedSourceEntry, j JournalReader, opts TimedOpti
 		if causalParent == 0 {
 			causalParent = parent
 		}
+		causalOutput := activeOutput
+		if causalOutput == 0 {
+			causalOutput = parentOutput
+		}
 		model := "recorded-order/measured-timers/1"
 		if reference != nil {
 			model = TimedExperimentModel
 		}
-		return yield(TimedResult{State: timedState(state), Model: model, Counterfactual: reference != nil, Deadline: deadline, ArmExecution: parent, Execution: execution, Mono: mono, Source: source, Arm: arm, Cause: cause, ParentExecution: causalParent, Evidence: activeEvidence, ApplicationSources: applicationSources, Generated: source == nil, Suppression: suppression, Result: result})
+		if actions == nil {
+			actions = []TimedAction{}
+		}
+		recordedActions := []TimedAction{}
+		if reference != nil && source != nil {
+			recordedActions, e = timedActions(reference[*source], self)
+			if e != nil {
+				return e
+			}
+			for i := range recordedActions {
+				key := timedOutputKey{Source: *source, Output: i}
+				if proof, exists := signing.byOutput[key]; exists {
+					recordedActions[i].signed(proof, key)
+				}
+				if recordedActions[i].Kind == "request_build" || recordedActions[i].Kind == "commit" {
+					recordedActions[i].ApplicationSource = &TimedOutputSource{Source: *source, Output: strconv.Itoa(i + 1)}
+				}
+			}
+		}
+		return yield(TimedResult{Actions: actions, RecordedActions: recordedActions, State: timedState(state), Model: model, Counterfactual: reference != nil, Deadline: deadline, ArmExecution: parent, Execution: execution, Mono: mono, Source: source, Arm: arm, Cause: cause, ParentExecution: causalParent, ParentOutput: causalOutput, Evidence: activeEvidence, ApplicationSources: applicationSources, Generated: source == nil, Suppression: suppression, Result: result})
 	}
 	drainInternal := func(mono time.Duration) error {
 		for len(internal) > 0 {
 			q := internal[0]
 			internal = internal[1:]
 			if q.Broadcast != nil {
-				return &TimedError{Execution: execution + 1, Cause: q.Cause, ParentExecution: q.ParentExecution, Err: ErrTraceSigningUnavailable}
+				return &TimedError{Execution: execution + 1, Cause: q.Cause, ParentExecution: q.ParentExecution, ParentOutput: q.ParentOutput, Err: ErrTraceSigningUnavailable}
 			}
 			allowed, err := ledger.allowed(q.Input, "internal", self)
 			if err != nil {
@@ -594,10 +665,12 @@ func runTimedEntries(entries []timedSourceEntry, j JournalReader, opts TimedOpti
 				return ErrTraceScheduleReservation
 			}
 			activeCause, activeParent, activeEvidence = q.Cause, q.ParentExecution, q.Evidence
+			activeOutput = q.ParentOutput
 			err = emit(q.Input, nil, nil, nil, mono, "")
 			activeCause, activeParent, activeEvidence = nil, 0, nil
+			activeOutput = 0
 			if err != nil {
-				return &TimedError{Execution: execution, Cause: q.Cause, ParentExecution: q.ParentExecution, Err: err}
+				return &TimedError{Execution: execution, Cause: q.Cause, ParentExecution: q.ParentExecution, ParentOutput: q.ParentOutput, Err: err}
 			}
 		}
 		return nil
@@ -678,6 +751,7 @@ func runTimedEntries(entries []timedSourceEntry, j JournalReader, opts TimedOpti
 			internal = nil
 			arms = map[[2]uint64]TimedSource{}
 			armExecutions = map[[2]uint64]uint64{}
+			armOutputs = map[[2]uint64]uint64{}
 			armDeadlines = map[[2]uint64]time.Duration{}
 			state = consensus.NewState(consensus.Options{Config: cfg, Self: self, Improvements: consensus.ImprovementSet(entry.config.Improvements), BacklogLimit: int(entry.config.BacklogLimit)})
 			if len(b.TimerGens) != 0 {

@@ -229,7 +229,7 @@ func serve(in io.Reader, out io.Writer) error {
 		}
 		switch req.Type {
 		case "hello":
-			if err := send(map[string]any{"type": "hello", "protocol": Protocol, "impl": "wbft", "version": buildmeta.Version(), "features": []string{"bounded_warmup_v1", "context_answers_v1", "input_schedule_v1", "timed_inputs_v1", "timed_state_v1"}}); err != nil {
+			if err := send(map[string]any{"type": "hello", "protocol": Protocol, "impl": "wbft", "version": buildmeta.Version(), "features": []string{"bounded_warmup_v1", "context_answers_v1", "input_schedule_v1", "timed_inputs_v1", "timed_state_v1", "timed_actions_v1"}}); err != nil {
 				return err
 			}
 		case "timed_replay":
