@@ -627,3 +627,25 @@ requests use `input_schedule`, steps retain `scheduled_input` source/slot fields
 and `suppression_reason`, and completion echoes the experiment with
 `counterfactual: true`. Scheduled source buffering is limited to one million
 records, 100000 steps and 256 MiB encoded step inputs and responses.
+
+
+### Shared replay clock and timer reservations
+
+`conformance/manualclock` is the callback scheduler used by the deterministic
+simulator. It orders equal deadlines by insertion order, preserves cancellation
+identity, and delivers callbacks at their deadlines when advanced. It provides
+the runner clock interface; time reversal, deadline overflow and reentrant
+advancement are refused. `runner.TimerQueue` exposes the existing runner timer
+implementation, including full timeout context, generation replacement,
+cancellation before expiry, and preservation of already-queued expiries.
+
+New live runner journal steps include a measured `StepRec.Entry` monotonic/wall
+clock pair. `StepRec.Mono` remains the completion stamp. Entry time zero is a
+known measurement; absence in older records and reconstructed WAL steps is
+unknown. A trailing optional RLP entry field preserves the old encoding when
+absent. Current readers accept both shapes; readers built before the extension
+must be upgraded before consuming new steps with entry metadata.
+
+These are the timing and scheduling prerequisites for timer-policy replay.
+Recorded-input schedule experiments still use their finite recorded timer tape;
+they do not yet regenerate timer inputs under changed duration parameters.

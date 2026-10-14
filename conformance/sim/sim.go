@@ -519,7 +519,7 @@ func (s *simulation) run(ctx context.Context) error {
 		}
 		t, ok := s.l.nextTime()
 		if !ok || t > s.sc.Until.Duration {
-			s.l.now = s.sc.Until.Duration
+			s.l.c.AdvanceTo(s.sc.Until.Duration)
 			break
 		}
 		s.l.runAt(t)
@@ -569,7 +569,7 @@ func (s *simulation) checkProgress() {
 			continue
 		}
 		if h := n.head(); h < s.sc.Until.Height {
-			s.violate("progress", n.v.address, "head %d below %d at %s", h, s.sc.Until.Height, s.l.now)
+			s.violate("progress", n.v.address, "head %d below %d at %s", h, s.sc.Until.Height, s.l.c.Mono())
 		}
 	}
 }
@@ -643,7 +643,7 @@ func (s *simulation) checkEvents() {
 func (s *simulation) result() *Result {
 	s.checkEvents()
 	res := &Result{Rounds: s.rounds, Violations: s.viol, Crashes: s.crashes, Replays: s.replays, Refinalize: s.refinal, Refusals: s.refused,
-		LockChecks: s.locks, Damaged: s.damaged, Evidence: s.evidence, Journals: map[types.Address]map[string][]byte{}, Events: map[string][]byte{}, SimTime: s.l.now}
+		LockChecks: s.locks, Damaged: s.damaged, Evidence: s.evidence, Journals: map[types.Address]map[string][]byte{}, Events: map[string][]byte{}, SimTime: s.l.c.Mono()}
 	for i := uint64(0); ; i++ {
 		b := s.decBlock[i]
 		if b == nil {

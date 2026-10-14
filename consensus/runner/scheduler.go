@@ -12,7 +12,8 @@ import (
 // fired drops it, and an expiry already queued stays queued (the core
 // decides what a late expiry does, by its generation).
 type scheduler struct {
-	r     *Runner
+	clock Clock
+	wake  func()
 	mu    sync.Mutex // runner.timers.mu
 	live  [3]*timerEntry
 	fired []consensus.Timeout
@@ -36,7 +37,7 @@ func (s *scheduler) arm(a consensus.ArmTimer, from time.Duration) {
 	}
 	s.live[a.Kind] = e
 	s.mu.Unlock()
-	t := s.r.d.Clock.AfterFunc(max(a.Duration-(s.r.d.Clock.Mono()-from), 0), func() { s.fire(e) })
+	t := s.clock.AfterFunc(max(a.Duration-(s.clock.Mono()-from), 0), func() { s.fire(e) })
 	s.mu.Lock()
 	e.t = t
 	s.mu.Unlock()
@@ -55,7 +56,9 @@ func (s *scheduler) fire(e *timerEntry) {
 	a := e.arm
 	s.fired = append(s.fired, consensus.Timeout{Kind: a.Kind, View: a.View, Round: a.Round, Gen: a.Gen, Msg: a.Msg})
 	s.mu.Unlock()
-	s.r.wake()
+	if s.wake != nil {
+		s.wake()
+	}
 }
 
 // cancel cancels the armed timers of the given kinds and returns them.
@@ -100,3 +103,23 @@ func (s *scheduler) clear() {
 	s.fired = nil
 	s.mu.Unlock()
 }
+
+// TimerQueue uses the runner's timer reservation and expiry implementation.
+// It preserves full timeout context and already-queued expiries after cancel.
+// Arm and cancel calls are serialized by the execution owner; clock expiry
+// callbacks may run concurrently with that owner.
+type TimerQueue struct{ s scheduler }
+
+func NewTimerQueue(clock Clock) *TimerQueue {
+	if clock == nil {
+		panic("runner: timer queue needs a clock")
+	}
+	return &TimerQueue{s: scheduler{clock: clock}}
+}
+func (q *TimerQueue) Arm(a consensus.ArmTimer, from time.Duration) { q.s.arm(a, from) }
+func (q *TimerQueue) Cancel(kinds []consensus.TimerKind) []consensus.ArmTimer {
+	return q.s.cancel(kinds)
+}
+func (q *TimerQueue) Pending() bool                  { return q.s.pending() }
+func (q *TimerQueue) Pop() (consensus.Timeout, bool) { return q.s.pop() }
+func (q *TimerQueue) Clear()                         { q.s.clear() }
