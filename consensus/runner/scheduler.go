@@ -1,6 +1,7 @@
 package runner
 
 import (
+	"bytes"
 	"github.com/0xmhha/wbft/consensus/inputlog"
 	"github.com/0xmhha/wbft/observe/journal"
 	"sync"
@@ -190,4 +191,47 @@ func (s *scheduler) record(action string, owner timerOwner, e *timerEntry, kinds
 		rec.Input = e.input
 	}
 	s.trace(rec)
+}
+
+// PopRecorded reproduces an observed dequeue order among already-queued
+// expiries. Real timer callbacks can queue two overdue timers in a different
+// order from their deadlines. This only consumes an existing full-context
+// expiry; it never fires a timer, changes a deadline or manufactures input.
+// Experiments without recorded ordering must use Pop instead.
+func (q *TimerQueue) PopRecorded(recorded consensus.Timeout) (consensus.Timeout, bool, error) {
+	raw, err := inputlog.Encode(recorded)
+	if err != nil {
+		return consensus.Timeout{}, false, err
+	}
+	q.s.mu.Lock()
+	defer q.s.mu.Unlock()
+	for i, expiry := range q.s.fired {
+		candidate, err := inputlog.Encode(expiry)
+		if err != nil {
+			return consensus.Timeout{}, false, err
+		}
+		if bytes.Equal(raw, candidate) {
+			q.s.fired = append(q.s.fired[:i], q.s.fired[i+1:]...)
+			if i < len(q.s.queued) {
+				q.s.queued = append(q.s.queued[:i], q.s.queued[i+1:]...)
+			}
+			return expiry, true, nil
+		}
+	}
+	return consensus.Timeout{}, false, nil
+}
+
+// TimerQueueStatus describes the finite execution horizon without advancing it.
+type TimerQueueStatus struct{ Armed, Queued int }
+
+func (q *TimerQueue) Status() TimerQueueStatus {
+	q.s.mu.Lock()
+	defer q.s.mu.Unlock()
+	status := TimerQueueStatus{Queued: len(q.s.fired)}
+	for _, entry := range q.s.live {
+		if entry != nil {
+			status.Armed++
+		}
+	}
+	return status
 }
