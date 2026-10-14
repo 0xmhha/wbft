@@ -142,6 +142,8 @@ func (r *Runner) writeRunStart(from types.Height, head *types.Header, snap *cons
 func (r *Runner) stopEngine(reason string) {
 	if r.core != nil {
 		r.step++
+		step := r.step
+		r.stepAt = event.Stamp{Wall: r.d.Clock.Now(), Mono: r.d.Clock.Mono(), Step: &step}
 		outs := r.core.Step(r.env, consensus.Stop{})
 		sc := &stepCtx{q: queued{in: consensus.Stop{}, via: viaEngine}, step: r.step, outs: outs}
 		r.execute(sc)

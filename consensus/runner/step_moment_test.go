@@ -107,3 +107,35 @@ func TestJournalEntryMatchesEventMomentAndPrecedesCompletion(t *testing.T) {
 		t.Fatal("start and peer input not covered")
 	}
 }
+
+func TestJournalStopHasItsOwnEntryMoment(t *testing.T) {
+	n := newTNode(t, newKeys(t, 4), 1)
+	n.clock.tick = time.Microsecond
+	n.boot()
+	n.clock.now += time.Second
+	stopBefore := n.clock.now
+	if err := n.r.Stop(); err != nil {
+		t.Fatal(err)
+	}
+	if err := n.r.d.Journal.(*journal.FileWriter).Sync(); err != nil {
+		t.Fatal(err)
+	}
+	records, err := journal.ReadAll(n.jfs, "/j")
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, record := range records {
+		step, ok := record.Body.(*journal.StepRec)
+		if !ok || step.InputKind != "stop" {
+			continue
+		}
+		found = true
+		if step.Entry == nil || step.Entry.Mono < stopBefore || step.Entry.Mono > step.Mono {
+			t.Fatal("stop reused prior step entry", step)
+		}
+	}
+	if !found {
+		t.Fatal("stop step missing")
+	}
+}
