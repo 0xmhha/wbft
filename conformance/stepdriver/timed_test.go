@@ -94,7 +94,7 @@ func TestTimedTraceRegeneratesRecordedBaselineAndChangedExpiry(t *testing.T) {
 				}
 				if _, ok := r.Result.Input.(consensus.Timeout); !ok {
 					regenerated++
-					if r.Cause == nil || r.ParentExecution == 0 {
+					if r.Cause == nil || r.ParentExecution == 0 || r.ParentOutput == 0 {
 						t.Fatal("internal causal reservation lost", r)
 					}
 				}
@@ -112,7 +112,7 @@ func TestTimedTraceRegeneratesRecordedBaselineAndChangedExpiry(t *testing.T) {
 			if !errors.As(e, &failed) || failed.Execution == 0 {
 				t.Fatal("execution failure coordinates missing", e)
 			}
-			if errors.Is(e, stepdriver.ErrTraceSigningUnavailable) && (failed.Source != nil || failed.Cause == nil || failed.ParentExecution == 0) {
+			if errors.Is(e, stepdriver.ErrTraceSigningUnavailable) && (failed.Source != nil || failed.Cause == nil || failed.ParentExecution == 0 || failed.ParentOutput == 0) {
 				t.Fatal("generated signing failure provenance missing", failed)
 			}
 		}

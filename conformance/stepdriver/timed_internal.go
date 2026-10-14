@@ -22,6 +22,7 @@ type TimedError struct {
 	Source          *TimedSource
 	Cause           *TimedSource
 	ParentExecution uint64
+	ParentOutput    uint64
 	Err             error
 }
 
@@ -44,6 +45,7 @@ type timedInternal struct {
 	Broadcast       *consensus.Broadcast
 	Cause           *TimedSource
 	ParentExecution uint64
+	ParentOutput    uint64
 	Evidence        *TimedSource
 }
 
@@ -107,13 +109,15 @@ type timedSigningKey struct {
 	Output [32]byte
 }
 type timedSigningPool struct {
-	entries map[timedSigningKey][]timedSigningEvidence
-	used    map[TimedSource]bool
-	last    map[answerCoordinate]uint64
+	origins  map[TimedSource]timedOutputKey
+	byOutput map[timedOutputKey]timedSigningEvidence
+	entries  map[timedSigningKey][]timedSigningEvidence
+	used     map[TimedSource]bool
+	last     map[answerCoordinate]uint64
 }
 
 func newTimedSigningPool(proofs map[timedOutputKey]timedSigningEvidence, source map[TimedSource]timedSourceEntry) (*timedSigningPool, error) {
-	p := &timedSigningPool{entries: map[timedSigningKey][]timedSigningEvidence{}, used: map[TimedSource]bool{}, last: map[answerCoordinate]uint64{}}
+	p := &timedSigningPool{origins: map[TimedSource]timedOutputKey{}, byOutput: proofs, entries: map[timedSigningKey][]timedSigningEvidence{}, used: map[TimedSource]bool{}, last: map[answerCoordinate]uint64{}}
 	for key, proof := range proofs {
 		entry, ok := source[key.Source]
 		if !ok {
@@ -124,6 +128,10 @@ func newTimedSigningPool(proofs map[timedOutputKey]timedSigningEvidence, source 
 			return nil, err
 		}
 		index := timedSigningKey{key.Source.Writer, key.Source.Engine, entry.record.HeadHash, sha256.Sum256(raw)}
+		if _, exists := p.origins[proof.Source]; exists {
+			return nil, ErrTraceScheduleReservation
+		}
+		p.origins[proof.Source] = key
 		p.entries[index] = append(p.entries[index], proof)
 	}
 	for key, proofs := range p.entries {

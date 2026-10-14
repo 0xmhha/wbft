@@ -76,7 +76,7 @@ func TestTimedSigningPoolRequiresWholeRequestAndSingleOrderedEvidence(t *testing
 	}
 	p := makePool()
 	proof, ok, err := p.take(out, "synthetic", 1, head)
-	if err != nil || !ok || proof.Source != b {
+	if err != nil || !ok || proof.Source != b || p.origins[proof.Source] != (timedOutputKey{Source: a, Output: 0}) {
 		t.Fatal(proof, ok, err)
 	}
 	if _, ok, err = p.take(out, "synthetic", 1, head); err != nil || ok {
