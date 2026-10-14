@@ -383,3 +383,37 @@ func TestSuppressedCount(t *testing.T) {
 		t.Fatalf("suppressed %v", got)
 	}
 }
+
+func TestGossipTargetProofComesFromActualCacheAndPeerSelection(t *testing.T) {
+	self, v1, v2, v3, other := addr(0), addr(1), addr(2), addr(3), addr(9)
+	tr := &gossipProofTransport{fakeTransport: fakeTransport{peers: []types.Address{v3, other, v1, self, v2, v1}}}
+	d := newDedup(t, tr, self)
+	vs := set(t, self, v1, v2, v3)
+	payload := []byte{0xc2, 0x01, 0x02}
+	d.SeenInbound(v2, 0x13, payload)
+	plan := d.GossipTargets(vs, 0x13, payload, event.CauseRelay)
+	if !plan.Available || fmt.Sprint(plan.Candidates) != fmt.Sprint([]types.Address{v1, v2, v3}) || fmt.Sprint(plan.Targets) != fmt.Sprint([]types.Address{v1, v3}) || fmt.Sprint(plan.Suppressed) != fmt.Sprint([]types.Address{v2}) {
+		t.Fatal("proof differs from actual filtering", plan)
+	}
+	if len(tr.sends) != 1 || fmt.Sprint(tr.sends[0].peers) != fmt.Sprint(plan.Targets) || !bytes.Equal(tr.payload, payload) {
+		t.Fatal("proof changed wire targets/bytes", tr.sends)
+	}
+	plan = d.GossipTargets(vs, 0x13, payload, event.CauseRelay)
+	if !plan.Available || len(plan.Targets) != 0 || len(plan.Suppressed) != 3 || len(tr.sends) != 1 {
+		t.Fatal("all-target suppression not observed", plan, tr.sends)
+	}
+	unknown := d.GossipTargets(nil, 0x13, payload, event.CauseRelay)
+	if unknown.Available || len(unknown.Candidates) != 0 || len(unknown.Targets) != 0 {
+		t.Fatal("nil validator context became known", unknown)
+	}
+}
+
+type gossipProofTransport struct {
+	fakeTransport
+	payload []byte
+}
+
+func (f *gossipProofTransport) Send(peers []types.Address, code uint64, payload []byte) []SendResult {
+	f.payload = append([]byte(nil), payload...)
+	return f.fakeTransport.Send(peers, code, payload)
+}

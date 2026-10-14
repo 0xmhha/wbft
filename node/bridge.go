@@ -173,3 +173,17 @@ func (d *appDriver) FinalizeBlock(b *types.Block, round types.Round) error {
 	}
 	return err
 }
+
+// buildEventEmitter binds asynchronous callbacks to the writer and clock of
+// their original node run. A later Start cannot move a completion to a new run.
+func (n *Node) buildEventEmitter() func(event.Record) {
+	writer, clock, log := n.ev, n.clock, n.log
+	return func(record event.Record) {
+		if writer == nil {
+			return
+		}
+		if err := writer.Write(record, event.Stamp{Wall: clock.Now(), Mono: clock.Mono()}); err != nil && log != nil {
+			log.Warn("build event write failed", "err", err)
+		}
+	}
+}

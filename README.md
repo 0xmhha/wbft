@@ -774,3 +774,14 @@ assumed wait from a nearby proposal. `submitted` means the application called
 `SubmitProposal`, not that the core accepted the block. Applications without
 observer support and missing/dropped endpoints remain incomplete evidence.
 The existing `BUILD_REQUEST` and `PROPOSAL_SUBMITTED` records are preserved.
+
+
+Build callbacks retain the writer and clock of their handover, including when
+another node run starts before a late completion. Closed original writers leave
+missing evidence rather than moving records into a later run.
+
+`RELAY_TARGETS` records the actual local dedup operation in its engine/step and
+output position: attached-validator candidates, selected send targets and peers
+excluded by their recent cache. It includes empty selections and explicitly
+unknown validator context. These are local target-selection observations;
+selected targets do not prove successful delivery or receipt.
