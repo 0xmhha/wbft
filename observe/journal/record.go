@@ -26,6 +26,7 @@ const (
 	KindSuppressed Kind = 5 // a send suppressed by the recent cache
 	KindStep       Kind = 6 // one input of the core and the digest of its outputs
 	KindGap        Kind = 7 // records dropped while the queue was full
+	KindTimer      Kind = 8 // measured scheduler mutation and queue timing
 )
 
 func (k Kind) String() string {
@@ -44,12 +45,14 @@ func (k Kind) String() string {
 		return "step"
 	case KindGap:
 		return "gap"
+	case KindTimer:
+		return "timer"
 	}
 	return fmt.Sprintf("kind(%d)", uint8(k))
 }
 
 // Record is one journal record. Body is one of *SegmentRec, *PeerRec,
-// *MsgRec, *OutcomeRec, *SuppressedRec, *StepRec, *GapRec. JSeq is assigned
+// *MsgRec, *OutcomeRec, *SuppressedRec, *StepRec, *GapRec, *TimerRec. JSeq is assigned
 // by the writer: it increases by one per written record within a run.
 type Record struct {
 	Kind Kind
@@ -77,6 +80,7 @@ type Identity struct {
 // CoreOptions is the consensus.Options of the journaled core in a portable
 // form: the chain configuration as its JSON text (types.ParseChainConfig).
 type CoreOptions struct {
+	TimerTrace   uint64 `json:"timer_trace,omitempty"`
 	ChainConfig  []byte
 	Self         types.Address
 	Improvements uint64
@@ -268,6 +272,7 @@ type segmentRLP struct {
 	BacklogLimit uint64
 	Profile      string
 	EngineRun    uint64
+	TimerTrace   uint64 `rlp:"optional"`
 }
 
 type peerRLP struct {
@@ -498,7 +503,7 @@ func encodeBody(r Record, jseq uint64) ([]byte, error) {
 			BLSPublicKey: bytesOrEmpty(b.BLSPublicKey), Run: b.Run, Commit: b.Commit, ChainID: bigOrZero(b.ChainID),
 			GenesisHash: b.GenesisHash, Mode: b.Mode, WireOffset: b.WireOffset, ConfigDigest: b.ConfigDigest,
 			ChainConfig: bytesOrEmpty(b.Core.ChainConfig), CoreSelf: b.Core.Self, Improvements: b.Core.Improvements,
-			BacklogLimit: b.Core.BacklogLimit, Profile: b.Core.Profile, EngineRun: b.EngineRun})
+			BacklogLimit: b.Core.BacklogLimit, Profile: b.Core.Profile, EngineRun: b.EngineRun, TimerTrace: b.Core.TimerTrace})
 	case *PeerRec:
 		return rlp.Encode(&peerRLP{Format: Format, JSeq: jseq, PeerIdx: uint64(b.PeerIdx), Addr: b.Addr, NodeID: bytesOrEmpty(b.NodeID),
 			Remote: b.Remote, Event: b.Event, Reason: b.Reason, By: b.By, Cause: b.Cause})
@@ -533,6 +538,8 @@ func encodeBody(r Record, jseq uint64) ([]byte, error) {
 		return rlp.Encode(&stepRLP{Format: Format, JSeq: jseq, EngineRun: b.EngineRun, Step: b.Step, Mono: uint64(int64(b.Mono)),
 			WallNs: uint64(b.WallNs), InputKind: b.InputKind, Input: bytesOrEmpty(b.Input), Via: b.Via,
 			HeadNumber: heightBig(b.HeadNumber), HeadHash: b.HeadHash, Env: env, ValsetDigest: b.ValsetDigest, OutDigest: b.OutDigest, TimerGens: gens, Entry: entry})
+	case *TimerRec:
+		return encodeTimerRec(b, jseq)
 	case *GapRec:
 		bk := b.ByKind
 		if bk == nil {
@@ -570,7 +577,7 @@ func decodeBody(k Kind, body []byte) (Record, error) {
 		return Record{Kind: k, JSeq: w.JSeq, Body: &SegmentRec{EngineRun: w.EngineRun, Identity: Identity{
 			Self: w.Self, NodeID: w.NodeID, BLSPublicKey: w.BLSPublicKey, Run: w.Run, Commit: w.Commit, ChainID: w.ChainID,
 			GenesisHash: w.GenesisHash, Mode: w.Mode, WireOffset: w.WireOffset, ConfigDigest: w.ConfigDigest,
-			Core: CoreOptions{ChainConfig: w.ChainConfig, Self: w.CoreSelf, Improvements: w.Improvements, BacklogLimit: w.BacklogLimit, Profile: w.Profile},
+			Core: CoreOptions{ChainConfig: w.ChainConfig, Self: w.CoreSelf, Improvements: w.Improvements, BacklogLimit: w.BacklogLimit, Profile: w.Profile, TimerTrace: w.TimerTrace},
 		}}}, nil
 	case KindPeer:
 		var w peerRLP
@@ -666,6 +673,8 @@ func decodeBody(k Kind, body []byte) (Record, error) {
 		return Record{Kind: k, JSeq: w.JSeq, Body: &StepRec{EngineRun: w.EngineRun, Step: w.Step, Mono: time.Duration(int64(w.Mono)),
 			WallNs: int64(w.WallNs), InputKind: w.InputKind, Input: w.Input, Via: w.Via, HeadNumber: hn, HeadHash: w.HeadHash,
 			Env: w.Env, ValsetDigest: w.ValsetDigest, OutDigest: w.OutDigest, TimerGens: w.TimerGens, Entry: entry}}, nil
+	case KindTimer:
+		return decodeTimerRec(body)
 	case KindGap:
 		var w gapRLP
 		if err := rlp.DecodeStrict(body, &w); err != nil {
@@ -696,6 +705,8 @@ func kindOf(body any) (Kind, bool) {
 		return KindStep, true
 	case *GapRec:
 		return KindGap, true
+	case *TimerRec:
+		return KindTimer, true
 	}
 	return 0, false
 }
@@ -705,6 +716,8 @@ func size(r Record) int64 {
 	switch b := r.Body.(type) {
 	case *MsgRec:
 		return int64(len(b.Payload)) + 128
+	case *TimerRec:
+		return int64(len(b.Input)) + 256
 	case *StepRec:
 		n := int64(len(b.Input)) + 160
 		for _, e := range b.Env {

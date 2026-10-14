@@ -655,3 +655,6 @@ func ReadAll(fs fsys.FS, dir string) ([]Record, error) {
 func IsJournalFile(name string) bool {
 	return strings.HasSuffix(name, ".wal") || strings.HasSuffix(name, ".wal"+indexSuffix)
 }
+
+// TimerTraceEnabled reports the capability declared in the initial identity.
+func (w *FileWriter) TimerTraceEnabled() bool { return w.id.Core.TimerTrace == TimerTraceVersion }
