@@ -137,7 +137,11 @@ func (r randao) SignRandao([]byte) ([]byte, error) {
 // builder assembles a block on the current head and submits it.
 func (a *app) ReadyToBuild(req consensus.RequestBuild, wait time.Duration, done <-chan struct{}) {
 	s := a.n.s
-	delay := wait + sample(s.rng, s.sc.App.BuildDelay)
+	samples := s.sc.App.BuildDelay
+	if len(a.n.spec.BuildDelay) > 0 {
+		samples = a.n.spec.BuildDelay
+	}
+	delay := wait + sample(s.rng, samples)
 	gen := a.gen
 	a.n.clock.AfterFunc(delay, func() {
 		if gen != a.gen || a.n.r == nil {
@@ -231,7 +235,11 @@ func (s *simulation) candidates(e uint64) []types.CandidateEntry {
 // import time; the result is not reported back (the core ignores it).
 func (a *app) FinalizeBlock(b *types.Block, _ types.Round) error {
 	s := a.n.s
-	d := sample(s.rng, s.sc.App.ImportDelay)
+	samples := s.sc.App.ImportDelay
+	if len(a.n.spec.ImportDelay) > 0 {
+		samples = a.n.spec.ImportDelay
+	}
+	d := sample(s.rng, samples)
 	for _, x := range s.sc.App.SlowImport {
 		if x.Height == index(b.Header) && (x.Node == types.Address{} || x.Node == a.n.v.address) {
 			d = x.Delay
