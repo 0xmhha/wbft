@@ -69,6 +69,10 @@ func TestRecords(t *testing.T) {
 	hash := "0x" + strings.Repeat("ab", 32)
 	addr := "0x" + strings.Repeat("cd", 20)
 	good := []event.Record{
+		{Kind: event.BuildHandover, View: view, Fields: map[string]any{"build_id": "build-1", "number": view.Seq, "wait_ns": "0", "parent": hash}},
+		{Kind: event.BuildStarted, View: view, Fields: map[string]any{"build_id": "build-1", "number": view.Seq}},
+		{Kind: event.BuildFinished, View: view, Fields: map[string]any{"build_id": "build-1", "number": view.Seq, "status": "submitted", "hash": hash}},
+		{Kind: event.BuildFinished, View: view, Fields: map[string]any{"build_id": "build-2", "number": view.Seq, "status": "replaced"}},
 		{Kind: event.RoundEnter, View: view, Fields: map[string]any{"branch": "ROUND_CHANGE", "cause": event.CauseTimeout,
 			"requested_round": "1", "proposer": addr, "is_proposer": false, "valset_digest": hash}},
 		{Kind: event.MsgOutcome, View: view, Fields: map[string]any{"code": uint64(0x13), "check": nil, "outcome": event.Ignore,
@@ -97,6 +101,8 @@ func TestRecords(t *testing.T) {
 
 	common := `"v":1,"node":"` + addr + `","run":"r","seq":0,"t_wall":"2026-10-11T00:00:00Z","t_mono_ns":0,`
 	bad := []struct{ line, want string }{
+		{`{` + common + `"kind":"BUILD_FINISHED","view":{"seq":"7","round":"0"},"build_id":"build-1","number":"7","status":"submitted"}`, "matches none"},
+		{`{` + common + `"kind":"BUILD_STARTED","view":{"seq":"7","round":"0"},"build_id":"build-0","number":"7"}`, "does not match"},
 		{`{` + common + `"kind":"NO_SUCH_KIND"}`, "none of the"},
 		{`{` + common + `"kind":"NODE_STOP"}`, "lacks reason"},
 		{`{` + common + `"kind":"NODE_STOP","reason":"operator","extra":1}`, "has extra"},

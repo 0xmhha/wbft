@@ -758,3 +758,19 @@ regenerated input, including a broadcast awaiting unrecorded signing results.
 Generated executions have no invented original output slot. A changed timer
 fingerprint does not imply changed network bytes. No action descriptor proves
 an arrival time or establishes other nodes' counterfactual reactions.
+
+
+### Application build observations
+
+`BUILD_HANDOVER` identifies each request actually passed to the application by
+`build_id`, writer run, full height and round, parent hash and nanosecond wait.
+The ID counter is shared across engine restarts of one node. The optional
+`app.BuildRequest.Observation` records `BUILD_STARTED` after the builder's wait
+and `BUILD_FINISHED` for submission, replacement, cancellation, unavailable
+inputs, a changed head, or failure. Request copies share a single observer.
+
+Assembly intervals use actual start/finish boundaries; they do not subtract an
+assumed wait from a nearby proposal. `submitted` means the application called
+`SubmitProposal`, not that the core accepted the block. Applications without
+observer support and missing/dropped endpoints remain incomplete evidence.
+The existing `BUILD_REQUEST` and `PROPOSAL_SUBMITTED` records are preserved.

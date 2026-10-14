@@ -186,18 +186,26 @@ func (a *App) VerifyPartB(step string, h, _ *types.Header, body types.BodyRaw) e
 // on the head from the pool and submits it.
 func (a *App) ReadyToBuild(req app.BuildRequest) {
 	go func() {
+		result, hash := app.BuildHeightLeft, types.Hash{}
+		defer func() { req.Observation.Finished(result, hash) }()
 		select {
 		case <-time.After(req.Wait):
 		case <-req.Done:
 			return
 		}
+		result = app.BuildFailed
+		req.Observation.Started()
 		b, err := a.build(req)
 		if err != nil {
 			a.log.Debug("no proposal", "height", req.Height, "err", err)
 			return
 		}
 		cons, _, _ := a.wired()
+		if req.Observation != nil {
+			hash = codec.BlockHash(b.Header)
+		}
 		cons.SubmitProposal(b)
+		result = app.BuildSubmitted
 	}()
 }
 
