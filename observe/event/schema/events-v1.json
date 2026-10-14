@@ -107,15 +107,113 @@
         "mode": { "enum": ["embedded", "standalone"] },
         "profile": { "enum": ["compat", "improved"] },
         "application_model": {
-          "type": "object",
-          "properties": {
-            "build_queue": { "const": "serial-latest" },
-            "done_result": { "enum": ["failed", "submitted"] },
-            "assembly_return": { "const": "sampled" },
-            "selection": { "const": "callbacks_then_done_then_pending" }
-          },
-          "required": ["build_queue", "done_result", "assembly_return", "selection"],
-          "additionalProperties": false
+          "oneOf": [
+            {
+              "type": "object",
+              "properties": {
+                "build_queue": {
+                  "const": "serial-latest"
+                },
+                "done_result": {
+                  "enum": [
+                    "failed",
+                    "submitted"
+                  ]
+                },
+                "assembly_return": {
+                  "const": "sampled"
+                },
+                "selection": {
+                  "const": "callbacks_then_done_then_pending"
+                }
+              },
+              "required": [
+                "build_queue",
+                "done_result",
+                "assembly_return",
+                "selection"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "build_queue": {
+                  "const": "unbuffered-seal"
+                },
+                "assembly_return": {
+                  "const": "sampled_empty_body"
+                },
+                "running_gate": {
+                  "const": "at_selection"
+                },
+                "selection": {
+                  "const": "actors_to_idle_then_deadline_callbacks_seeded"
+                },
+                "commit_capacity": {
+                  "const": 1
+                },
+                "result_capacity": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 1024
+                },
+                "head_capacity": {
+                  "const": 10
+                },
+                "pending_age": {
+                  "const": 7
+                },
+                "call_return_delay_ns": {
+                  "type": "array",
+                  "minItems": 1,
+                  "maxItems": 256,
+                  "items": {
+                    "$ref": "#/$defs/decimal"
+                  }
+                },
+                "post_delay_ns": {
+                  "type": "array",
+                  "minItems": 1,
+                  "maxItems": 256,
+                  "items": {
+                    "$ref": "#/$defs/decimal"
+                  }
+                },
+                "assembly_delay_ns": {
+                  "type": "array",
+                  "minItems": 1,
+                  "maxItems": 256,
+                  "items": {
+                    "$ref": "#/$defs/decimal"
+                  }
+                },
+                "import_delay_ns": {
+                  "type": "array",
+                  "minItems": 1,
+                  "maxItems": 256,
+                  "items": {
+                    "$ref": "#/$defs/decimal"
+                  }
+                }
+              },
+              "required": [
+                "build_queue",
+                "assembly_return",
+                "running_gate",
+                "selection",
+                "commit_capacity",
+                "result_capacity",
+                "head_capacity",
+                "pending_age",
+                "call_return_delay_ns",
+                "post_delay_ns",
+                "assembly_delay_ns",
+                "import_delay_ns"
+              ],
+              "additionalProperties": false
+            }
+          ]
         },
         "handshake": { "enum": ["start", "refinalize", "start_after_rollback", "refuse"] },
         "improvements": {

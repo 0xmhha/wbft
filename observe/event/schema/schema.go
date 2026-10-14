@@ -5,7 +5,7 @@
 //
 // The file is JSON Schema 2020-12. The checker implements only the keywords
 // the file uses ($ref to "#/$defs/...", type, const, enum, pattern,
-// minimum, properties, required, additionalProperties,
+// minimum, maximum, minItems, maxItems, properties, required, additionalProperties,
 // unevaluatedProperties, items, allOf, oneOf) and refuses a file that uses
 // any other, so that the file cannot rely on a rule nobody checks.
 package schema
@@ -38,23 +38,25 @@ type Schema struct {
 }
 
 type node struct {
-	ref        string
-	target     *node
-	types      []string
-	constant   any
-	hasConst   bool
-	enum       []any
-	pattern    *regexp.Regexp
-	minimum    *big.Rat
-	props      map[string]*node
-	order      []string // props with const or enum first: they reject other branches early
-	required   []string
-	additional *node
-	closed     bool // additionalProperties: false
-	sealed     bool // unevaluatedProperties: false
-	items      *node
-	allOf      []*node
-	oneOf      []*node
+	ref                string
+	target             *node
+	types              []string
+	constant           any
+	hasConst           bool
+	enum               []any
+	pattern            *regexp.Regexp
+	minimum            *big.Rat
+	maximum            *big.Rat
+	minItems, maxItems *big.Int
+	props              map[string]*node
+	order              []string // props with const or enum first: they reject other branches early
+	required           []string
+	additional         *node
+	closed             bool // additionalProperties: false
+	sealed             bool // unevaluatedProperties: false
+	items              *node
+	allOf              []*node
+	oneOf              []*node
 }
 
 var annotations = map[string]bool{"$schema": true, "$id": true, "title": true, "description": true, "$comment": true, "$defs": true}
@@ -157,13 +159,29 @@ func (c *compiler) fill(n *node, v any, at string) error {
 			if n.pattern, err = regexp.Compile(s); err != nil {
 				return fmt.Errorf("%w: %s: %v", ErrSchema, at, err)
 			}
-		case "minimum":
+		case "minimum", "maximum":
 			num, _ := x.(json.Number)
 			r, ok := new(big.Rat).SetString(num.String())
 			if !ok {
-				return fmt.Errorf("%w: %s: minimum %v", ErrSchema, at, x)
+				return fmt.Errorf("%w: %s: %s %v", ErrSchema, at, k, x)
 			}
-			n.minimum = r
+			if k == "minimum" {
+				n.minimum = r
+			} else {
+				n.maximum = r
+			}
+		case "minItems", "maxItems":
+			num, _ := x.(json.Number)
+			r, ok := new(big.Rat).SetString(num.String())
+			if !ok || !r.IsInt() || r.Sign() < 0 {
+				return fmt.Errorf("%w: %s: %s must be a non-negative integer", ErrSchema, at, k)
+			}
+			count := new(big.Int).Set(r.Num())
+			if k == "minItems" {
+				n.minItems = count
+			} else {
+				n.maxItems = count
+			}
 		case "properties":
 			p, ok := x.(map[string]any)
 			if !ok {
@@ -300,10 +318,26 @@ func validate(n *node, v any, at string) (map[string]bool, error) {
 			}
 		}
 	}
-	if a, ok := v.([]any); ok && n.items != nil {
-		for i, e := range a {
-			if _, err := validate(n.items, e, fmt.Sprintf("%s/%d", at, i)); err != nil {
-				return nil, err
+	if n.maximum != nil {
+		if num, ok := v.(json.Number); ok {
+			if r, ok := new(big.Rat).SetString(num.String()); ok && r.Cmp(n.maximum) > 0 {
+				return fail("%s is above %s", num, n.maximum.RatString())
+			}
+		}
+	}
+	if a, ok := v.([]any); ok {
+		count := big.NewInt(int64(len(a)))
+		if n.minItems != nil && count.Cmp(n.minItems) < 0 {
+			return fail("has fewer than %s items", n.minItems.String())
+		}
+		if n.maxItems != nil && count.Cmp(n.maxItems) > 0 {
+			return fail("has more than %s items", n.maxItems.String())
+		}
+		if n.items != nil {
+			for i, e := range a {
+				if _, err := validate(n.items, e, fmt.Sprintf("%s/%d", at, i)); err != nil {
+					return nil, err
+				}
 			}
 		}
 	}

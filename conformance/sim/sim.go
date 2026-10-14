@@ -39,9 +39,12 @@ func (v Validator) Address() types.Address { return v.address }
 
 // NodeSpec configures one node.
 type NodeSpec struct {
-	// BuildQueuePolicy opts into a serial latest-pending worker. Empty preserves
-	// the independent-request application model used by existing scenarios.
+	// BuildQueuePolicy opts into a declared serial application worker. Empty
+	// preserves the independent-request model used by existing scenarios.
 	BuildQueuePolicy string
+	// Sealing is required only by BuildQueueSealing. Its empty-body fake
+	// executor and seeded actor selection are recorded with the node startup.
+	Sealing *SealingProfile
 	// BuildDoneResult explicitly selects the fake executor's return after Done:
 	// failed models a cooperative executor, submitted an executor ignoring Done.
 	// The sampled assembly return still owns the worker until its deadline.
@@ -478,8 +481,37 @@ func newSimulation(sc Scenario) (*simulation, error) {
 		if i < len(sc.Nodes) {
 			spec = sc.Nodes[i]
 		}
-		if spec.BuildQueuePolicy != "" && spec.BuildQueuePolicy != BuildQueueSerial || spec.BuildQueuePolicy == BuildQueueSerial && spec.BuildDoneResult != BuildDoneFails && spec.BuildDoneResult != BuildDoneSubmits || spec.BuildQueuePolicy == "" && spec.BuildDoneResult != "" {
-			return nil, fmt.Errorf("%w: invalid application queue policy", ErrScenario)
+		if err := validateApplicationSpec(spec, sc.Until.Duration); err != nil {
+			return nil, err
+		}
+		if spec.BuildQueuePolicy == BuildQueueSealing {
+			effective := spec
+			if len(effective.BuildDelay) == 0 {
+				effective.BuildDelay = sc.App.BuildDelay
+			}
+			if len(effective.ImportDelay) == 0 {
+				effective.ImportDelay = sc.App.ImportDelay
+			}
+			if err := validateApplicationSpec(effective, sc.Until.Duration); err != nil {
+				return nil, err
+			}
+			for _, bad := range sc.App.BadProposals {
+				if bad.Proposer == v.address {
+					return nil, fmt.Errorf("%w: sealing profile requires empty proposals", ErrScenario)
+				}
+			}
+			for _, bad := range sc.App.FailedImports {
+				if bad.Proposer == v.address {
+					return nil, fmt.Errorf("%w: sealing profile requires empty proposals", ErrScenario)
+				}
+			}
+		}
+
+		if spec.Sealing != nil {
+			copy := *spec.Sealing
+			copy.CallDelay = slices.Clone(copy.CallDelay)
+			copy.PostDelay = slices.Clone(copy.PostDelay)
+			spec.Sealing = &copy
 		}
 		if spec.StartAfter < 0 || spec.StartAfter >= sc.Until.Duration {
 			return nil, fmt.Errorf("%w: invalid initial node start", ErrScenario)
@@ -555,7 +587,7 @@ func (s *simulation) run(ctx context.Context) error {
 			case ActionCrash:
 				n.crash()
 			case ActionRestart:
-				if !n.alive {
+				if !n.alive || n.down {
 					n.start()
 				}
 			}
@@ -598,6 +630,9 @@ func (s *simulation) pumpAll() {
 	for {
 		progressed := false
 		for _, n := range s.nodes {
+			if n.app.sealing != nil && n.app.sealing.pump() {
+				progressed = true
+			}
 			if n.app.serial != nil && n.app.serial.pump() {
 				progressed = true
 			}

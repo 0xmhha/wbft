@@ -84,6 +84,15 @@ type App interface {
 	FinalizeBlock(b *types.Block, round types.Round) error
 }
 
+// ManualFinalizer is an optional application actor for manual runners. It
+// returns control to the external scheduler while modelling a blocking commit
+// call. Complete must be invoked by that scheduler once; Pump pauses core input
+// processing and Stop/Close refuse to discard the outstanding call meanwhile.
+// Non-manual runners continue to use App.FinalizeBlock synchronously.
+type ManualFinalizer interface {
+	FinalizeBlockManual(b *types.Block, round types.Round, complete func(error))
+}
+
 // EventSink takes event records; *event.Writer is one.
 type EventSink interface {
 	Write(r event.Record, at event.Stamp) error
@@ -157,11 +166,12 @@ type Deps struct {
 
 // Errors of the runner.
 var (
-	ErrRunning    = errors.New("runner: already running")
-	ErrNotRunning = errors.New("runner: not running")
-	ErrHalted     = errors.New("runner: consensus halted")
-	ErrStartPoint = errors.New("runner: start height is not the head + 1")
-	ErrClosed     = errors.New("runner: closed")
+	ErrRunning         = errors.New("runner: already running")
+	ErrNotRunning      = errors.New("runner: not running")
+	ErrHalted          = errors.New("runner: consensus halted")
+	ErrStartPoint      = errors.New("runner: start height is not the head + 1")
+	ErrClosed          = errors.New("runner: closed")
+	ErrFinalizePending = errors.New("runner: manual finalization pending")
 )
 
 // queued is one input with where it came from.
@@ -232,9 +242,10 @@ type Runner struct {
 	timers scheduler
 	inbox  inbox
 
-	commitMu   sync.Mutex // runner.commit.mu
-	commitQ    []commitJob
-	commitCond *sync.Cond
+	commitMu            sync.Mutex // runner.commit.mu
+	commitQ             []commitJob
+	commitCond          *sync.Cond
+	manualCommitPending atomic.Bool
 
 	ctlMu    sync.Mutex // serialises Start and Stop
 	ctl      chan ctlReq
@@ -436,6 +447,9 @@ func (r *Runner) Stop() error {
 		return ErrNotRunning
 	}
 	if r.cfg.Manual {
+		if r.manualCommitPending.Load() {
+			return ErrFinalizePending
+		}
 		r.stopEngine("operator")
 		return nil
 	}
@@ -449,6 +463,10 @@ func (r *Runner) Stop() error {
 // no Start slips in between.
 func (r *Runner) Close() error {
 	r.ctlMu.Lock()
+	if r.cfg.Manual && r.manualCommitPending.Load() {
+		r.ctlMu.Unlock()
+		return ErrFinalizePending
+	}
 	r.closed = true
 	r.ctlMu.Unlock()
 	if r.running.Load() {
