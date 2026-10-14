@@ -115,6 +115,8 @@ const (
 
 // MsgRec is one consensus message on the wire.
 type MsgRec struct {
+	// IO is absent in old recordings and when the transport reports no interval.
+	IO *IOInterval
 	// Capture identifies this received frame within its writer run. It is
 	// assigned before Offer and remains stable when recording is asynchronous.
 	Capture uint64
@@ -320,6 +322,7 @@ type msgRLP struct {
 	Engine   string
 	Dedup    uint64 // rlpDedup
 	Capture  uint64
+	IO       []uint64 `rlp:"optional"`
 }
 
 type msgRLPNoCapture struct {
@@ -508,10 +511,14 @@ func encodeBody(r Record, jseq uint64) ([]byte, error) {
 		return rlp.Encode(&peerRLP{Format: Format, JSeq: jseq, PeerIdx: uint64(b.PeerIdx), Addr: b.Addr, NodeID: bytesOrEmpty(b.NodeID),
 			Remote: b.Remote, Event: b.Event, Reason: b.Reason, By: b.By, Cause: b.Cause})
 	case *MsgRec:
+		io, err := encodeIO(b.IO, b.Mono)
+		if err != nil {
+			return nil, err
+		}
 		return rlp.Encode(&msgRLP{Format: Format, JSeq: jseq, Dir: b.Dir, PeerIdx: uint64(b.PeerIdx), Mono: uint64(int64(b.Mono)),
 			WallNs: uint64(b.WallNs), Code: b.Code, WireCode: b.WireCode, Payload: bytesOrEmpty(b.Payload), DedupKey: b.DedupKey,
 			Offer: b.Offer, Cause: string(b.Cause), RelayOf: b.RelayOf, Write: b.Write, Size: b.Size, Engine: b.Engine,
-			Dedup: rlpDedup(b.Dedup), Capture: b.Capture})
+			Dedup: rlpDedup(b.Dedup), Capture: b.Capture, IO: io})
 	case *OutcomeRec:
 		return rlp.Encode(&outcomeRLP{Format: Format, JSeq: jseq, Of: b.Of, Code: b.Code, Peer: b.Peer, DedupKey: b.DedupKey,
 			Outcome: string(b.Outcome), Check: b.Check, Row: uint64(b.Row + 1), Reason: b.Reason, ErrorClass: b.ErrorClass,
@@ -622,7 +629,11 @@ func decodeBody(k Kind, body []byte) (Record, error) {
 		if err := check(w.Format); err != nil {
 			return fail(err)
 		}
-		return Record{Kind: k, JSeq: w.JSeq, Body: &MsgRec{Dir: w.Dir, PeerIdx: uint32(w.PeerIdx), Mono: time.Duration(int64(w.Mono)),
+		io, err := decodeIO(w.IO, time.Duration(int64(w.Mono)))
+		if err != nil {
+			return fail(err)
+		}
+		return Record{Kind: k, JSeq: w.JSeq, Body: &MsgRec{IO: io, Dir: w.Dir, PeerIdx: uint32(w.PeerIdx), Mono: time.Duration(int64(w.Mono)),
 			WallNs: int64(w.WallNs), Code: w.Code, WireCode: w.WireCode, Payload: w.Payload, DedupKey: w.DedupKey, Offer: w.Offer,
 			Cause: event.SendCause(w.Cause), RelayOf: w.RelayOf, Write: w.Write, Size: w.Size, Engine: w.Engine,
 			Dedup: dedupOf(w.Dedup), Capture: w.Capture}}, nil
@@ -715,7 +726,11 @@ func kindOf(body any) (Kind, bool) {
 func size(r Record) int64 {
 	switch b := r.Body.(type) {
 	case *MsgRec:
-		return int64(len(b.Payload)) + 128
+		n := int64(len(b.Payload)) + 128
+		if b.IO != nil {
+			n += 48
+		}
+		return n
 	case *TimerRec:
 		return int64(len(b.Input)) + 256
 	case *StepRec:

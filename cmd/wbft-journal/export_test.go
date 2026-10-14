@@ -24,6 +24,33 @@ var (
 	peerB = types.Address{0xbb}
 )
 
+func TestExportIOEvidenceAndExplicitWriteResults(t *testing.T) {
+	fs := fsys.NewMem()
+	jw, err := journal.Open(journal.Options{FS: fs, Dir: "/j", Synchronous: true}, journal.Identity{Self: nodeA, Run: "io"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := []byte{1}
+	jw.Put(journal.Record{Body: &journal.PeerRec{PeerIdx: 1, Addr: peerB, Event: "attached"}})
+	jw.Put(journal.Record{Body: &journal.MsgRec{Dir: journal.Out, PeerIdx: 1, Code: 0x13, Mono: 3, WallNs: 90, Payload: p, DedupKey: codec.DedupKey(p), Write: "ok", IO: &journal.IOInterval{StartMono: 0, EndMono: 2, StartWallNs: 100, EndWallNs: 90}}})
+	jw.Put(journal.Record{Body: &journal.MsgRec{Dir: journal.Out, PeerIdx: 1, Code: 0x13, Payload: p, DedupKey: codec.DedupKey(p), Write: "not_attached"}})
+	if err := jw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	runJSON(t, fs, 0, nil, "export", "--dir", "/j", "--out", "/out", "--format", "r01")
+	xs := readFrames(t, fs, "/out/frames-io.jsonl")
+	if len(xs) != 3 {
+		t.Fatal(xs)
+	}
+	io, ok := xs[1]["io"].(map[string]any)
+	if !ok || io["start_mono_ns"] != float64(0) || io["end_mono_ns"] != float64(2) || io["start_wall"] != time.Unix(0, 100).UTC().Format(time.RFC3339Nano) || io["end_wall"] != time.Unix(0, 90).UTC().Format(time.RFC3339Nano) || xs[1]["write_result"] != "ok" || xs[1]["write_error"] != nil {
+		t.Fatal("measured interval or successful write lost", xs[1])
+	}
+	if xs[2]["io"] != nil || xs[2]["write_result"] != "not_attached" {
+		t.Fatal("unattempted write invented I/O", xs[2])
+	}
+}
+
 // frameJournal writes one run with a peer stream, received and sent
 // frames, outcomes before and after their frames, and a step that moves the
 // head to 5 before the last frame.
