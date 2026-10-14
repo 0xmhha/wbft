@@ -119,7 +119,7 @@ func timedRequest(req request, send func(any) error) error {
 			"type": "timed_step", "id": req.ID, "execution_step": strconv.FormatUint(result.Execution, 10), "t_mono_ns": strconv.FormatInt(int64(result.Mono), 10),
 			"source_input": timedSource(result.Source), "cause": timedSource(result.Cause), "signing_evidence": timedSource(result.Evidence), "parent_execution_step": strconv.FormatUint(result.ParentExecution, 10),
 			"timer_arm": timedSource(result.Arm), "timer_arm_execution_step": strconv.FormatUint(result.ArmExecution, 10), "timer_deadline_mono_ns": deadline,
-			"generated": result.Generated, "suppression_reason": result.Suppression, "input": inputlog.Kind(result.Result.Input), "out_digest": "0x" + hex.EncodeToString(result.Result.OutDigest[:]),
+			"execution_state": result.State, "generated": result.Generated, "suppression_reason": result.Suppression, "input": inputlog.Kind(result.Result.Input), "out_digest": "0x" + hex.EncodeToString(result.Result.OutDigest[:]),
 			"match": result.Result.Match, "comparable": comparable, "outputs": len(result.Result.Outputs), "answer_sources": result.Result.AnswerSources, "application_question_sources": applicationSources, "counterfactual": result.Counterfactual, "execution_model": result.Model,
 		})
 	}, func(result stepdriver.TimedCompletion) error { completions = append(completions, result); return nil })

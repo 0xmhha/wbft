@@ -725,3 +725,9 @@ context identity; original question source and output index remain explicit.
 Completion reports each writer horizon and pending internal, queued and armed
 timers. A recorded Stop applies its measured runtime cleanup; no future tail is
 manufactured.
+
+Timed replay helpers declare `timed_state_v1` and return `execution_state`
+from the core snapshot after each execution slot. Height and round are decimal
+strings while the core runs; a stopped core returns null for both. Suppressed
+original internal slots report the unchanged execution state, never the source
+input view. This state is counterfactual metadata, not a canonical chain fact.

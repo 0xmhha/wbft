@@ -50,6 +50,20 @@ func TestTimedReplayProtocolAndCLIKeepExactCoordinatesAndAssumptions(t *testing.
 			}
 		case "timed_step":
 			steps++
+			state, ok := record["execution_state"].(map[string]any)
+			if !ok {
+				t.Fatal("execution state missing", record)
+			}
+			if state["running"] == true {
+				if _, ok := state["height"].(string); !ok {
+					t.Fatal("execution height rounded", state)
+				}
+				if _, ok := state["round"].(string); !ok {
+					t.Fatal("execution round rounded", state)
+				}
+			} else if state["height"] != nil || state["round"] != nil {
+				t.Fatal("stopped core acquired a view", state)
+			}
 			if record["counterfactual"] != true || record["execution_model"] != stepdriver.TimedExperimentModel {
 				t.Fatal("model lost", record)
 			}
