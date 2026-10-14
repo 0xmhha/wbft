@@ -30,6 +30,9 @@ type BuildRequest struct {
 	Parent types.Hash
 	// Done is closed when the core leaves Height.
 	Done <-chan struct{}
+	// Observation receives actual assembly and completion boundaries. Nil
+	// preserves the original behavior; applications may leave it unsupported.
+	Observation *BuildObservation
 }
 
 // FinalizeRequest hands a decided block to the application.

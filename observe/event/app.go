@@ -16,7 +16,7 @@ var nodeKinds = map[Kind]bool{
 	NodeStart: true, NodeStop: true, EngineStart: true, EngineStop: true, RoundEnter: true,
 	StateChange: true, TimerArm: true, TimerCancel: true, TimerFire: true, PreprepareAccept: true,
 	ProposalDeferred: true, Quorum: true, Send: true, Backlog: true, ExtraSeal: true,
-	BuildRequest: true, ProposalSubmitted: true, FinalizeHandover: true, NewHead: true,
+	BuildRequest: true, BuildHandover: true, BuildStarted: true, BuildFinished: true, ProposalSubmitted: true, FinalizeHandover: true, NewHead: true,
 	ImportFail: true, MsgOutcome: true, Evidence: true, CommitResult: true, LogConfig: true,
 	Health: true,
 }

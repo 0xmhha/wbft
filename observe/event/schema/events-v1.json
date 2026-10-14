@@ -20,6 +20,9 @@
     { "$ref": "#/$defs/BACKLOG" },
     { "$ref": "#/$defs/EXTRA_SEAL" },
     { "$ref": "#/$defs/BUILD_REQUEST" },
+    { "$ref": "#/$defs/BUILD_HANDOVER" },
+    { "$ref": "#/$defs/BUILD_STARTED" },
+    { "$ref": "#/$defs/BUILD_FINISHED" },
     { "$ref": "#/$defs/PROPOSAL_SUBMITTED" },
     { "$ref": "#/$defs/FINALIZE_HANDOVER" },
     { "$ref": "#/$defs/NEW_HEAD" },
@@ -355,6 +358,44 @@
         "wait_ms": { "type": "integer" }
       },
       "required": ["view", "round", "wait_ms"],
+      "unevaluatedProperties": false
+    },
+    "BUILD_HANDOVER": {
+      "type": "object", "allOf": [{ "$ref": "#/$defs/common" }],
+      "properties": {
+        "kind": { "const": "BUILD_HANDOVER" },
+        "build_id": { "type": "string", "pattern": "^build-[1-9][0-9]*$" },
+        "number": { "$ref": "#/$defs/decimal" },
+        "wait_ns": { "$ref": "#/$defs/decimal" },
+        "parent": { "$ref": "#/$defs/hash" }
+      },
+      "required": ["view", "build_id", "number", "wait_ns", "parent"],
+      "unevaluatedProperties": false
+    },
+    "BUILD_STARTED": {
+      "type": "object", "allOf": [{ "$ref": "#/$defs/common" }],
+      "properties": {
+        "kind": { "const": "BUILD_STARTED" },
+        "build_id": { "type": "string", "pattern": "^build-[1-9][0-9]*$" },
+        "number": { "$ref": "#/$defs/decimal" }
+      },
+      "required": ["view", "build_id", "number"],
+      "unevaluatedProperties": false
+    },
+    "BUILD_FINISHED": {
+      "type": "object", "allOf": [{ "$ref": "#/$defs/common" }],
+      "properties": {
+        "kind": { "const": "BUILD_FINISHED" },
+        "build_id": { "type": "string", "pattern": "^build-[1-9][0-9]*$" },
+        "number": { "$ref": "#/$defs/decimal" },
+        "status": { "enum": ["submitted", "replaced", "height_left", "stopped", "unavailable", "head_changed", "failed"] },
+        "hash": { "$ref": "#/$defs/hash" }
+      },
+      "required": ["view", "build_id", "number", "status"],
+      "oneOf": [
+        { "properties": { "status": { "const": "submitted" } }, "required": ["hash"] },
+        { "properties": { "status": { "enum": ["replaced", "height_left", "stopped", "unavailable", "head_changed", "failed"] } } }
+      ],
       "unevaluatedProperties": false
     },
     "PROPOSAL_SUBMITTED": {

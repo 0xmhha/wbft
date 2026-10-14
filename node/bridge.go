@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/0xmhha/wbft/app"
@@ -125,7 +127,9 @@ type appDriver struct {
 	// failed, when set, is told a decided block the application failed to
 	// import (an *app.ImportError from FinalizeBlock); the node records it
 	// as for OnImportFailed.
-	failed func(app.ImportFailure)
+	failed   func(app.ImportFailure)
+	emit     func(event.Record)
+	buildIDs *atomic.Uint64
 }
 
 var _ runner.App = (*appDriver)(nil)
@@ -137,7 +141,26 @@ func (d *appDriver) ReadyToBuild(req consensus.RequestBuild, wait time.Duration,
 	if h := d.a.Head(); h != nil && h.Number.AddUint64(1).Cmp(req.Height) == 0 {
 		parent = codec.BlockHash(h)
 	}
-	d.a.ReadyToBuild(app.BuildRequest{Height: req.Height, Round: req.Round, Wait: wait, Parent: parent, Done: done})
+	var observation *app.BuildObservation
+	if d.emit != nil && d.buildIDs != nil {
+		id := fmt.Sprintf("build-%d", d.buildIDs.Add(1))
+		view := types.View{Sequence: req.Height, Round: req.Round}
+		d.emit(event.Record{Kind: event.BuildHandover, View: event.ViewOf(view), Fields: map[string]any{
+			"build_id": id, "number": req.Height.String(), "wait_ns": fmt.Sprint(int64(wait)), "parent": parent.Hex()}})
+		observation = app.NewBuildObservation(func(phase app.BuildPhase, status app.BuildStatus, hash types.Hash) {
+			fields := map[string]any{"build_id": id, "number": req.Height.String()}
+			kind := event.BuildStarted
+			if phase == app.BuildCompleted {
+				kind = event.BuildFinished
+				fields["status"] = string(status)
+				if status == app.BuildSubmitted {
+					fields["hash"] = hash.Hex()
+				}
+			}
+			d.emit(event.Record{Kind: kind, View: event.ViewOf(view), Fields: fields})
+		})
+	}
+	d.a.ReadyToBuild(app.BuildRequest{Height: req.Height, Round: req.Round, Wait: wait, Parent: parent, Done: done, Observation: observation})
 }
 
 func (d *appDriver) FinalizeBlock(b *types.Block, round types.Round) error {
