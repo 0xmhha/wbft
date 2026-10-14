@@ -47,6 +47,11 @@ func (s *simulation) cut(a, b types.Address) bool {
 				return true
 			}
 		}
+		for _, c := range p.DirectedCut {
+			if c[0] == a && c[1] == b {
+				return true
+			}
+		}
 	}
 	return false
 }

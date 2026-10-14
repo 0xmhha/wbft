@@ -65,7 +65,9 @@ type Link struct {
 // Partition cuts links during [From, To).
 type Partition struct {
 	From, To time.Duration
-	Cut      [][2]types.Address
+	Cut      [][2]types.Address // cut both directions, for existing scenarios
+	// DirectedCut cuts only the ordered from/to pair.
+	DirectedCut [][2]types.Address
 }
 
 // Node actions of a NodeEvent.
@@ -129,6 +131,8 @@ type EpochChange struct {
 
 // Params are the consensus parameters of the chain.
 type Params struct {
+	// ProposerPolicy selects the recorded rotation rule; zero preserves the default.
+	ProposerPolicy           uint64
 	RequestTimeoutSeconds    uint64
 	BlockPeriodSeconds       uint64
 	EpochLength              uint64
@@ -463,6 +467,18 @@ func newSimulation(sc Scenario) (*simulation, error) {
 		n := newNode(s, i, v, spec)
 		s.nodes = append(s.nodes, n)
 		s.byAddr[v.address] = n
+	}
+	for _, partition := range sc.Partitions {
+		if partition.From < 0 || partition.To <= partition.From {
+			return nil, fmt.Errorf("%w: invalid partition interval", ErrScenario)
+		}
+		for _, pairs := range [][][2]types.Address{partition.Cut, partition.DirectedCut} {
+			for _, pair := range pairs {
+				if pair[0] == pair[1] || s.byAddr[pair[0]] == nil || s.byAddr[pair[1]] == nil {
+					return nil, fmt.Errorf("%w: invalid partition endpoints", ErrScenario)
+				}
+			}
+		}
 	}
 	return s, nil
 }
