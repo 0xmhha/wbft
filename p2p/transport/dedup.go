@@ -152,6 +152,13 @@ func (d *Dedup) Broadcast(vs *validator.Set, code uint64, payload []byte, cause 
 //
 // Spec: WBFT-NET-031, WBFT-NET-032, WBFT-SM-011
 func (d *Dedup) Gossip(vs *validator.Set, code uint64, payload []byte, cause event.SendCause) []types.Address {
+	return d.GossipTargets(vs, code, payload, cause).Targets
+}
+
+// GossipTargets returns the actual attached-validator candidate set and cache
+// exclusions from this call. Targets are send attempts, not delivery receipts.
+func (d *Dedup) GossipTargets(vs *validator.Set, code uint64, payload []byte, cause event.SendCause) GossipTargets {
+	plan := GossipTargets{Available: vs != nil}
 	key := codec.DedupKey(payload)
 	var suppressed []types.Address
 	d.mu.Lock()
@@ -166,6 +173,7 @@ func (d *Dedup) Gossip(vs *validator.Set, code uint64, payload []byte, cause eve
 			}
 		}
 		slices.SortStableFunc(candidates, func(a, b types.Address) int { return bytes.Compare(a[:], b[:]) })
+		plan.Candidates = append([]types.Address(nil), candidates...)
 		for _, a := range candidates {
 			m, ok := d.recent.Get(a)
 			if ok {
@@ -202,7 +210,8 @@ func (d *Dedup) Gossip(vs *validator.Set, code uint64, payload []byte, cause eve
 			d.t.Send(targets, out, payload)
 		}
 	}
-	return targets
+	plan.Targets, plan.Suppressed = targets, suppressed
+	return plan
 }
 
 // Known reports whether the key of payload is in the known cache, without
@@ -223,4 +232,11 @@ func (d *Dedup) SentOrReceived(peer types.Address, payload []byte) bool {
 		return false
 	}
 	return m.Value.(*lruEntry[types.Address, *lru[types.Hash, struct{}]]).val.Contains(codec.DedupKey(payload))
+}
+
+// GossipTargets describes one completed local target-selection operation.
+// A nil validator set leaves Available false; empty sets remain explicit.
+type GossipTargets struct {
+	Available                       bool
+	Candidates, Targets, Suppressed []types.Address
 }

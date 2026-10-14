@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"slices"
+	"strings"
 
 	"github.com/0xmhha/wbft/codec"
 	"github.com/0xmhha/wbft/consensus"
@@ -246,7 +247,11 @@ func (r *Runner) execute(sc *stepCtx) {
 			r.broadcast(sc, o)
 		case consensus.Relay:
 			if r.d.Transport != nil {
-				if to := r.d.Transport.Gossip(o.Validators, uint64(o.Code), o.Payload, event.CauseRelay); len(to) > 0 {
+				plan := r.d.Transport.GossipTargets(o.Validators, uint64(o.Code), o.Payload, event.CauseRelay)
+				r.emit(event.Record{Kind: event.RelayTargets, Fields: map[string]any{
+					"code": uint64(o.Code), "dedup_key": codec.DedupKey(o.Payload).Hex(),
+					"available": plan.Available, "candidates": addressTexts(plan.Candidates), "targets": addressTexts(plan.Targets), "suppressed": addressTexts(plan.Suppressed), "output_index": uint64(index) + 1}}, &sc.step)
+				if len(plan.Targets) > 0 {
 					r.sendEvent(sc, uint64(o.Code), o.Payload, event.CauseRelay)
 				}
 			}
@@ -529,4 +534,12 @@ type ownMsg struct {
 	code    codec.Code
 	payload []byte
 	msg     *codec.Message
+}
+
+func addressTexts(addresses []types.Address) []string {
+	out := make([]string, len(addresses))
+	for i, a := range addresses {
+		out[i] = strings.ToLower(a.Hex())
+	}
+	return out
 }

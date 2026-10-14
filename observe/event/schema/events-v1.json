@@ -17,6 +17,7 @@
     { "$ref": "#/$defs/PROPOSAL_DEFERRED" },
     { "$ref": "#/$defs/QUORUM" },
     { "$ref": "#/$defs/SEND" },
+    { "$ref": "#/$defs/RELAY_TARGETS" },
     { "$ref": "#/$defs/BACKLOG" },
     { "$ref": "#/$defs/EXTRA_SEAL" },
     { "$ref": "#/$defs/BUILD_REQUEST" },
@@ -318,6 +319,21 @@
         "cause": { "enum": ["broadcast", "gossip", "relay", "retry", "reconnect", "replay", "direct"] }
       },
       "required": ["code", "cause"],
+      "unevaluatedProperties": false
+    },
+    "RELAY_TARGETS": {
+      "type": "object", "allOf": [{ "$ref": "#/$defs/common" }],
+      "properties": {
+        "kind": { "const": "RELAY_TARGETS" },
+        "code": { "$ref": "#/$defs/code" },
+        "dedup_key": { "$ref": "#/$defs/hash" },
+        "available": { "type": "boolean" },
+        "candidates": { "type": "array", "items": { "$ref": "#/$defs/address" } },
+        "targets": { "type": "array", "items": { "$ref": "#/$defs/address" } },
+        "suppressed": { "type": "array", "items": { "$ref": "#/$defs/address" } },
+        "output_index": { "type": "integer", "minimum": 1 }
+      },
+      "required": ["step", "engine_run", "code", "dedup_key", "available", "candidates", "targets", "suppressed", "output_index"],
       "unevaluatedProperties": false
     },
     "BACKLOG": {

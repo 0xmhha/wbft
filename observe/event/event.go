@@ -24,6 +24,7 @@ const (
 	ProposalDeferred  Kind = "PROPOSAL_DEFERRED"
 	Quorum            Kind = "QUORUM"
 	Send              Kind = "SEND"
+	RelayTargets      Kind = "RELAY_TARGETS"
 	Backlog           Kind = "BACKLOG"
 	ExtraSeal         Kind = "EXTRA_SEAL"
 	BuildRequest      Kind = "BUILD_REQUEST"
