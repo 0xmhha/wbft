@@ -87,7 +87,11 @@ func (n *node) head() uint64 { return index(n.app.chain.head.Header) }
 
 // expectedLive reports whether the node should be running at the end: it
 // is alive, or it is down only until a later restart.
-func (n *node) expectedLive() bool { return n.alive }
+func (n *node) expectedLive() bool {
+	// A not-yet-started scheduled node must not let the run finish before
+	// its first incarnation has been observed.
+	return n.alive || n.inc == 0 && n.spec.StartAfter > n.s.l.c.Mono()
+}
 
 func (n *node) runID() string {
 	return fmt.Sprintf("sim-%d-%x-%d", n.s.sc.Seed, n.v.address[:4], n.inc)

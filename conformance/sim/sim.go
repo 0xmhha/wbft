@@ -39,6 +39,13 @@ func (v Validator) Address() types.Address { return v.address }
 
 // NodeSpec configures one node.
 type NodeSpec struct {
+	// StartAfter delays this node's first incarnation; zero starts at time zero.
+	StartAfter time.Duration
+	// BuildDelay and ImportDelay override the shared application samples when
+	// nonempty, preserving distinct recorded node timing distributions.
+	BuildDelay  []time.Duration
+	ImportDelay []time.Duration
+
 	// Options are the core options; the simulator sets Config and Self.
 	Options consensus.Options
 	// Profile is recorded in the journal ("compat" or "improved").
@@ -464,9 +471,32 @@ func newSimulation(sc Scenario) (*simulation, error) {
 		if i < len(sc.Nodes) {
 			spec = sc.Nodes[i]
 		}
+		if spec.StartAfter < 0 || spec.StartAfter >= sc.Until.Duration {
+			return nil, fmt.Errorf("%w: invalid initial node start", ErrScenario)
+		}
+		for _, samples := range [][]time.Duration{spec.BuildDelay, spec.ImportDelay} {
+			for _, d := range samples {
+				if d < 0 || d > sc.Until.Duration {
+					return nil, fmt.Errorf("%w: invalid node application delay", ErrScenario)
+				}
+			}
+		}
+		spec.BuildDelay = slices.Clone(spec.BuildDelay)
+		spec.ImportDelay = slices.Clone(spec.ImportDelay)
 		n := newNode(s, i, v, spec)
 		s.nodes = append(s.nodes, n)
 		s.byAddr[v.address] = n
+	}
+	for _, scheduled := range sc.Schedule {
+		n := s.byAddr[scheduled.Node]
+		if n == nil || scheduled.At < n.spec.StartAfter || scheduled.At > sc.Until.Duration {
+			return nil, fmt.Errorf("%w: schedule outside node lifetime", ErrScenario)
+		}
+		switch scheduled.Action {
+		case ActionStop, ActionCrash, ActionRestart:
+		default:
+			return nil, fmt.Errorf("%w: unknown node action", ErrScenario)
+		}
 	}
 	for _, partition := range sc.Partitions {
 		if partition.From < 0 || partition.To <= partition.From {
@@ -492,7 +522,15 @@ func (s *simulation) violate(kind string, node types.Address, format string, arg
 func (s *simulation) run(ctx context.Context) error {
 	s.ctx = ctx
 	for _, n := range s.nodes {
-		n.start()
+		if n.spec.StartAfter == 0 {
+			n.start()
+		} else {
+			s.l.at(n.spec.StartAfter, func() {
+				if !n.alive {
+					n.start()
+				}
+			})
+		}
 	}
 	for _, ev := range s.sc.Schedule {
 		ev := ev

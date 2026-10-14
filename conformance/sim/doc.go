@@ -4,4 +4,7 @@
 // Partition.Cut preserves symmetric partitions; DirectedCut names ordered
 // sender/recipient pairs. Params.ProposerPolicy controls the proposer rotation
 // rule used by the simulated chain, with zero retaining the default.
+// NodeSpec.StartAfter retains a delayed first incarnation. Per-node BuildDelay
+// and ImportDelay override the shared sample distributions when provided;
+// empty per-node samples retain existing shared application timing.
 package sim
