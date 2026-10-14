@@ -114,6 +114,14 @@ func (n *node) faults(name string) {
 // start starts a new incarnation: open the logs and the signer, run the
 // start-up handshake and start the engine.
 func (n *node) start() {
+	if n.app.sealing != nil {
+		if n.app.sealing.deferStart() {
+			return
+		}
+		if n.app.sealing.closed {
+			n.app.sealing = newSealingBuilder(n.app)
+		}
+	}
 	if n.app.serial != nil && n.app.serial.deferStart() {
 		return
 	}
@@ -210,8 +218,12 @@ func (n *node) start() {
 		fail(err)
 		return
 	}
+	var application runner.App = n.app
+	if n.app.sealing != nil {
+		application = sealingApplication{n.app}
+	}
 	r, err := runner.New(runner.Config{Core: opts, ReplayWAL: n.spec.ReplayWAL, Manual: true},
-		runner.Deps{Chain: n.app, App: n.app, Transport: dedup, Net: n.tr, Signer: recSigner{signer, n}, WAL: log,
+		runner.Deps{Chain: n.app, App: application, Transport: dedup, Net: n.tr, Signer: recSigner{signer, n}, WAL: log,
 			Clock: n.clock, Events: countingSink{n.ev, n.s}, Journal: jw, Rand: n.rng.IntN, Faults: fh, Logger: n.s.logger(logcat.ConsensusRound), ModuleLogger: n.s.moduleLogger()})
 	if err != nil {
 		fail(err)
@@ -219,8 +231,11 @@ func (n *node) start() {
 	}
 	n.r, n.signer = r, signer
 	fields := map[string]any{"impl": "wbft", "mode": "standalone", "profile": n.spec.Profile, "sign_floor": floor, "wal_recovery": map[string]any{"records": recov.Records, "torn_bytes": recov.TornBytes, "corrupted": len(recov.Corrupted)}}
-	if n.spec.BuildQueuePolicy != "" {
+	if n.spec.BuildQueuePolicy == BuildQueueSerial {
 		fields["application_model"] = map[string]any{"build_queue": n.spec.BuildQueuePolicy, "done_result": n.spec.BuildDoneResult, "assembly_return": "sampled", "selection": "callbacks_then_done_then_pending"}
+	}
+	if n.app.sealing != nil {
+		fields["application_model"] = n.app.sealing.declaration()
 	}
 	_ = n.ev.Write(event.Record{Kind: event.NodeStart, Fields: fields}, n.stamp())
 	if !n.guard(func() {
@@ -235,6 +250,9 @@ func (n *node) start() {
 	}
 	if n.app.serial != nil {
 		n.app.serial.start()
+	}
+	if n.app.sealing != nil {
+		n.app.sealing.started = true
 	}
 	info := r.LastReplay()
 	n.s.replays = append(n.s.replays, info)
@@ -324,6 +342,9 @@ func (n *node) pump() bool {
 
 // stop stops the node cleanly: the engine stops and the logs are closed.
 func (n *node) stop() {
+	if n.app.sealing != nil && n.app.sealing.deferStop() {
+		return
+	}
 	if !n.alive {
 		return
 	}

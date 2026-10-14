@@ -55,6 +55,7 @@ func hasTx(body types.BodyRaw, tx []byte) bool {
 // are real). Its chain is durable: an imported block survives a crash.
 type app struct {
 	serial  *serialBuilder
+	sealing *sealingBuilder
 	n       *node
 	chain   *memChain
 	snaps   map[types.Hash]*source.AuthoritySnapshot
@@ -66,8 +67,11 @@ type app struct {
 func newApp(n *node) *app {
 	a := &app{n: n, chain: newMemChain(n.s.genesis), snaps: map[types.Hash]*source.AuthoritySnapshot{},
 		bad: map[types.Hash]bool{}, pending: map[uint64]*types.Block{}}
-	if n.spec.BuildQueuePolicy == BuildQueueSerial {
+	switch n.spec.BuildQueuePolicy {
+	case BuildQueueSerial:
 		a.serial = newSerialBuilder(a)
+	case BuildQueueSealing:
+		a.sealing = newSealingBuilder(a)
 	}
 	a.snapshot(n.s.genesis.Header)
 	return a
@@ -83,12 +87,18 @@ func (a *app) snapshot(h *types.Header) {
 // dropPending forgets imports in flight (a crash or a stop).
 func (a *app) dropPending() {
 	a.gen++
+	if a.sealing != nil {
+		a.sealing.kill()
+	}
 	if a.serial != nil {
 		a.serial.crash()
 	}
 }
 func (a *app) stopPending() {
 	a.gen++
+	if a.sealing != nil {
+		a.sealing.close()
+	}
 	if a.serial != nil {
 		a.serial.stop()
 	}
@@ -151,6 +161,10 @@ func (r randao) SignRandao([]byte) ([]byte, error) {
 // ReadyToBuild implements runner.App: after the wait and the build time the
 // builder assembles a block on the current head and submits it.
 func (a *app) ReadyToBuild(req consensus.RequestBuild, wait time.Duration, done <-chan struct{}) {
+	if a.sealing != nil {
+		a.sealing.offer(req, wait)
+		return
+	}
 	if a.serial != nil {
 		a.serial.offer(req, wait, done)
 		return
@@ -252,7 +266,8 @@ func (s *simulation) candidates(e uint64) []types.CandidateEntry {
 
 // FinalizeBlock implements runner.App: the block is imported after the
 // import time; the result is not reported back (the core ignores it).
-func (a *app) FinalizeBlock(b *types.Block, _ types.Round) error {
+func (a *app) FinalizeBlock(b *types.Block, _ types.Round) error { return a.finalizeImport(b) }
+func (a *app) importDelay(b *types.Block) time.Duration {
 	s := a.n.s
 	samples := s.sc.App.ImportDelay
 	if len(a.n.spec.ImportDelay) > 0 {
@@ -271,12 +286,19 @@ func (a *app) FinalizeBlock(b *types.Block, _ types.Round) error {
 			}
 		}
 	}
+	return d
+}
+func (a *app) finalizeImport(b *types.Block) error {
+	return a.scheduleImport(b, event.PathSealedLocally)
+}
+func (a *app) scheduleImport(b *types.Block, path string) error {
+	d := a.importDelay(b)
 	gen := a.gen
 	a.n.clock.AfterFunc(d, func() {
 		if gen != a.gen {
 			return
 		}
-		_ = a.importBlock(b, "sealed_locally")
+		_ = a.importBlock(b, path)
 	})
 	return nil
 }
@@ -342,7 +364,12 @@ func (a *app) importBlock(b *types.Block, path string) error {
 	delete(a.pending, h)
 	if a.n.r != nil && a.n.alive {
 		_ = a.n.ev.Write(eventNewHead(b, path), a.n.stamp())
-		a.n.r.NewHead(b.Header)
+		if a.sealing == nil {
+			a.n.r.NewHead(b.Header)
+		}
+	}
+	if a.sealing != nil {
+		a.sealing.headNotice(b.Header)
 	}
 	if a.n.alive && a.n.tr != nil {
 		a.n.tr.announce(b)

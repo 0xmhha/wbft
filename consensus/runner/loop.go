@@ -6,6 +6,7 @@ import (
 	"errors"
 	"slices"
 	"strings"
+	"sync"
 
 	"github.com/0xmhha/wbft/codec"
 	"github.com/0xmhha/wbft/consensus"
@@ -71,6 +72,9 @@ func (r *Runner) consensusLoop() {
 func (r *Runner) Pump() bool {
 	did := false
 	for {
+		if r.manualCommitPending.Load() {
+			return did
+		}
 		progressed := false
 		for r.inbox.checkOne(true) {
 			progressed = true
@@ -432,7 +436,7 @@ func hexHash(h types.Hash) string { return "0x" + hex.EncodeToString(h[:]) }
 // commitOne runs one queued FinalizeBlock in manual mode.
 func (r *Runner) commitOne() bool {
 	r.commitMu.Lock()
-	if len(r.commitQ) == 0 {
+	if r.manualCommitPending.Load() || len(r.commitQ) == 0 {
 		r.commitMu.Unlock()
 		return false
 	}
@@ -465,7 +469,18 @@ func (r *Runner) commitLoop() {
 
 // finalize calls the application and queues the result for the core.
 func (r *Runner) finalize(j commitJob) {
-	err := r.d.App.FinalizeBlock(j.block, j.round)
+	if r.cfg.Manual {
+		if app, ok := r.d.App.(ManualFinalizer); ok {
+			r.manualCommitPending.Store(true)
+			var once sync.Once
+			app.FinalizeBlockManual(j.block, j.round, func(err error) { once.Do(func() { r.finalizeDone(j, err); r.manualCommitPending.Store(false) }) })
+			return
+		}
+	}
+	r.finalizeDone(j, r.d.App.FinalizeBlock(j.block, j.round))
+}
+
+func (r *Runner) finalizeDone(j commitJob, err error) {
 	hash := codec.BlockHash(j.block.Header)
 	f := map[string]any{"number": j.block.Header.Number.String(), "hash": hexHash(hash), "ok": err == nil,
 		"duration_ms": (r.d.Clock.Mono() - j.at).Milliseconds()}
