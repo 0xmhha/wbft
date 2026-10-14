@@ -39,6 +39,13 @@ func (v Validator) Address() types.Address { return v.address }
 
 // NodeSpec configures one node.
 type NodeSpec struct {
+	// BuildQueuePolicy opts into a serial latest-pending worker. Empty preserves
+	// the independent-request application model used by existing scenarios.
+	BuildQueuePolicy string
+	// BuildDoneResult explicitly selects the fake executor's return after Done:
+	// failed models a cooperative executor, submitted an executor ignoring Done.
+	// The sampled assembly return still owns the worker until its deadline.
+	BuildDoneResult string
 	// StartAfter delays this node's first incarnation; zero starts at time zero.
 	StartAfter time.Duration
 	// BuildDelay and ImportDelay override the shared application samples when
@@ -471,6 +478,9 @@ func newSimulation(sc Scenario) (*simulation, error) {
 		if i < len(sc.Nodes) {
 			spec = sc.Nodes[i]
 		}
+		if spec.BuildQueuePolicy != "" && spec.BuildQueuePolicy != BuildQueueSerial || spec.BuildQueuePolicy == BuildQueueSerial && spec.BuildDoneResult != BuildDoneFails && spec.BuildDoneResult != BuildDoneSubmits || spec.BuildQueuePolicy == "" && spec.BuildDoneResult != "" {
+			return nil, fmt.Errorf("%w: invalid application queue policy", ErrScenario)
+		}
 		if spec.StartAfter < 0 || spec.StartAfter >= sc.Until.Duration {
 			return nil, fmt.Errorf("%w: invalid initial node start", ErrScenario)
 		}
@@ -588,6 +598,9 @@ func (s *simulation) pumpAll() {
 	for {
 		progressed := false
 		for _, n := range s.nodes {
+			if n.app.serial != nil && n.app.serial.pump() {
+				progressed = true
+			}
 			if n.pump() {
 				progressed = true
 			}

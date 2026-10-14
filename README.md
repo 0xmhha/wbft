@@ -347,6 +347,22 @@ progress, the header rules of every stored block, and that a write-ahead
 log replay never differs from the original run. Fault points (build tag
 `wbft_faults`) crash a node between two durable steps.
 
+The per-node application model keeps independent request scheduling by default.
+Setting `NodeSpec.BuildQueuePolicy` to `"serial-latest"` selects one worker and
+one latest pending request. `BuildDoneResult` must explicitly be `"failed"` or
+`"submitted"`: it defines the fake executor's response to Done at the sampled
+assembly return. Done signals cancellation without freeing the worker, while
+Stop lets an active executor return before a clean restart. A crash drops that
+executor without inventing a completion. Each request retains its original
+run's event writer and clock.
+
+`NODE_START.application_model` records the queue, completion and scheduler
+assumptions. The shared callback scheduler orders deadlines and equal-deadline
+insertion; worker polling then selects Done before a pending replacement.
+`conformance/buildqueue` exposes explicit choices for ambiguous selections.
+Callers must validate the selected executor and scheduling assumptions against
+execution evidence before fitting. Legacy miner queues require a separate model.
+
 ```sh
 WBFT_SIM_SEEDS=100 go test -run TestBundle ./conformance/sim/
 go test -tags wbft_faults -run TestCrashAtFaultPoints ./conformance/sim/

@@ -54,6 +54,7 @@ func hasTx(body types.BodyRaw, tx []byte) bool {
 // headers are real WBFT headers (block hash, seals, EpochInfo and randao
 // are real). Its chain is durable: an imported block survives a crash.
 type app struct {
+	serial  *serialBuilder
 	n       *node
 	chain   *memChain
 	snaps   map[types.Hash]*source.AuthoritySnapshot
@@ -65,6 +66,9 @@ type app struct {
 func newApp(n *node) *app {
 	a := &app{n: n, chain: newMemChain(n.s.genesis), snaps: map[types.Hash]*source.AuthoritySnapshot{},
 		bad: map[types.Hash]bool{}, pending: map[uint64]*types.Block{}}
+	if n.spec.BuildQueuePolicy == BuildQueueSerial {
+		a.serial = newSerialBuilder(a)
+	}
 	a.snapshot(n.s.genesis.Header)
 	return a
 }
@@ -77,7 +81,18 @@ func (a *app) snapshot(h *types.Header) {
 }
 
 // dropPending forgets imports in flight (a crash or a stop).
-func (a *app) dropPending() { a.gen++ }
+func (a *app) dropPending() {
+	a.gen++
+	if a.serial != nil {
+		a.serial.crash()
+	}
+}
+func (a *app) stopPending() {
+	a.gen++
+	if a.serial != nil {
+		a.serial.stop()
+	}
+}
 
 func (a *app) Get(h types.Hash) (*source.AuthoritySnapshot, bool) {
 	s, ok := a.snaps[h]
@@ -136,6 +151,10 @@ func (r randao) SignRandao([]byte) ([]byte, error) {
 // ReadyToBuild implements runner.App: after the wait and the build time the
 // builder assembles a block on the current head and submits it.
 func (a *app) ReadyToBuild(req consensus.RequestBuild, wait time.Duration, done <-chan struct{}) {
+	if a.serial != nil {
+		a.serial.offer(req, wait, done)
+		return
+	}
 	s := a.n.s
 	samples := s.sc.App.BuildDelay
 	if len(a.n.spec.BuildDelay) > 0 {
