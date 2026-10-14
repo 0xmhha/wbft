@@ -69,7 +69,8 @@ func (r *Runner) startEngine(_ context.Context, head *types.Header) error {
 	// ENGINE_START comes before the records of the run's first step, which
 	// belong to the new run.
 	f := map[string]any{"engine_run": r.engineRun, "reason": "start", "replay": map[string]any{
-		"records": r.replay.Records, "stopped": nilIfEmpty(r.replay.Stopped), "replayed": replayed}}
+		"records": r.replay.Records, "stopped": nilIfEmpty(r.replay.Stopped), "replayed": replayed,
+		"enabled": r.cfg.ReplayWAL, "available": r.d.WAL != nil}}
 	r.emit(event.Record{Kind: event.EngineStart, Fields: f}, nil)
 	if !replayed {
 		r.core = consensus.NewState(r.cfg.Core)
