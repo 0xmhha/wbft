@@ -13,6 +13,7 @@ import (
 	"github.com/0xmhha/wbft/consensus/privval"
 	"github.com/0xmhha/wbft/consensus/runner"
 	"github.com/0xmhha/wbft/consensus/wal"
+	"github.com/0xmhha/wbft/crypto/keccak"
 	"github.com/0xmhha/wbft/internal/buildmeta"
 	"github.com/0xmhha/wbft/internal/faultpoint"
 	"github.com/0xmhha/wbft/internal/fsys"
@@ -42,6 +43,9 @@ type node struct {
 	i             int
 	v             Validator
 	spec          NodeSpec
+	cfg           *types.Config
+	cfgJSON       []byte
+	cfgHash       types.Hash
 	fs            *fsys.Mem
 	app           *app
 	adversary     bool
@@ -74,9 +78,9 @@ type lockCheck struct {
 	point string
 }
 
-func newNode(s *simulation, i int, v Validator, spec NodeSpec) *node {
+func newNode(s *simulation, i int, v Validator, spec NodeSpec, cfg *types.Config, cfgJSON []byte) *node {
 	n := &node{s: s, i: i, v: v, spec: spec, fs: fsys.NewMem(), eventFiles: map[string]*bytes.Buffer{}, faultHits: map[string]int{},
-		rng: rand.New(rand.NewPCG(uint64(s.sc.Seed), uint64(i)+1))}
+		cfg: cfg, cfgJSON: cfgJSON, cfgHash: keccak.Sum256(cfgJSON), rng: rand.New(rand.NewPCG(uint64(s.sc.Seed), uint64(i)+1))}
 	n.app = newApp(n)
 	for _, a := range s.sc.Adversaries {
 		if a.Node == v.address {
@@ -180,10 +184,10 @@ func (n *node) start() {
 		floor = map[string]any{"height": h.String(), "status": "kept"}
 	}
 	opts := n.spec.Options
-	opts.Config, opts.Self = n.s.cfg, n.v.address
+	opts.Config, opts.Self = n.cfg, n.v.address
 	id := journal.Identity{Self: n.v.address, BLSPublicKey: n.v.blsPub, Run: n.runID(), Commit: buildmeta.Version(), ChainID: big.NewInt(ChainID),
 		GenesisHash: codec.BlockHash(n.s.genesis.Header), Mode: "standalone",
-		Core: journal.CoreOptions{TimerTrace: journal.TimerTraceVersion, ChainConfig: n.s.cfgJSON, Self: n.v.address, Improvements: uint64(opts.Improvements),
+		Core: journal.CoreOptions{TimerTrace: journal.TimerTraceVersion, ChainConfig: n.cfgJSON, Self: n.v.address, Improvements: uint64(opts.Improvements),
 			BacklogLimit: uint64(opts.BacklogLimit), Profile: n.spec.Profile}}
 	jw, err := journal.Open(journal.Options{FS: n.fs, Dir: journalDir, KeepHeights: 100000, MaxBytes: 8 << 30,
 		SegmentBytes: 1 << 20, Synchronous: true}, id)

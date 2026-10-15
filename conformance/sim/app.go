@@ -121,7 +121,7 @@ func (p partB) VerifyPartB(step string, _ *types.Header, _ *types.Header, body t
 }
 
 func (a *app) env() *header.Env {
-	return &header.Env{Config: a.n.s.cfg, Chain: a.chain, BadBlock: a.IsBadBlock, PartB: partB{a}, Snapshots: a, Now: a.n.clock.Now}
+	return &header.Env{Config: a.n.cfg, Chain: a.chain, BadBlock: a.IsBadBlock, PartB: partB{a}, Snapshots: a, Now: a.n.clock.Now}
 }
 
 // Head implements runner.Chain.
@@ -129,7 +129,7 @@ func (a *app) Head() *types.Header { return a.chain.head.Header }
 
 // ValidatorsAt implements runner.Chain.
 func (a *app) ValidatorsAt(n types.Height, parent types.Hash) (*validator.Set, error) {
-	return validator.ValidatorsAt(a.chain, a.n.s.cfg, n, parent, nil)
+	return validator.ValidatorsAt(a.chain, a.n.cfg, n, parent, nil)
 }
 
 // ValidateProposal implements runner.Chain. A block that fails execution is
@@ -228,8 +228,8 @@ func (a *app) build(head *types.Header) (*types.Block, error) {
 			}
 		}
 	}
-	if isEpoch, err := validator.IsEpochBlock(s.cfg, n); err == nil && isEpoch {
-		ei, err := epoch.ComputeNextEpochInfo(a.chain, s.cfg, h, s.candidates(index(h)))
+	if isEpoch, err := validator.IsEpochBlock(a.n.cfg, n); err == nil && isEpoch {
+		ei, err := epoch.ComputeNextEpochInfo(a.chain, a.n.cfg, h, s.candidates(index(h)))
 		if err != nil {
 			return nil, err
 		}
@@ -338,13 +338,13 @@ func (a *app) importBlock(b *types.Block, path string) error {
 	if b.Header.ParentHash != codec.BlockHash(a.chain.head.Header) {
 		return fmt.Errorf("sim: block %d does not extend the head", h)
 	}
-	// Every distinct sealed header is verified once per run: the header
+	// Every distinct sealed header is verified once per configuration: the header
 	// rules and the light verification (both check the seals).
 	enc, err := codec.EncodeHeader(b.Header)
 	if err != nil {
 		return err
 	}
-	key := keccak.Sum256(enc, codec.BlockHash(a.chain.head.Header).Bytes())
+	key := verificationKey{Header: keccak.Sum256(enc, codec.BlockHash(a.chain.head.Header).Bytes()), Config: a.n.cfgHash}
 	if !s.verified[key] {
 		env := a.env()
 		env.PartB = nil
@@ -352,7 +352,7 @@ func (a *app) importBlock(b *types.Block, path string) error {
 			s.violate("header", a.n.v.address, "block %d: %v", h, err)
 			return err
 		}
-		if r, err := header.VerifyLight(header.LightInputs{Config: s.cfg, Trusted: trusted{a}}, b.Header, a.chain.head.Header); r != header.Valid {
+		if r, err := header.VerifyLight(header.LightInputs{Config: a.n.cfg, Trusted: trusted{a}}, b.Header, a.chain.head.Header); r != header.Valid {
 			s.violate("header", a.n.v.address, "block %d light verification %s: %v", h, r, err)
 			return fmt.Errorf("light verification %s", r)
 		}
@@ -383,7 +383,7 @@ func (a *app) importBlock(b *types.Block, path string) error {
 type trusted struct{ a *app }
 
 func (t trusted) ValidatorsAt(n types.Height, parent types.Hash) (*validator.Set, error) {
-	return validator.ValidatorsAt(t.a.chain, t.a.n.s.cfg, n, parent, nil)
+	return validator.ValidatorsAt(t.a.chain, t.a.n.cfg, n, parent, nil)
 }
 
 func (a *app) head() uint64 { return index(a.chain.head.Header) }

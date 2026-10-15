@@ -355,6 +355,19 @@ Control actions wait in source order behind a blocked manual finalization, and
 a full node stop or crash discards pending engine controls. These actions model
 an observed engine lifecycle; they do not infer synchronisation decisions.
 
+`NodeSpec.Timing` optionally overrides `RequestTimeoutSeconds`,
+`BlockPeriodSeconds` and `MaxRequestTimeoutSeconds` for one node, including
+its later restarts. Nil fields inherit normalized `Scenario.Params`; an
+explicit zero maximum removes the timeout cap. Explicit timeout and block
+period values must be positive. Supplied seconds must fit a `time.Duration`
+when added to the simulation horizon. The existing round timeout arithmetic
+is unchanged. Each node's runner, fake application, header verification and
+journal use the same resolved configuration. Header verification results are
+shared only among nodes with identical configurations. Inputs are copied at
+startup, so later changes to caller-owned timing pointers do not alter a run.
+Different block periods can cause nodes to reject each other's headers; these
+are reported as header violations rather than hidden by a shared cache.
+
 `NodeSpec.Processing` optionally declares service samples by receive-check or
 core-input phase, input kind and message code. An explicit worker count bounds
 receive checks independently of the single reserved core input. Samples use
