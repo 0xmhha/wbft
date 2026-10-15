@@ -27,6 +27,7 @@ func chainConfigJSON(p Params, genesis []Validator) ([]byte, error) {
 		EpochLength              uint64  `json:"epochLength"`
 		ProposerPolicy           *uint64 `json:"proposerPolicy"`
 		MaxRequestTimeoutSeconds *uint64 `json:"maxRequestTimeoutSeconds,omitempty"`
+		AllowedFutureBlockTime   *uint64 `json:"allowedFutureBlockTime,omitempty"`
 	}
 	init := struct {
 		Validators    []string `json:"validators"`
@@ -40,9 +41,21 @@ func chainConfigJSON(p Params, genesis []Validator) ([]byte, error) {
 		"chainId": ChainID,
 		"anzeon": map[string]any{
 			"wbft": wbftJSON{RequestTimeoutSeconds: p.RequestTimeoutSeconds, BlockPeriodSeconds: p.BlockPeriodSeconds,
-				EpochLength: p.EpochLength, ProposerPolicy: &pol, MaxRequestTimeoutSeconds: p.MaxRequestTimeoutSeconds},
+				EpochLength: p.EpochLength, ProposerPolicy: &pol, MaxRequestTimeoutSeconds: p.MaxRequestTimeoutSeconds, AllowedFutureBlockTime: p.AllowedFutureBlockTime},
 			"init": init,
 		},
+	}
+	if len(p.RuleActivations) > 0 {
+		rules := make(map[types.RuleName]json.RawMessage, len(p.RuleActivations))
+		for name, value := range p.RuleActivations { //wbft:unordered output map, encoded in key order
+			height, ok := new(big.Int).SetString(value, 10)
+			if !ok || height.Sign() < 0 || height.String() != value {
+				return nil, fmt.Errorf("%w: invalid chain rule activation", ErrScenario)
+			}
+			rules[name] = json.RawMessage(value)
+		}
+		// The official configuration parser validates supported rule names.
+		cfg["wbftRules"] = map[string]any{"consensusRules": rules}
 	}
 	return json.Marshal(cfg)
 }

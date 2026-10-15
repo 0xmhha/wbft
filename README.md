@@ -368,6 +368,22 @@ startup, so later changes to caller-owned timing pointers do not alter a run.
 Different block periods can cause nodes to reject each other's headers; these
 are reported as header violations rather than hidden by a shared cache.
 
+`Scenario.Params.RuleActivations` preserves chain-wide consensus rule activations
+in the simulator's generated chain configuration. Values are exact non-negative
+decimal strings, including heights beyond 64 bits; missing rules are disabled.
+The official chain configuration parser refuses unsupported rule names. Nil or
+empty declarations retain the original default configuration and outputs.
+Node profiles and timing overrides do not change these activations. Every node's
+runner, fake application and header checks use the configured rules, and actual
+journal segments retain their activation heights and configuration digest across
+restarts. Declarations are copied at startup so caller-owned map changes cannot
+change an executing scenario.
+
+`Scenario.Params.AllowedFutureBlockTime` optionally preserves the chain's static
+future-block allowance. Nil keeps the original default representation; a
+supplied value, including zero, is retained across timing overrides and restarts
+without narrowing the chain configuration's unsigned integer domain.
+
 `NodeSpec.Processing` optionally declares service samples by receive-check or
 core-input phase, input kind and message code. An explicit worker count bounds
 receive checks independently of the single reserved core input. Samples use

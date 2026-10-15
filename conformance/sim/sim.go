@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"math/rand/v2"
 	"os"
 	"path/filepath"
@@ -156,6 +157,13 @@ type EpochChange struct {
 
 // Params are the consensus parameters of the chain.
 type Params struct {
+	// RuleActivations contains chain-wide consensus rules, using exact decimal
+	// activation heights. Missing rules are disabled. Node timing and profiles
+	// never override these activations; nil preserves the original configuration.
+	RuleActivations map[types.RuleName]string `json:",omitempty"`
+	// AllowedFutureBlockTime preserves the chain's static future-block allowance.
+	// Nil retains the original generated configuration; explicit zero is allowed.
+	AllowedFutureBlockTime *uint64 `json:",omitempty"`
 	// ProposerPolicy selects the recorded rotation rule; zero preserves the default.
 	ProposerPolicy           uint64
 	RequestTimeoutSeconds    uint64
@@ -438,6 +446,8 @@ func newSimulation(sc Scenario) (*simulation, error) {
 	sc.Validators = slices.Clone(sc.Validators)
 	sc.Nodes = slices.Clone(sc.Nodes)
 	sc.Params.MaxRequestTimeoutSeconds = cloneTimingValue(sc.Params.MaxRequestTimeoutSeconds)
+	sc.Params.AllowedFutureBlockTime = cloneTimingValue(sc.Params.AllowedFutureBlockTime)
+	sc.Params.RuleActivations = maps.Clone(sc.Params.RuleActivations)
 	sc.Partitions = slices.Clone(sc.Partitions)
 	sc.Schedule = slices.Clone(sc.Schedule)
 	for i := range sc.Validators {
