@@ -2,6 +2,7 @@ package sim
 
 import (
 	"fmt"
+	"maps"
 	"math"
 	"time"
 )
@@ -36,6 +37,8 @@ func cloneTiming(p *TimingParams) *TimingParams {
 // Derived round timeouts retain their existing protocol arithmetic.
 func ResolveTiming(base Params, override *TimingParams, horizon time.Duration) (Params, error) {
 	out := base
+	out.RuleActivations = maps.Clone(base.RuleActivations)
+	out.AllowedFutureBlockTime = cloneTimingValue(base.AllowedFutureBlockTime)
 	out.MaxRequestTimeoutSeconds = cloneTimingValue(base.MaxRequestTimeoutSeconds)
 	if override == nil {
 		return out, nil
