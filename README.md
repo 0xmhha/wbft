@@ -347,6 +347,14 @@ progress, the header rules of every stored block, and that a write-ahead
 log replay never differs from the original run. Fault points (build tag
 `wbft_faults`) crash a node between two durable steps.
 
+Scheduled `engine_stop` and `engine_start` actions pause consensus on the same
+runner while the node's application, block synchronisation and transport remain
+live. The signer, WAL, journal, event writer and node clock survive the pause;
+engine start uses the application's current head and configured replay policy.
+Control actions wait in source order behind a blocked manual finalization, and
+a full node stop or crash discards pending engine controls. These actions model
+an observed engine lifecycle; they do not infer synchronisation decisions.
+
 The per-node application model keeps independent request scheduling by default.
 Setting `NodeSpec.BuildQueuePolicy` to `"serial-latest"` selects one worker and
 one latest pending request. `BuildDoneResult` must explicitly be `"failed"` or

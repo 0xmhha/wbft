@@ -89,12 +89,14 @@ type Partition struct {
 
 // Node actions of a NodeEvent.
 const (
-	ActionStop    = "stop"    // clean stop of the engine and the node
-	ActionCrash   = "crash"   // kill: only what was synced survives
-	ActionRestart = "restart" // start a stopped or crashed node
+	ActionStop        = "stop"         // clean stop of the engine and the node
+	ActionCrash       = "crash"        // kill: only what was synced survives
+	ActionRestart     = "restart"      // start a stopped or crashed node
+	ActionEngineStop  = "engine_stop"  // stop consensus while the application and transport remain live
+	ActionEngineStart = "engine_start" // start consensus against the current application head
 )
 
-// NodeEvent stops, crashes or restarts a node at a time.
+// NodeEvent controls a node or its consensus engine at a recorded time.
 type NodeEvent struct {
 	At     time.Duration
 	Node   types.Address
@@ -535,7 +537,7 @@ func newSimulation(sc Scenario) (*simulation, error) {
 			return nil, fmt.Errorf("%w: schedule outside node lifetime", ErrScenario)
 		}
 		switch scheduled.Action {
-		case ActionStop, ActionCrash, ActionRestart:
+		case ActionStop, ActionCrash, ActionRestart, ActionEngineStop, ActionEngineStart:
 		default:
 			return nil, fmt.Errorf("%w: unknown node action", ErrScenario)
 		}
@@ -590,6 +592,8 @@ func (s *simulation) run(ctx context.Context) error {
 				if !n.alive || n.down {
 					n.start()
 				}
+			case ActionEngineStop, ActionEngineStart:
+				n.requestEngineAction(ev.Action)
 			}
 		})
 	}

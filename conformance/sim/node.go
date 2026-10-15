@@ -58,9 +58,10 @@ type node struct {
 	tr     *adapter
 	ev     *event.Writer
 
-	eventFiles  map[string]*bytes.Buffer
-	faultHits   map[string]int
-	pendingLock *lockCheck
+	eventFiles    map[string]*bytes.Buffer
+	faultHits     map[string]int
+	pendingLock   *lockCheck
+	engineActions []string
 }
 
 // lockCheck is the lock of a node that crashed after an own message was
@@ -126,6 +127,7 @@ func (n *node) start() {
 		return
 	}
 	n.inc++
+	n.engineActions = nil
 	inc := n.inc
 	n.alive, n.down = true, false
 	n.clock = &nodeClock{l: &n.s.l, skew: n.spec.ClockSkew, live: func() bool { return n.alive && n.inc == inc }}
@@ -329,8 +331,11 @@ func (n *node) pump() bool {
 	if !n.alive || n.r == nil {
 		return false
 	}
-	did := false
-	n.guard(func() { did = n.r.Pump() })
+	did := n.pumpEngineActions()
+	if !n.alive || n.r == nil {
+		return did
+	}
+	n.guard(func() { did = n.r.Pump() || did })
 	if n.r != nil {
 		if h := n.r.Halted(); h != nil && n.alive {
 			n.s.violate("halt", n.v.address, "%v", h)
@@ -342,6 +347,7 @@ func (n *node) pump() bool {
 
 // stop stops the node cleanly: the engine stops and the logs are closed.
 func (n *node) stop() {
+	n.engineActions = nil
 	if n.app.sealing != nil && n.app.sealing.deferStop() {
 		return
 	}
@@ -358,6 +364,7 @@ func (n *node) stop() {
 		_ = n.jw.Close()
 	}
 	n.alive, n.down, n.r = false, true, nil
+	n.engineActions = nil
 	n.app.stopPending()
 }
 
@@ -368,6 +375,7 @@ func (n *node) crash() {
 	}
 	n.s.crashes++
 	n.alive, n.down, n.r = false, true, nil
+	n.engineActions = nil
 	n.fs.Crash(n.rng)
 	n.app.dropPending()
 }
