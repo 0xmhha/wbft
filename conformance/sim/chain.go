@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math/big"
+	"time"
 
 	"github.com/0xmhha/wbft/chain/epoch"
 	"github.com/0xmhha/wbft/codec"
@@ -47,7 +48,7 @@ func chainConfigJSON(p Params, genesis []Validator) ([]byte, error) {
 }
 
 // genesisBlock returns block 0 with the genesis EpochInfo.
-func genesisBlock(cfg *types.Config) (*types.Block, error) {
+func genesisBlock(cfg *types.Config, origin time.Time) (*types.Block, error) {
 	ei, err := epoch.InitialEpochInfo(cfg.Init)
 	if err != nil {
 		return nil, err
@@ -58,7 +59,7 @@ func genesisBlock(cfg *types.Config) (*types.Block, error) {
 		Difficulty: big.NewInt(1),
 		Number:     types.HeightFromUint64(0),
 		GasLimit:   30_000_000,
-		Time:       uint64(Epoch.Unix()) - 1,
+		Time:       uint64(origin.Unix()) - 1,
 		BaseFee:    big.NewInt(20_000_000_000_000),
 	}
 	if err := codec.SetExtra(g, &types.WBFTExtra{GasTip: new(big.Int).SetUint64(types.InitialGasTip), EpochInfo: ei}); err != nil {
