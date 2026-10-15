@@ -206,6 +206,9 @@ func (b *inbox) queuedLocked() bool {
 // whether a message was taken.
 func (b *inbox) checkOne(manual bool) bool {
 	r := b.r
+	if manual && r.d.ManualProcessing != nil && r.manualChecks >= r.cfg.Workers {
+		return false
+	}
 	b.mu.Lock()
 	var cands []types.Address
 	for _, a := range b.order {
@@ -229,7 +232,9 @@ func (b *inbox) checkOne(manual bool) bool {
 	p.q = p.q[1:]
 	p.bytes -= int64(len(in.Payload))
 	b.mu.Unlock()
-	b.check(in)
+	if !manual || !r.deferManualCheck(in) {
+		b.check(in)
+	}
 	return true
 }
 

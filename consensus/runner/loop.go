@@ -70,6 +70,9 @@ func (r *Runner) consensusLoop() {
 // Pump drives a manual runner until nothing is left to do: receive checks,
 // core inputs and commits. It reports whether anything was done.
 func (r *Runner) Pump() bool {
+	if r.d.ManualProcessing != nil {
+		return r.pumpProcessing()
+	}
 	did := false
 	for {
 		if r.manualCommitPending.Load() {
@@ -138,14 +141,16 @@ func (r *Runner) next() (queued, bool) {
 
 // processOne handles one input; it reports false when there was none.
 func (r *Runner) processOne() bool {
-	if !r.running.Load() || r.Halted() != nil {
+	if !r.running.Load() || r.Halted() != nil || r.manualStepPending {
 		return false
 	}
 	q, ok := r.next()
 	if !ok {
 		return false
 	}
-	r.handle(q)
+	if !r.deferManualStep(q) {
+		r.handle(q)
+	}
 	return true
 }
 

@@ -20,6 +20,8 @@ import (
 // starts the engine run. It runs on the consensus goroutine.
 func (r *Runner) startEngine(_ context.Context, head *types.Header) error {
 	r.engineRun++
+	r.manualChecks = 0
+	r.manualStepPending = false
 	r.step = 0
 	r.internal = nil
 	r.lastOwn = map[ownKey][]byte{}
