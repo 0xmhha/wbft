@@ -228,7 +228,9 @@ type Scenario struct {
 	Adversaries []Adversary
 	Faults      []Fault
 	Disk        []DiskFault
-	Until       Stop
+	// MessageChanges select normal message deliveries, separate from adversaries.
+	MessageChanges []MessageDeliveryChange `json:",omitempty"`
+	Until          Stop
 	// NoProgress disables the progress check.
 	NoProgress bool
 	// Log, when set, makes every node's runner log through a logcat level
@@ -279,20 +281,21 @@ func (v Violation) String() string { return fmt.Sprintf("%s at %x: %s", v.Kind, 
 
 // Result is the outcome of a run.
 type Result struct {
-	Heads      []uint64          // final head per node
-	Chain      []*types.Block    // longest chain of the run, from genesis
-	Rounds     map[uint64]uint64 // round of each decided height
-	Violations []Violation
-	Evidence   int // EVIDENCE events written
-	Crashes    int
-	Replays    []runner.ReplayInfo
-	Refinalize int                                 // blocks finalized again by the start-up handshake
-	Refusals   int                                 // signatures refused by the private validators of honest nodes
-	LockChecks int                                 // restored locks compared after a crash
-	Damaged    int                                 // disk faults applied
-	Journals   map[types.Address]map[string][]byte // journal files per node
-	Events     map[string][]byte                   // event files by name
-	SimTime    time.Duration
+	MessageDeliveries []MessageDeliveryObservation `json:",omitempty"`
+	Heads             []uint64                     // final head per node
+	Chain             []*types.Block               // longest chain of the run, from genesis
+	Rounds            map[uint64]uint64            // round of each decided height
+	Violations        []Violation
+	Evidence          int // EVIDENCE events written
+	Crashes           int
+	Replays           []runner.ReplayInfo
+	Refinalize        int                                 // blocks finalized again by the start-up handshake
+	Refusals          int                                 // signatures refused by the private validators of honest nodes
+	LockChecks        int                                 // restored locks compared after a crash
+	Damaged           int                                 // disk faults applied
+	Journals          map[types.Address]map[string][]byte // journal files per node
+	Events            map[string][]byte                   // event files by name
+	SimTime           time.Duration
 }
 
 // ErrScenario reports an invalid scenario.
@@ -308,10 +311,11 @@ func Run(ctx context.Context, sc Scenario, out Output) (*Result, error) {
 		return nil, err
 	}
 	res := s.result()
+	res.MessageDeliveries, err = s.messageDeliveryResults()
 	if err := writeOutput(out, res); err != nil {
 		return res, err
 	}
-	return res, nil
+	return res, err
 }
 
 func writeOutput(out Output, res *Result) error {
@@ -389,6 +393,7 @@ func ReadJournalDir(dir string) (nodes []string, chain []*types.Block, err error
 
 // simulation is the state of one run.
 type simulation struct {
+	messages *messageDeliveryControl
 	sc       Scenario
 	levels   *logcat.Levels // nil without Scenario.Log
 	logBase  slog.Handler
@@ -607,6 +612,9 @@ func newSimulation(sc Scenario) (*simulation, error) {
 				}
 			}
 		}
+	}
+	if err := s.newMessageDeliveryControl(); err != nil {
+		return nil, err
 	}
 	return s, nil
 }

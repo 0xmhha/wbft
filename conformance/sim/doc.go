@@ -26,4 +26,15 @@
 // Scenario.WallOrigin binds simulated time zero to a per-run UTC wall clock.
 // It preserves fractional seconds, node clock skew, and restart continuity.
 // A zero value snapshots the legacy Epoch default at run initialization.
+//
+// MessageChanges drops selected eligible transport arrivals or reverses the
+// relative delivery order of a pair at one receiver. Selectors distinguish a
+// relay from a signed source and name a one-based occurrence. Swap holds the
+// first arrival until the other exists, without crossing receiver incarnations
+// or inventing an arrival. The existing seeded receive-check and core peer
+// selection remain active: receiver delivery order is not global core FIFO.
+// MessageDeliveries retains actual callback, receiver Offer and capture evidence;
+// a queued Offer does not imply dedup or core acceptance. Missing, incomplete or
+// refused changes return ErrMessageSelection with retained results and output.
+// Nil and empty MessageChanges preserve existing execution and random draws.
 package sim
