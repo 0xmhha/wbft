@@ -120,7 +120,7 @@ func TestNodeScheduleCannotStartBeforeRecordedInitialTime(t *testing.T) {
 	keys := testValidators(t, 4)
 	spec := DefaultNode()
 	spec.StartAfter = 3 * time.Second
-	for _, action := range []string{ActionStop, ActionRestart, "unknown"} {
+	for _, action := range []string{ActionStop, ActionRestart, ActionEngineStop, ActionEngineStart, "unknown"} {
 		at := time.Second
 		if action == "unknown" {
 			at = 4 * time.Second
