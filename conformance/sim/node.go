@@ -130,7 +130,7 @@ func (n *node) start() {
 	n.engineActions = nil
 	inc := n.inc
 	n.alive, n.down = true, false
-	n.clock = &nodeClock{l: &n.s.l, skew: n.spec.ClockSkew, live: func() bool { return n.alive && n.inc == inc }}
+	n.clock = &nodeClock{l: &n.s.l, origin: n.s.sc.WallOrigin, skew: n.spec.ClockSkew, live: func() bool { return n.alive && n.inc == inc }}
 	buf := &bytes.Buffer{}
 	n.eventFiles["events-"+n.runID()+".jsonl"] = buf
 	n.ev = event.NewWriter(buf, n.v.address, n.runID())

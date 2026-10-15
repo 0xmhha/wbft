@@ -23,4 +23,7 @@
 // Stops retain active assembly and local imports until their sampled returns;
 // a crash drops them without inventing completion. These are declared fake
 // application models, not fitted evidence of a physical process or network.
+// Scenario.WallOrigin binds simulated time zero to a per-run UTC wall clock.
+// It preserves fractional seconds, node clock skew, and restart continuity.
+// A zero value snapshots the legacy Epoch default at run initialization.
 package sim

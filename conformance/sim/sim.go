@@ -201,6 +201,10 @@ type DiskFault struct {
 type Scenario struct {
 	Name string
 	Seed int64
+	// WallOrigin is the wall clock at simulated time zero, including its
+	// fractional second. Zero snapshots Epoch when the run is initialized.
+	// Each run retains its own origin across node and engine restarts.
+	WallOrigin time.Time
 	// Validators are the keys of all nodes, in node order. The first
 	// Genesis of them are the genesis validators (all when zero).
 	Validators []Validator
@@ -451,6 +455,13 @@ func newSimulation(sc Scenario) (*simulation, error) {
 	if sc.Until.Duration == 0 {
 		sc.Until.Duration = 5 * time.Minute
 	}
+	if sc.WallOrigin.IsZero() {
+		sc.WallOrigin = Epoch
+	}
+	sc.WallOrigin = sc.WallOrigin.UTC().Round(0)
+	if !validWallTime(sc.WallOrigin) || !validWallTime(sc.WallOrigin.Add(sc.Until.Duration)) {
+		return nil, fmt.Errorf("%w: wall origin outside journal clock domain", ErrScenario)
+	}
 	cj, err := chainConfigJSON(sc.Params, sc.Validators[:sc.Genesis])
 	if err != nil {
 		return nil, err
@@ -459,7 +470,7 @@ func newSimulation(sc Scenario) (*simulation, error) {
 	if err != nil {
 		return nil, err
 	}
-	g, err := genesisBlock(cfg)
+	g, err := genesisBlock(cfg, sc.WallOrigin)
 	if err != nil {
 		return nil, err
 	}
@@ -482,6 +493,9 @@ func newSimulation(sc Scenario) (*simulation, error) {
 		spec := DefaultNode()
 		if i < len(sc.Nodes) {
 			spec = sc.Nodes[i]
+		}
+		if !validWallTime(sc.WallOrigin.Add(spec.ClockSkew)) || !validWallTime(sc.WallOrigin.Add(spec.ClockSkew).Add(sc.Until.Duration)) {
+			return nil, fmt.Errorf("%w: node wall clock outside journal domain", ErrScenario)
 		}
 		if err := validateApplicationSpec(spec, sc.Until.Duration); err != nil {
 			return nil, err

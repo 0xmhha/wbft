@@ -7,7 +7,9 @@ import (
 	"github.com/0xmhha/wbft/consensus/runner"
 )
 
-// Epoch is the wall-clock time of simulated time 0.
+// Epoch is the default wall-clock origin for scenarios that omit WallOrigin.
+// A run snapshots it at initialization; use Scenario.WallOrigin to configure
+// concurrent runs without changing global state.
 var Epoch = time.Unix(1_700_000_000, 0).UTC()
 
 // loop uses the shared deterministic callback scheduler.
@@ -21,12 +23,13 @@ func (l *loop) runAt(t time.Duration)                           { l.c.AdvanceTo(
 // nodeClock is the clock of one node incarnation: simulated time plus the
 // node's skew; timers of a crashed incarnation never fire.
 type nodeClock struct {
-	l    *loop
-	skew time.Duration
-	live func() bool
+	l      *loop
+	origin time.Time
+	skew   time.Duration
+	live   func() bool
 }
 
-func (c *nodeClock) Now() time.Time      { return Epoch.Add(c.l.c.Mono() + c.skew) }
+func (c *nodeClock) Now() time.Time      { return c.origin.Add(c.l.c.Mono() + c.skew) }
 func (c *nodeClock) Mono() time.Duration { return c.l.c.Mono() }
 func (c *nodeClock) AfterFunc(d time.Duration, f func()) runner.Timer {
 	live := c.live
@@ -35,4 +38,10 @@ func (c *nodeClock) AfterFunc(d time.Duration, f func()) runner.Timer {
 			f()
 		}
 	})
+}
+
+// validWallTime keeps event and journal nanoseconds in their signed domain
+// and leaves a positive second for the synthetic genesis parent.
+func validWallTime(t time.Time) bool {
+	return t.Unix() > 0 && time.Unix(0, t.UnixNano()).Equal(t)
 }
