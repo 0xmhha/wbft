@@ -39,6 +39,9 @@ func (v Validator) Address() types.Address { return v.address }
 
 // NodeSpec configures one node.
 type NodeSpec struct {
+	// Timing overrides only this node's timing parameters for all incarnations.
+	// Nil fields inherit Scenario.Params; a zero maximum explicitly removes a cap.
+	Timing *TimingParams `json:",omitempty"`
 	// Processing declares an optional pre-dispatch receive/core service model.
 	// Nil and all-zero samples preserve the original zero-cost manual loop.
 	Processing *ProcessingProfile
@@ -391,8 +394,6 @@ type simulation struct {
 	logBase  slog.Handler
 	l        loop
 	rng      *rand.Rand
-	cfg      *types.Config
-	cfgJSON  []byte
 	genesis  *types.Block
 	nodes    []*node
 	byAddr   map[types.Address]*node
@@ -400,7 +401,7 @@ type simulation struct {
 	decBlock map[uint64]*types.Block
 	rounds   map[uint64]uint64
 	signed   map[signKey]types.Hash
-	verified map[types.Hash]bool
+	verified map[verificationKey]bool
 	viol     []Violation
 	crashes  int
 	replays  []runner.ReplayInfo
@@ -410,6 +411,11 @@ type simulation struct {
 	refused  int
 	damaged  int
 	ctx      context.Context
+}
+
+type verificationKey struct {
+	Header types.Hash
+	Config types.Hash
 }
 
 type signKey struct {
@@ -425,6 +431,8 @@ func newSimulation(sc Scenario) (*simulation, error) {
 	// The run may change these lists; the caller's scenario stays as it
 	// was, so that it can be run again.
 	sc.Validators = slices.Clone(sc.Validators)
+	sc.Nodes = slices.Clone(sc.Nodes)
+	sc.Params.MaxRequestTimeoutSeconds = cloneTimingValue(sc.Params.MaxRequestTimeoutSeconds)
 	sc.Partitions = slices.Clone(sc.Partitions)
 	sc.Schedule = slices.Clone(sc.Schedule)
 	for i := range sc.Validators {
@@ -477,9 +485,9 @@ func newSimulation(sc Scenario) (*simulation, error) {
 	if err != nil {
 		return nil, err
 	}
-	s := &simulation{sc: sc, rng: rand.New(rand.NewPCG(uint64(sc.Seed), 0x5eed)), cfg: cfg, cfgJSON: cj, genesis: g,
+	s := &simulation{sc: sc, rng: rand.New(rand.NewPCG(uint64(sc.Seed), 0x5eed)), genesis: g,
 		byAddr: map[types.Address]*node{}, decided: map[uint64]types.Hash{}, decBlock: map[uint64]*types.Block{},
-		rounds: map[uint64]uint64{}, signed: map[signKey]types.Hash{}, verified: map[types.Hash]bool{}}
+		rounds: map[uint64]uint64{}, signed: map[signKey]types.Hash{}, verified: map[verificationKey]bool{}}
 	s.decided[0] = codec.BlockHash(g.Header)
 	if sc.Log != nil {
 		out := sc.LogOut
@@ -492,10 +500,34 @@ func newSimulation(sc Scenario) (*simulation, error) {
 		}
 	}
 	s.decBlock[0] = g
+	for i := len(sc.Validators); i < len(sc.Nodes); i++ {
+		if sc.Nodes[i].Timing != nil {
+			return nil, fmt.Errorf("%w: timing override for unknown node", ErrScenario)
+		}
+	}
 	for i, v := range sc.Validators {
 		spec := DefaultNode()
 		if i < len(sc.Nodes) {
 			spec = sc.Nodes[i]
+		}
+		spec.Timing = cloneTiming(spec.Timing)
+		params, err := ResolveTiming(sc.Params, spec.Timing, sc.Until.Duration)
+		if err != nil {
+			return nil, err
+		}
+		nodeConfig, nodeConfigJSON := cfg, cj
+		if spec.Timing != nil {
+			candidate, err := chainConfigJSON(params, sc.Validators[:sc.Genesis])
+			if err != nil {
+				return nil, err
+			}
+			if !bytes.Equal(candidate, cj) {
+				nodeConfig, err = types.ParseChainConfig(candidate)
+				if err != nil {
+					return nil, err
+				}
+				nodeConfigJSON = candidate
+			}
 		}
 		if !validWallTime(sc.WallOrigin.Add(spec.ClockSkew)) || !validWallTime(sc.WallOrigin.Add(spec.ClockSkew).Add(sc.Until.Duration)) {
 			return nil, fmt.Errorf("%w: node wall clock outside journal domain", ErrScenario)
@@ -549,7 +581,7 @@ func newSimulation(sc Scenario) (*simulation, error) {
 		}
 		spec.BuildDelay = slices.Clone(spec.BuildDelay)
 		spec.ImportDelay = slices.Clone(spec.ImportDelay)
-		n := newNode(s, i, v, spec)
+		n := newNode(s, i, v, spec, nodeConfig, nodeConfigJSON)
 		s.nodes = append(s.nodes, n)
 		s.byAddr[v.address] = n
 	}
