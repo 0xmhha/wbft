@@ -105,17 +105,22 @@ func (t *adapter) sendOne(dst *node, code uint64, payload []byte) {
 	}
 	from := t.n.v.address
 	dinc := dst.inc
+	var sent time.Duration
+	var peerRun string
+	if s.messages != nil {
+		sent, peerRun = s.l.c.Mono(), t.n.runID()
+	}
 	s.deliverAfter(from, dst.v.address, func() {
 		if !dst.alive || dst.inc != dinc || dst.r == nil {
 			return
 		}
-		dst.receive(from, code, payload)
+		s.selectDelivery(dst, from, code, payload, sent, peerRun)
 	})
 }
 
 // receive hands a message to the node's runner, as the transport's read
 // loop does after the frame stage.
-func (n *node) receive(from types.Address, code uint64, payload []byte) {
+func (n *node) receive(from types.Address, code uint64, payload []byte) (uint64, string) {
 	s := n.s
 	offer := "queued"
 	var capture uint64
@@ -147,6 +152,7 @@ func (n *node) receive(from types.Address, code uint64, payload []byte) {
 		n.jw.Put(journal.Record{Body: &journal.MsgRec{Capture: capture, Dir: journal.In, PeerIdx: idx, Mono: s.l.c.Mono(), WallNs: n.clock.Now().UnixNano(),
 			Code: code, WireCode: code, Payload: payload, DedupKey: codec.DedupKey(payload), Offer: offer}})
 	}
+	return capture, offer
 }
 
 // SetReceiver implements transport.Transport; the simulator calls the
