@@ -58,10 +58,12 @@ type node struct {
 	tr     *adapter
 	ev     *event.Writer
 
-	eventFiles    map[string]*bytes.Buffer
-	faultHits     map[string]int
-	pendingLock   *lockCheck
-	engineActions []string
+	eventFiles       map[string]*bytes.Buffer
+	faultHits        map[string]int
+	pendingLock      *lockCheck
+	engineActions    []string
+	stopRequested    bool
+	restartRequested bool
 }
 
 // lockCheck is the lock of a node that crashed after an own message was
@@ -115,6 +117,10 @@ func (n *node) faults(name string) {
 // start starts a new incarnation: open the logs and the signer, run the
 // start-up handshake and start the engine.
 func (n *node) start() {
+	if n.stopRequested {
+		n.restartRequested = true
+		return
+	}
 	if n.app.sealing != nil {
 		if n.app.sealing.deferStart() {
 			return
@@ -224,15 +230,19 @@ func (n *node) start() {
 	if n.app.sealing != nil {
 		application = sealingApplication{n.app}
 	}
-	r, err := runner.New(runner.Config{Core: opts, ReplayWAL: n.spec.ReplayWAL, Manual: true},
+	processing, workers := n.processingModel()
+	r, err := runner.New(runner.Config{Core: opts, ReplayWAL: n.spec.ReplayWAL, Manual: true, Workers: workers},
 		runner.Deps{Chain: n.app, App: application, Transport: dedup, Net: n.tr, Signer: recSigner{signer, n}, WAL: log,
-			Clock: n.clock, Events: countingSink{n.ev, n.s}, Journal: jw, Rand: n.rng.IntN, Faults: fh, Logger: n.s.logger(logcat.ConsensusRound), ModuleLogger: n.s.moduleLogger()})
+			Clock: n.clock, Events: countingSink{n.ev, n.s}, Journal: jw, Rand: n.rng.IntN, Faults: fh, Logger: n.s.logger(logcat.ConsensusRound), ModuleLogger: n.s.moduleLogger(), ManualProcessing: processing})
 	if err != nil {
 		fail(err)
 		return
 	}
 	n.r, n.signer = r, signer
 	fields := map[string]any{"impl": "wbft", "mode": "standalone", "profile": n.spec.Profile, "sign_floor": floor, "wal_recovery": map[string]any{"records": recov.Records, "torn_bytes": recov.TornBytes, "corrupted": len(recov.Corrupted)}}
+	if processing != nil {
+		fields["processing_model"] = processingDeclaration(n.spec.Processing)
+	}
 	if n.spec.BuildQueuePolicy == BuildQueueSerial {
 		fields["application_model"] = map[string]any{"build_queue": n.spec.BuildQueuePolicy, "done_result": n.spec.BuildDoneResult, "assembly_return": "sampled", "selection": "callbacks_then_done_then_pending"}
 	}
@@ -331,6 +341,17 @@ func (n *node) pump() bool {
 	if !n.alive || n.r == nil {
 		return false
 	}
+	if n.stopRequested {
+		if n.r.ProcessingPending() {
+			return false
+		}
+		restart := n.restartRequested
+		n.stop()
+		if restart {
+			n.start()
+		}
+		return true
+	}
 	did := n.pumpEngineActions()
 	if !n.alive || n.r == nil {
 		return did
@@ -348,6 +369,12 @@ func (n *node) pump() bool {
 // stop stops the node cleanly: the engine stops and the logs are closed.
 func (n *node) stop() {
 	n.engineActions = nil
+	n.restartRequested = false
+	if n.r != nil && n.r.ProcessingPending() {
+		n.stopRequested, n.down = true, true
+		return
+	}
+	n.stopRequested = false
 	if n.app.sealing != nil && n.app.sealing.deferStop() {
 		return
 	}
@@ -375,6 +402,7 @@ func (n *node) crash() {
 	}
 	n.s.crashes++
 	n.alive, n.down, n.r = false, true, nil
+	n.stopRequested, n.restartRequested = false, false
 	n.engineActions = nil
 	n.fs.Crash(n.rng)
 	n.app.dropPending()

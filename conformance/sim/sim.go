@@ -39,6 +39,9 @@ func (v Validator) Address() types.Address { return v.address }
 
 // NodeSpec configures one node.
 type NodeSpec struct {
+	// Processing declares an optional pre-dispatch receive/core service model.
+	// Nil and all-zero samples preserve the original zero-cost manual loop.
+	Processing *ProcessingProfile
 	// BuildQueuePolicy opts into a declared serial application worker. Empty
 	// preserves the independent-request model used by existing scenarios.
 	BuildQueuePolicy string
@@ -500,6 +503,11 @@ func newSimulation(sc Scenario) (*simulation, error) {
 		if err := validateApplicationSpec(spec, sc.Until.Duration); err != nil {
 			return nil, err
 		}
+		processing, err := cloneProcessing(spec.Processing, sc.Until.Duration)
+		if err != nil {
+			return nil, err
+		}
+		spec.Processing = processing
 		if spec.BuildQueuePolicy == BuildQueueSealing {
 			effective := spec
 			if len(effective.BuildDelay) == 0 {

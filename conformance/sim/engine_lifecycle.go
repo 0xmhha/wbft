@@ -44,7 +44,7 @@ func (n *node) pumpEngineActions() bool {
 		}) {
 			return did
 		}
-		if errors.Is(err, runner.ErrFinalizePending) {
+		if errors.Is(err, runner.ErrFinalizePending) || errors.Is(err, runner.ErrProcessingPending) {
 			return did
 		}
 		n.engineActions = n.engineActions[1:]

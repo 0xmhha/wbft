@@ -355,6 +355,32 @@ Control actions wait in source order behind a blocked manual finalization, and
 a full node stop or crash discards pending engine controls. These actions model
 an observed engine lifecycle; they do not infer synchronisation decisions.
 
+`NodeSpec.Processing` optionally declares service samples by receive-check or
+core-input phase, input kind and message code. An explicit worker count bounds
+receive checks independently of the single reserved core input. Samples use
+the node's seeded generator, retaining their order and multiplicity. Nil and
+all-zero profiles preserve the original execution and evidence bytes without
+extra random draws. Unlisted work classes keep zero cost.
+Lifecycle steps and WAL replay retain their existing synchronous execution.
+
+The `pre_dispatch_service/1` policy reserves an input, occupies its worker for
+the sampled time, then executes the existing operation atomically. Core state,
+environment lookups, timer arms and outputs are evaluated at dispatch after
+service; the service interval is not a measured core step. Applying a recorded
+entry-to-completion sample here is an explicit approximation, not reconstruction
+of internal CPU, signing, WAL or output milestones. The startup record retains
+the declaration with decimal-string nanoseconds. It does not certify that a
+sample, worker count or unlisted zero cost was measured on a physical node.
+
+Application inputs, head notifications and timer callbacks can arrive while
+core work waits. Already queued expiries survive later cancellation. Ordered
+engine controls and a clean node stop wait behind reserved core work, including
+a restart requested before that work finishes. A crash invalidates callbacks
+of the old incarnation, and old engine receive checks cannot affect a new run.
+Work extending beyond the simulation horizon remains incomplete. The manual
+runner requires a caller-serialized completion scheduler; production runners
+reject these callbacks and retain their existing goroutine implementation.
+
 The per-node application model keeps independent request scheduling by default.
 Setting `NodeSpec.BuildQueuePolicy` to `"serial-latest"` selects one worker and
 one latest pending request. `BuildDoneResult` must explicitly be `"failed"` or

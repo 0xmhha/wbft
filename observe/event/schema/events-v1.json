@@ -106,6 +106,28 @@
         "impl": { "const": "wbft" },
         "mode": { "enum": ["embedded", "standalone"] },
         "profile": { "enum": ["compat", "improved"] },
+        "processing_model": {
+          "description": "Declared deterministic simulation service costs; operations execute atomically after reservation service, not at reconstructed internal milestones.",
+          "type": "object",
+          "properties": {
+            "policy": {"const": "pre_dispatch_service/1"},
+            "workers": {"type": "integer", "minimum": 1, "maximum": 256},
+            "unlisted_classes": {"const": "zero_cost"},
+            "costs": {"type": "array", "minItems": 1, "maxItems": 128, "items": {
+              "type": "object",
+              "properties": {
+                "phase": {"enum": ["receive_check", "core_input"]},
+                "kind": {"type": "string"},
+                "code": {"type": "integer", "minimum": 0, "maximum": 21},
+                "samples_ns": {"type": "array", "minItems": 1, "maxItems": 10000, "items": {"type": "string", "pattern": "^(0|[1-9][0-9]*)$"}}
+              },
+              "required": ["phase", "kind", "code", "samples_ns"],
+              "additionalProperties": false
+            }}
+          },
+          "required": ["policy", "workers", "unlisted_classes", "costs"],
+          "additionalProperties": false
+        },
         "application_model": {
           "oneOf": [
             {

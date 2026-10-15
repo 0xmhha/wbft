@@ -162,6 +162,9 @@ type Deps struct {
 	// with the code of the message (sign floor skips included; the HEALTH
 	// record of a skip is written once per height).
 	Refused func(code uint64)
+	// ManualProcessing is an optional deterministic service model. It is
+	// accepted only in manual mode and never changes the production loop.
+	ManualProcessing *ManualProcessing
 }
 
 // Errors of the runner.
@@ -246,6 +249,8 @@ type Runner struct {
 	commitQ             []commitJob
 	commitCond          *sync.Cond
 	manualCommitPending atomic.Bool
+	manualStepPending   bool
+	manualChecks        int
 
 	ctlMu    sync.Mutex // serialises Start and Stop
 	ctl      chan ctlReq
@@ -269,6 +274,9 @@ type commitJob struct {
 
 // New returns a stopped runner.
 func New(cfg Config, d Deps) (*Runner, error) {
+	if d.ManualProcessing != nil && (!cfg.Manual || d.ManualProcessing.Delay == nil || d.ManualProcessing.Schedule == nil || cfg.Workers < 1 || cfg.Workers > 256) {
+		return nil, fmt.Errorf("runner: manual processing requires manual mode, an explicit worker count and serialized scheduling")
+	}
 	if d.Chain == nil || d.App == nil || d.Clock == nil {
 		return nil, fmt.Errorf("runner: Chain, App and Clock are required")
 	}
@@ -447,6 +455,9 @@ func (r *Runner) Stop() error {
 		return ErrNotRunning
 	}
 	if r.cfg.Manual {
+		if r.manualStepPending {
+			return ErrProcessingPending
+		}
 		if r.manualCommitPending.Load() {
 			return ErrFinalizePending
 		}
@@ -463,6 +474,10 @@ func (r *Runner) Stop() error {
 // no Start slips in between.
 func (r *Runner) Close() error {
 	r.ctlMu.Lock()
+	if r.cfg.Manual && r.manualStepPending {
+		r.ctlMu.Unlock()
+		return ErrProcessingPending
+	}
 	if r.cfg.Manual && r.manualCommitPending.Load() {
 		r.ctlMu.Unlock()
 		return ErrFinalizePending
