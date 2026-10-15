@@ -39,12 +39,13 @@ var ErrReservedField = errors.New("event: field name is reserved")
 // and stamps always produce the same bytes. A Writer is safe for concurrent
 // use; seq increases by one per record within a run.
 type Writer struct {
-	mu   sync.Mutex
-	w    io.Writer
-	node string
-	run  string
-	seq  uint64
-	obs  []func(Record, Stamp)
+	mu     sync.Mutex
+	w      io.Writer
+	node   string
+	run    string
+	seq    uint64
+	closed bool
+	obs    []func(Record, Stamp)
 }
 
 // Observe adds f, called with every record after it was written, in
@@ -61,10 +62,34 @@ func NewWriter(w io.Writer, node types.Address, run string) *Writer {
 	return &Writer{w: w, node: "0x" + fmt.Sprintf("%x", node[:]), run: run}
 }
 
-// Write stamps r and writes it as one line.
+// Write stamps r and writes it as one line. After Finish, records are ignored
+// without changing the sequence number or notifying observers.
 func (w *Writer) Write(r Record, at Stamp) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
+	if w.closed {
+		return nil
+	}
+	return w.write(r, at)
+}
+
+// Finish writes the final record and seals this run against later Write calls,
+// including asynchronous callbacks that retained this writer. It samples now
+// under the writer lock, after preceding writes. A failed final write still
+// seals the run and returns its error. The underlying output is not closed.
+// Like observers, now must be quick and must not call the writer.
+func (w *Writer) Finish(r Record, now func() Stamp) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.closed {
+		return nil
+	}
+	w.closed = true
+	return w.write(r, now())
+}
+
+// write appends one record while mu is held.
+func (w *Writer) write(r Record, at Stamp) error {
 	line, err := encode(r, at, w.node, w.run, w.seq)
 	if err != nil {
 		return err

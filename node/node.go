@@ -229,7 +229,7 @@ func (n *Node) Start(ctx context.Context) error {
 	n.done = make(chan struct{})
 	n.mu.Unlock()
 	if err := n.start(ctx); err != nil {
-		return errors.Join(err, n.close())
+		return errors.Join(err, n.close(""))
 	}
 	return nil
 }
@@ -836,12 +836,12 @@ func (n *Node) Stop() error {
 	if !n.running() {
 		return nil
 	}
-	n.emit(event.Record{Kind: event.NodeStop, Fields: map[string]any{"reason": "operator"}})
-	return n.close()
+	return n.close("operator")
 }
 
-// close ends a started node; n.ctl is held.
-func (n *Node) close() error {
+// close ends a started node; n.ctl is held. A nonempty stopReason records
+// a terminal node boundary after its consensus workers, WAL and journal stop.
+func (n *Node) close(stopReason string) error {
 	n.mu.Lock()
 	n.state = stopped
 	r := n.r
@@ -865,6 +865,14 @@ func (n *Node) close() error {
 	}
 	if n.journal != nil {
 		errs = append(errs, n.journal.Close())
+	}
+	if stopReason != "" && n.ev != nil {
+		err := n.ev.Finish(event.Record{Kind: event.NodeStop, Fields: map[string]any{"reason": stopReason}}, func() event.Stamp {
+			return event.Stamp{Wall: n.clock.Now(), Mono: n.clock.Mono()}
+		})
+		if err != nil {
+			n.log.Warn("terminal event write failed", "err", err)
+		}
 	}
 	if n.part != nil {
 		n.part.Close()
