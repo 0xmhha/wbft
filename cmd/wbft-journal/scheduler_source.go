@@ -88,6 +88,12 @@ func (w *r01Writer) schedulerRecord(rec journal.Record, pos wal.Position) error 
 		}
 		r["type"], r["t_wall"], r["t_mono_ns"], r["clock_source"] = "scheduler_trace", time.Unix(0, 0).UTC().Format(time.RFC3339Nano), int64(0), "unavailable"
 		r["scheduler_trace"] = map[string]string{"version": strconv.FormatUint(s.version, 10), "operations": strconv.FormatUint(s.operations, 10), "steps": strconv.FormatUint(s.steps, 10)}
+		// Both capabilities originate from the same raw segment record.
+		// Keep one row and its original sequence instead of inventing a second
+		// sequence or duplicating the identity consumers require to be unique.
+		if cache := w.currentCache(); cache != nil && rec.JSeq == cache.declaration {
+			r["cache_trace"] = cacheTraceMetadata(cache)
+		}
 	case *journal.TimerRec:
 		op, err := timerMetadata(b)
 		if err != nil {

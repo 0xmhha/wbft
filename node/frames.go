@@ -17,18 +17,23 @@ import (
 // journal msg and peer records (observe.md 11.3). Peers are numbered in the
 // order the recorder first sees them, from 1.
 type frameRecorder struct {
-	capture atomic.Uint64
-	jw      journal.Writer
-	clock   stampClock
-	offset  uint64        // wire code offset (Identity.WireOffset)
-	engine  func() string // engine state for received frames; nil: unknown
+	capture         atomic.Uint64
+	attemptSequence atomic.Uint64
+	cacheInstance   atomic.Uint64
+	owner           *transport.AttemptOwner
+	jw              journal.Writer
+	clock           stampClock
+	offset          uint64        // wire code offset (Identity.WireOffset)
+	engine          func() string // engine state for received frames; nil: unknown
 
 	mu    sync.Mutex
 	index map[types.Address]uint32
 	// causes holds the cause of a send until the transport reports the
 	// write; it is cleared when it grows past maxPendingCauses (writes
 	// that never come, on a closed connection).
-	causes map[sendKey]event.SendCause
+	causes          map[sendKey]event.SendCause
+	ambiguous       map[sendKey]bool
+	legacyExhausted bool
 	// hits holds the dedup cache hits of the frame a peer's read loop is
 	// offering, until the adapter reports that frame (Received follows
 	// Offer in the same loop).
@@ -56,7 +61,7 @@ type stampClock interface {
 var _ stampClock = runner.Clock(nil)
 
 func newFrameRecorder(jw journal.Writer, clock stampClock, offset uint64) *frameRecorder {
-	return &frameRecorder{jw: jw, clock: clock, offset: offset, index: map[types.Address]uint32{}, causes: map[sendKey]event.SendCause{},
+	return &frameRecorder{jw: jw, clock: clock, offset: offset, index: map[types.Address]uint32{}, causes: map[sendKey]event.SendCause{}, owner: transport.NewAttemptOwner(), ambiguous: map[sendKey]bool{},
 		hits: map[types.Address]journal.DedupHits{}}
 }
 
@@ -136,7 +141,9 @@ func (f *frameRecorder) wrote(peer types.Address, code uint64, payload []byte, w
 	m.Write = write
 	k := sendKey{peer, m.DedupKey}
 	f.mu.Lock()
-	m.Cause = f.causes[k]
+	if !f.legacyExhausted && !f.ambiguous[k] {
+		m.Cause = f.causes[k]
+	}
 	delete(f.causes, k)
 	f.mu.Unlock()
 	f.jw.Put(journal.Record{Body: m})
@@ -147,12 +154,38 @@ func (f *frameRecorder) wrote(peer types.Address, code uint64, payload []byte, w
 func (f *frameRecorder) expect(peers []types.Address, key types.Hash, cause event.SendCause) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if len(f.causes) > maxPendingCauses {
+	if f.legacyExhausted {
+		return
+	}
+	if len(f.causes)+len(f.ambiguous) > maxPendingCauses {
 		clear(f.causes)
+		clear(f.ambiguous)
+		f.legacyExhausted = true
+		return
 	}
 	for _, p := range peers {
-		f.causes[sendKey{p, key}] = cause
+		k := sendKey{p, key}
+		if _, pending := f.causes[k]; pending {
+			f.ambiguous[k] = true
+		}
+		f.causes[k] = cause
 	}
+}
+
+func (f *frameRecorder) AttemptOwner() *transport.AttemptOwner { return f.owner }
+
+func (f *frameRecorder) WroteAttempt(peer types.Address, code uint64, payload []byte, write string, attempt transport.SendAttempt, interval *transport.IOInterval) {
+	m := f.msg(journal.Out, peer, code, payload)
+	m.Write = write
+	if interval != nil {
+		m.IO = recordedIO(*interval)
+	}
+	if attempt.OwnedBy(f.owner) {
+		m.Cause = attempt.Cause
+		m.Attempt = &journal.SendAttempt{Sequence: attempt.Sequence, Cache: attempt.Cache, Operation: attempt.Operation}
+	}
+	// An exact-attempt callback never consults the legacy peer/key map.
+	f.jw.Put(journal.Record{Body: m})
 }
 
 // Attached implements transport.FrameObserver.
@@ -190,6 +223,23 @@ func (t recordedTransport) Send(peers []types.Address, code uint64, payload []by
 
 // SendCause implements transport.CauseSender.
 func (t recordedTransport) SendCause(peers []types.Address, code uint64, payload []byte, cause event.SendCause) []transport.SendResult {
+	return t.SendCache(peers, code, payload, cause, 0, 0)
+}
+
+func (t recordedTransport) SendCache(peers []types.Address, code uint64, payload []byte, cause event.SendCause, instance, operation uint64) []transport.SendResult {
+	if sender, ok := t.Transport.(transport.AttemptSender); ok {
+		attempt := transport.NewSendAttempt(t.rec.owner, t.rec.attemptSequence.Add(1), instance, operation, cause)
+		res := sender.SendAttempt(peers, code, payload, attempt)
+		for i, r := range res {
+			switch r {
+			case transport.NotAttached:
+				t.rec.WroteAttempt(peers[i], code, payload, transport.WriteNotAttached, attempt, nil)
+			case transport.QueueFull:
+				t.rec.WroteAttempt(peers[i], code, payload, transport.WriteError, attempt, nil)
+			}
+		}
+		return res
+	}
 	if cause != "" {
 		t.rec.expect(peers, codec.DedupKey(payload), cause)
 	}
@@ -209,4 +259,16 @@ func (t recordedTransport) SendCause(peers []types.Address, code uint64, payload
 func (t recordedTransport) Suppressed(peer types.Address, _ uint64, payload []byte, cause event.SendCause, reason string) {
 	t.rec.jw.Put(journal.Record{Body: &journal.SuppressedRec{PeerIdx: t.rec.peerIdx(peer), DedupKey: codec.DedupKey(payload),
 		Cause: cause, Reason: reason}})
+}
+
+func (t recordedTransport) BeginCache(self types.Address) uint64 {
+	id := t.rec.cacheInstance.Add(1)
+	t.rec.jw.Put(journal.Record{Body: &journal.CacheRec{Instance: id, Action: "begin", Self: self, PeerCapacity: transport.InmemoryPeers, MessageCapacity: transport.InmemoryMessages}})
+	return id
+}
+func (t recordedTransport) CacheOperation(op transport.CacheOperation) {
+	t.rec.jw.Put(journal.Record{Body: &journal.CacheRec{Instance: op.Instance, Sequence: op.Sequence, Action: op.Action, Peer: op.Peer, Code: op.Code, Key: op.Key, PayloadSHA256: op.PayloadSHA256, Cause: op.Cause, Known: op.Known, Recent: op.Recent, Available: op.Available, Candidates: op.Candidates, Targets: op.Targets, Suppressed: op.Suppressed, Mono: t.rec.clock.Mono(), WallNs: t.rec.clock.Now().UnixNano()}})
+}
+func (t recordedTransport) SuppressedCache(peer types.Address, _ uint64, payload []byte, cause event.SendCause, reason string, instance, operation uint64) {
+	t.rec.jw.Put(journal.Record{Body: &journal.SuppressedRec{PeerIdx: t.rec.peerIdx(peer), DedupKey: codec.DedupKey(payload), Cause: cause, Reason: reason, Cache: instance, Operation: operation}})
 }

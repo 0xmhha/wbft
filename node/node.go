@@ -503,7 +503,7 @@ func (n *Node) openJournal(core consensus.Options, runID string) (*journal.FileW
 	n.mu.Unlock()
 	id := journal.Identity{Self: core.Self, BLSPublicKey: n.signer.BLSPublicKey(), Run: runID, Commit: moduleVersion(),
 		ChainID: info.ChainID, GenesisHash: info.GenesisHash, Mode: n.mode(), WireOffset: n.wireOffset(),
-		Core: journal.CoreOptions{TimerTrace: journal.TimerTraceVersion, ChainConfig: info.ChainConfigJSON, Self: core.Self, Improvements: uint64(core.Improvements),
+		Core: journal.CoreOptions{CacheTrace: journal.CacheTraceVersion, TimerTrace: journal.TimerTraceVersion, ChainConfig: info.ChainConfigJSON, Self: core.Self, Improvements: uint64(core.Improvements),
 			BacklogLimit: uint64(core.BacklogLimit)}}
 	jw, err := journal.Open(opt, id)
 	if err != nil {

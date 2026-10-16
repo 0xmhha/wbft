@@ -864,3 +864,46 @@ output position: attached-validator candidates, selected send targets and peers
 excluded by their recent cache. It includes empty selections and explicitly
 unknown validator context. These are local target-selection observations;
 selected targets do not prove successful delivery or receipt.
+
+
+### Cache operation sources and queued attempts
+
+New node journals declare `Core.CacheTrace = 1` and record initially empty
+cache instances plus every inbound or gossip mutation under the actual Dedup
+mutex. Each instance has its own operation sequence. Records retain code, key,
+payload hash, pre-operation hits, actual candidates, targets and suppressed
+peers. Cache rules, capacities, payloads, signatures, consensus options and WAL
+behavior are unchanged. Declaration clocks are unavailable; operation clocks
+are measured at the actual mutation.
+
+`transport.AttemptSender` and `transport.AttemptObserver` are optional queue
+metadata interfaces. A recording owner and enqueue generation keep a delayed
+write attached to its original cache decision. The opaque owner is compared
+only within the process, never serialized as a pointer or nonce. Observer
+replacement or a legacy adapter leaves identity explicitly unavailable. An
+attempt sequence identifies a call; it does not replace cache mutex order,
+transport completion time or peer delivery evidence.
+
+Both development and application adapters must preserve this metadata in their
+queues. Development streams register their peer identity once per observer
+lifetime before the first observed frame, including observers installed after
+a connection already exists. Stream registration is shared by read/write
+callbacks and retained separately for each actual connection.
+
+R01 exports retain complete cache context outside frame height filters.
+`cache_trace` closes available instance/operation counts and marks incomplete
+snapshots; `cache_instance` declares the empty state and real capacities;
+`cache_operation` preserves the mutation and its original journal coordinates.
+When scheduler and cache capabilities share a segment record, one
+`scheduler_trace` row contains both declarations with the original raw sequence.
+Outgoing `send_attempt` and suppression `cache_decision` metadata point to their
+exact decision sequence, segment and offset. Missing context stays unavailable;
+a successful write of a suppressed decision is retained for independent failure
+checks rather than removed. Export refuses conflicting identities, invalid
+bindings and source changes between its two passes.
+
+The RLP capability and attempt fields are optional tails. Absent capabilities
+preserve older layouts and R01 output. Readers must understand the new record
+kind and closed metadata before consuming new cache-enabled journals. Source
+coordinate authentication is a separate audit of retained raw bytes; these
+records alone do not establish remote delivery or complete network coverage.

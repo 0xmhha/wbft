@@ -69,6 +69,7 @@ func (w *r01Writer) indexOwnInputs(fs fsys.FS, dir string) map[string]*ownRun {
 	}
 	err := scan(fs, dir, func(rec journal.Record, pos wal.Position) {
 		w.indexScheduler(rec)
+		w.indexCache(rec, pos)
 		if encodeErr != nil {
 			return
 		}
@@ -161,6 +162,9 @@ func (w *r01Writer) indexOwnInputs(fs fsys.FS, dir string) map[string]*ownRun {
 		}
 	})
 	if err != nil || encodeErr != nil {
+		if w.hasCacheEvidence() {
+			w.cacheErr = fmt.Errorf("cannot index complete cache source: %w", errors.Join(err, encodeErr))
+		}
 		if w.hasSchedulerEvidence() {
 			w.schedulerErr = fmt.Errorf("cannot index complete scheduler source: %w", errors.Join(err, encodeErr))
 		}
