@@ -18,13 +18,14 @@ func timingCompatibilityScenario(t *testing.T, seed int64) Scenario {
 	return Scenario{Seed: seed, Validators: keys, Nodes: nodes, Params: Params{RequestTimeoutSeconds: 2, BlockPeriodSeconds: 1, EpochLength: 4}, Until: Stop{Height: 8, Duration: 30 * time.Second}, Schedule: []NodeEvent{{At: 2500 * time.Millisecond, Node: addrOf(keys[3]), Action: ActionStop}, {At: 4 * time.Second, Node: addrOf(keys[3]), Action: ActionRestart}}}
 }
 
-// Pin the pre-override behavior, including event bytes and signed headers.
+// Pin the default timing and observation contract, including event bytes and
+// signed headers. SEND records include the signed message view and identity.
 // Journal build identities are checked separately within a single binary.
 func TestDefaultTimingCompatibility(t *testing.T) {
 	for _, test := range []struct {
 		seed int64
 		hash string
-	}{{2, "e3d912629b2ba2cbaac39739ac9c61231c7fdc12f3bea28d51eef22f3f0ca8a3"}, {7, "ccd40c884326cfbf65f4fbf737023a9e69e90a22cb104a5c77185dfeb31dca6e"}} {
+	}{{2, "ca7db6c8c4a9d7a737ce1686788697f594fdc33b9d694a3d8f7fc35ddf4ffa09"}, {7, "9e53ae6a60a73ebf8098857b84bc79e5c2f9c62fdf720ba1a8a323856ea631b5"}} {
 		r, err := Run(context.Background(), timingCompatibilityScenario(t, test.seed), Output{})
 		if err != nil || len(r.Violations) != 0 {
 			t.Fatal(err, r.Violations)

@@ -437,7 +437,7 @@ func (r *Runner) afterReplay(timers [3]*consensus.ArmTimer, snap *consensus.Snap
 		if r.d.Transport != nil {
 			r.d.Transport.Broadcast(snap.Validators, uint64(m.code), m.payload, event.CauseReplay)
 		}
-		r.emit(event.Record{Kind: event.Send, Fields: map[string]any{"code": uint64(m.code), "cause": event.CauseReplay}}, nil)
+		r.emit(sendRecord(uint64(m.code), m.payload, event.CauseReplay, &m.msg.View), nil)
 		if !counted(vars, m.code, r.cfg.Core.Self) {
 			r.internal = append(r.internal, queued{in: consensus.Message{Code: m.code, Payload: m.payload, Peer: r.cfg.Core.Self, RecvMono: r.d.Clock.Mono()}, via: viaInternal})
 		}
