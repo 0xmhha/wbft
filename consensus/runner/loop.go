@@ -302,7 +302,7 @@ func (r *Runner) execute(sc *stepCtx) {
 					check = o.Check.String()
 				}
 				r.d.Journal.Put(journal.Record{Body: &journal.OutcomeRec{Code: uint64(o.Code), Peer: o.Peer, DedupKey: o.DedupKey,
-					Outcome: o.Class(), Check: check, Row: row, Via: o.Via, Step: sc.step}})
+					Outcome: o.Class(), Check: check, Row: row, Via: o.Via, Step: sc.step, EngineRun: r.engineRun}})
 			}
 		case consensus.Event:
 			r.emit(o.Record, &sc.step)

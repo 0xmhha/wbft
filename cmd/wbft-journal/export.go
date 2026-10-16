@@ -119,27 +119,34 @@ type r01Writer struct {
 
 	from, to *types.Height
 
-	file   fsys.File
-	run    *exportRun
-	node   types.Address
-	head   *types.Height // the head of the last step
-	wall   int64
-	mono   time.Duration
-	peers  map[uint32]*journal.PeerRec
-	on     map[uint32]bool // attached peers (segment headers repeat them)
-	last   map[linkKey]uint64
-	lastIn map[types.Hash]uint64    // the last received frame of a message, from any peer
-	wait   []*pendingOutcome        // in journal order
-	relays []*pendingRelay          // in journal order
-	closes []*pendingClose          // in journal order
-	disc   map[types.Address]uint64 // the last frame of a peer that ended DISCONNECT, not yet named by a close
-	core   map[types.Hash]uint64    // the received frame of a key the core checked first (a direct core outcome)
-	saved  map[string]bool
+	file      fsys.File
+	run       *exportRun
+	node      types.Address
+	head      *types.Height // the head of the last step
+	wall      int64
+	mono      time.Duration
+	peers     map[uint32]*journal.PeerRec
+	on        map[uint32]bool // attached peers (segment headers repeat them)
+	last      map[linkKey]uint64
+	lastIn    map[types.Hash]uint64    // the last received frame of a message, from any peer
+	wait      []*pendingOutcome        // in journal order
+	relays    []*pendingRelay          // in journal order
+	closes    []*pendingClose          // in journal order
+	disc      map[types.Address]uint64 // the last frame of a peer that ended DISCONNECT, not yet named by a close
+	core      map[types.Hash]uint64    // the received frame of a key the core checked first (a direct core outcome)
+	saved     map[string]bool
+	own       map[string]*ownRun
+	ownStream [32]byte
 }
 
 func exportR01(fs fsys.FS, dir, out, fromArg, toArg string) (*exportResult, error) {
 	w := &r01Writer{fs: fs, out: out, res: &exportResult{Out: out, Format: "r01", Runs: []*exportRun{}, From: fromArg, To: toArg},
 		saved: map[string]bool{}}
+	defer func() {
+		if w.file != nil {
+			_ = w.file.Close()
+		}
+	}()
 	var err error
 	if w.from, err = parseHeight("--from", fromArg); err != nil {
 		return nil, err
@@ -150,12 +157,21 @@ func exportR01(fs fsys.FS, dir, out, fromArg, toArg string) (*exportResult, erro
 	if err := fs.MkdirAll(filepath.Join(out, "payloads"), 0o700); err != nil {
 		return nil, err
 	}
+	w.own = w.indexOwnInputs(fs, dir)
 	var werr error
-	end := scan(fs, dir, func(rec journal.Record, _ wal.Position) {
+	stream := sha256.New()
+	encoder := json.NewEncoder(stream)
+	end := scan(fs, dir, func(rec journal.Record, pos wal.Position) {
 		if werr == nil {
-			werr = w.record(rec)
+			werr = encodeOwnStream(encoder, rec, pos)
+		}
+		if werr == nil {
+			werr = w.record(rec, pos)
 		}
 	})
+	if werr == nil && w.hasOwnEvidence() && w.ownStream != ownStreamSum(stream) {
+		werr = errors.New("journal changed while own input evidence was indexed")
+	}
 	if werr == nil {
 		werr = w.closeRun()
 	}
@@ -194,7 +210,7 @@ func (w *r01Writer) inRange() bool {
 	return (w.from == nil || h.Cmp(*w.from) >= 0) && (w.to == nil || h.Cmp(*w.to) <= 0)
 }
 
-func (w *r01Writer) record(rec journal.Record) error {
+func (w *r01Writer) record(rec journal.Record, pos wal.Position) error {
 	switch b := rec.Body.(type) {
 	case *journal.SegmentRec:
 		if w.run == nil || w.run.Run != b.Run {
@@ -205,6 +221,9 @@ func (w *r01Writer) record(rec journal.Record) error {
 	case *journal.StepRec:
 		h := b.HeadNumber
 		w.head, w.wall, w.mono = &h, b.WallNs, b.Mono
+		if err := w.ownInputRecord(rec.JSeq, b, pos); err != nil {
+			return err
+		}
 	case *journal.PeerRec:
 		return w.peer(rec.JSeq, b)
 	case *journal.MsgRec:
@@ -495,6 +514,8 @@ func (w *r01Writer) msg(seq uint64, b *journal.MsgRec) error {
 		case b.Cause == event.CauseRelay && w.lastIn[b.DedupKey] != 0:
 			// A relay sends the received bytes unchanged: the same key.
 			r["relay_of"] = w.lastIn[b.DedupKey]
+		case b.Cause == event.CauseRelay && w.ownMessage(r, b):
+			// This identifies accepted own bytes, not a received frame.
 		case b.Cause == event.CauseRelay && b.DedupKey != (types.Hash{}):
 			w.relays = append(w.relays, &pendingRelay{key: b.DedupKey, rec: r, left: outcomeLinkWindow})
 			return w.tick()
@@ -578,6 +599,13 @@ func (w *r01Writer) outcome(seq uint64, b *journal.OutcomeRec) error {
 		return w.tick()
 	}
 	r := w.common("outcome", seq)
+	r["code"] = fmt.Sprintf("0x%x", b.Code)
+	r["peer"] = hexAddr(b.Peer)
+	r["dedup_key"] = hexHash(b.DedupKey)
+	r["step"] = b.Step
+	if b.EngineRun != 0 {
+		r["engine_run"] = b.EngineRun
+	}
 	r["outcome"] = string(b.Outcome)
 	r["check"] = b.Check
 	if b.ErrorClass != "" {
@@ -598,6 +626,14 @@ func (w *r01Writer) outcome(seq uint64, b *journal.OutcomeRec) error {
 		r["of"] = b.Of
 	case b.Via == "self": // the node's own message: no frame was received
 		r["of"] = nil
+		if run := w.ownRun(); run != nil {
+			if x := run.outcomes[seq]; x != nil {
+				if b.EngineRun != x.engine || b.Step != x.step || b.Code != x.code || b.DedupKey != x.key || b.Peer != w.node || b.AtOffer || b.Outcome != event.Accept || b.Check != "PROCESS" {
+					return errors.New("own outcome source changed between export passes")
+				}
+				r["input_of"] = x.input
+			}
+		}
 	case b.Via == "backlog" && b.Peer == (types.Address{}):
 		// The core replays a backlog message without its peer.
 		r["of"] = nil
