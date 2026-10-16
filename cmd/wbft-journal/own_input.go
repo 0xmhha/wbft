@@ -4,8 +4,11 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"hash"
+	"strconv"
+	"time"
 
 	"github.com/0xmhha/wbft/codec"
 	"github.com/0xmhha/wbft/consensus"
@@ -65,6 +68,7 @@ func (w *r01Writer) indexOwnInputs(fs fsys.FS, dir string) map[string]*ownRun {
 		return (w.from == nil || h.Cmp(*w.from) >= 0) && (w.to == nil || h.Cmp(*w.to) <= 0)
 	}
 	err := scan(fs, dir, func(rec journal.Record, pos wal.Position) {
+		w.indexScheduler(rec)
 		if encodeErr != nil {
 			return
 		}
@@ -157,6 +161,9 @@ func (w *r01Writer) indexOwnInputs(fs fsys.FS, dir string) map[string]*ownRun {
 		}
 	})
 	if err != nil || encodeErr != nil {
+		if w.hasSchedulerEvidence() {
+			w.schedulerErr = fmt.Errorf("cannot index complete scheduler source: %w", errors.Join(err, encodeErr))
+		}
 		return nil // the normal export pass reports the damaged prefix
 	}
 	w.ownStream = ownStreamSum(stream)
@@ -192,6 +199,10 @@ func (w *r01Writer) ownInputRecord(seq uint64, b *journal.StepRec, pos wal.Posit
 	r["code"], r["peer"], r["dedup_key"] = fmt.Sprintf("%#x", x.code), hexAddr(w.node), hexHash(x.key)
 	r["payload_sha256"], r["size"] = sum, len(x.payload)
 	r["journal_segment"], r["journal_offset"] = pos.Segment, pos.Offset
+	if scheduler := w.scheduler[w.run.Run]; scheduler != nil && scheduler.version != 0 && b.Entry != nil {
+		r["entry_t_mono_ns"] = strconv.FormatInt(int64(b.Entry.Mono), 10)
+		r["entry_t_wall"] = time.Unix(0, b.Entry.WallNs).UTC().Format(time.RFC3339Nano)
+	}
 	return w.write(r)
 }
 
