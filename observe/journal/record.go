@@ -26,6 +26,7 @@ const (
 	KindSuppressed Kind = 5 // a send suppressed by the recent cache
 	KindStep       Kind = 6 // one input of the core and the digest of its outputs
 	KindGap        Kind = 7 // records dropped while the queue was full
+	KindCache      Kind = 9 // measured cache mutation and empty-instance declaration
 	KindTimer      Kind = 8 // measured scheduler mutation and queue timing
 )
 
@@ -47,6 +48,8 @@ func (k Kind) String() string {
 		return "gap"
 	case KindTimer:
 		return "timer"
+	case KindCache:
+		return "cache"
 	}
 	return fmt.Sprintf("kind(%d)", uint8(k))
 }
@@ -81,6 +84,7 @@ type Identity struct {
 // form: the chain configuration as its JSON text (types.ParseChainConfig).
 type CoreOptions struct {
 	TimerTrace   uint64 `json:"timer_trace,omitempty"`
+	CacheTrace   uint64 `json:"cache_trace,omitempty"`
 	ChainConfig  []byte
 	Self         types.Address
 	Improvements uint64
@@ -114,7 +118,12 @@ const (
 )
 
 // MsgRec is one consensus message on the wire.
+// SendAttempt is a local writer's queue attempt, independent of physical
+// frame timing. Zero cache coordinates make no cache-operation claim.
+type SendAttempt struct{ Sequence, Cache, Operation uint64 }
+
 type MsgRec struct {
+	Attempt *SendAttempt
 	// IO is absent in old recordings and when the transport reports no interval.
 	IO *IOInterval
 	// Capture identifies this received frame within its writer run. It is
@@ -201,10 +210,11 @@ type OutcomeRec struct {
 
 // SuppressedRec is a send the recent cache suppressed.
 type SuppressedRec struct {
-	PeerIdx  uint32
-	DedupKey types.Hash
-	Cause    event.SendCause
-	Reason   string
+	Cache, Operation uint64
+	PeerIdx          uint32
+	DedupKey         types.Hash
+	Cause            event.SendCause
+	Reason           string
 }
 
 // StepMoment is a measured step-entry clock pair from the runner.
@@ -278,6 +288,7 @@ type segmentRLP struct {
 	Profile      string
 	EngineRun    uint64
 	TimerTrace   uint64 `rlp:"optional"`
+	CacheTrace   uint64 `rlp:"optional"`
 }
 
 type peerRLP struct {
@@ -326,6 +337,7 @@ type msgRLP struct {
 	Dedup    uint64 // rlpDedup
 	Capture  uint64
 	IO       []uint64 `rlp:"optional"`
+	Attempt  []uint64 `rlp:"optional"`
 }
 
 type msgRLPNoCapture struct {
@@ -445,12 +457,14 @@ type outcomeRLPNoAtOffer struct {
 }
 
 type suppressedRLP struct {
-	Format   uint64
-	JSeq     uint64
-	PeerIdx  uint64
-	DedupKey types.Hash
-	Cause    string
-	Reason   string
+	Format    uint64
+	JSeq      uint64
+	PeerIdx   uint64
+	DedupKey  types.Hash
+	Cause     string
+	Reason    string
+	Cache     uint64 `rlp:"optional"`
+	Operation uint64 `rlp:"optional"`
 }
 
 type stepRLP struct {
@@ -510,7 +524,7 @@ func encodeBody(r Record, jseq uint64) ([]byte, error) {
 			BLSPublicKey: bytesOrEmpty(b.BLSPublicKey), Run: b.Run, Commit: b.Commit, ChainID: bigOrZero(b.ChainID),
 			GenesisHash: b.GenesisHash, Mode: b.Mode, WireOffset: b.WireOffset, ConfigDigest: b.ConfigDigest,
 			ChainConfig: bytesOrEmpty(b.Core.ChainConfig), CoreSelf: b.Core.Self, Improvements: b.Core.Improvements,
-			BacklogLimit: b.Core.BacklogLimit, Profile: b.Core.Profile, EngineRun: b.EngineRun, TimerTrace: b.Core.TimerTrace})
+			BacklogLimit: b.Core.BacklogLimit, Profile: b.Core.Profile, EngineRun: b.EngineRun, TimerTrace: b.Core.TimerTrace, CacheTrace: b.Core.CacheTrace})
 	case *PeerRec:
 		return rlp.Encode(&peerRLP{Format: Format, JSeq: jseq, PeerIdx: uint64(b.PeerIdx), Addr: b.Addr, NodeID: bytesOrEmpty(b.NodeID),
 			Remote: b.Remote, Event: b.Event, Reason: b.Reason, By: b.By, Cause: b.Cause})
@@ -519,17 +533,24 @@ func encodeBody(r Record, jseq uint64) ([]byte, error) {
 		if err != nil {
 			return nil, err
 		}
+		attempt, err := encodeSendAttempt(b.Attempt)
+		if err != nil {
+			return nil, err
+		}
 		return rlp.Encode(&msgRLP{Format: Format, JSeq: jseq, Dir: b.Dir, PeerIdx: uint64(b.PeerIdx), Mono: uint64(int64(b.Mono)),
 			WallNs: uint64(b.WallNs), Code: b.Code, WireCode: b.WireCode, Payload: bytesOrEmpty(b.Payload), DedupKey: b.DedupKey,
 			Offer: b.Offer, Cause: string(b.Cause), RelayOf: b.RelayOf, Write: b.Write, Size: b.Size, Engine: b.Engine,
-			Dedup: rlpDedup(b.Dedup), Capture: b.Capture, IO: io})
+			Dedup: rlpDedup(b.Dedup), Capture: b.Capture, IO: io, Attempt: attempt})
 	case *OutcomeRec:
 		return rlp.Encode(&outcomeRLP{Format: Format, JSeq: jseq, Of: b.Of, Code: b.Code, Peer: b.Peer, DedupKey: b.DedupKey,
 			Outcome: string(b.Outcome), Check: b.Check, Row: uint64(b.Row + 1), Reason: b.Reason, ErrorClass: b.ErrorClass,
 			Via: b.Via, Step: b.Step, AtOffer: boolUint(b.AtOffer), EngineRun: b.EngineRun})
 	case *SuppressedRec:
+		if (b.Cache == 0) != (b.Operation == 0) {
+			return nil, fmt.Errorf("journal: invalid suppressed cache reference")
+		}
 		return rlp.Encode(&suppressedRLP{Format: Format, JSeq: jseq, PeerIdx: uint64(b.PeerIdx), DedupKey: b.DedupKey,
-			Cause: string(b.Cause), Reason: b.Reason})
+			Cause: string(b.Cause), Reason: b.Reason, Cache: b.Cache, Operation: b.Operation})
 	case *StepRec:
 		env := b.Env
 		if env == nil {
@@ -551,6 +572,8 @@ func encodeBody(r Record, jseq uint64) ([]byte, error) {
 			HeadNumber: heightBig(b.HeadNumber), HeadHash: b.HeadHash, Env: env, ValsetDigest: b.ValsetDigest, OutDigest: b.OutDigest, TimerGens: gens, Entry: entry})
 	case *TimerRec:
 		return encodeTimerRec(b, jseq)
+	case *CacheRec:
+		return encodeCacheRec(b, jseq)
 	case *GapRec:
 		bk := b.ByKind
 		if bk == nil {
@@ -588,7 +611,7 @@ func decodeBody(k Kind, body []byte) (Record, error) {
 		return Record{Kind: k, JSeq: w.JSeq, Body: &SegmentRec{EngineRun: w.EngineRun, Identity: Identity{
 			Self: w.Self, NodeID: w.NodeID, BLSPublicKey: w.BLSPublicKey, Run: w.Run, Commit: w.Commit, ChainID: w.ChainID,
 			GenesisHash: w.GenesisHash, Mode: w.Mode, WireOffset: w.WireOffset, ConfigDigest: w.ConfigDigest,
-			Core: CoreOptions{ChainConfig: w.ChainConfig, Self: w.CoreSelf, Improvements: w.Improvements, BacklogLimit: w.BacklogLimit, Profile: w.Profile, TimerTrace: w.TimerTrace},
+			Core: CoreOptions{ChainConfig: w.ChainConfig, Self: w.CoreSelf, Improvements: w.Improvements, BacklogLimit: w.BacklogLimit, Profile: w.Profile, TimerTrace: w.TimerTrace, CacheTrace: w.CacheTrace},
 		}}}, nil
 	case KindPeer:
 		var w peerRLP
@@ -637,7 +660,11 @@ func decodeBody(k Kind, body []byte) (Record, error) {
 		if err != nil {
 			return fail(err)
 		}
-		return Record{Kind: k, JSeq: w.JSeq, Body: &MsgRec{IO: io, Dir: w.Dir, PeerIdx: uint32(w.PeerIdx), Mono: time.Duration(int64(w.Mono)),
+		attempt, err := decodeSendAttempt(w.Attempt)
+		if err != nil {
+			return fail(err)
+		}
+		return Record{Kind: k, JSeq: w.JSeq, Body: &MsgRec{Attempt: attempt, IO: io, Dir: w.Dir, PeerIdx: uint32(w.PeerIdx), Mono: time.Duration(int64(w.Mono)),
 			WallNs: int64(w.WallNs), Code: w.Code, WireCode: w.WireCode, Payload: w.Payload, DedupKey: w.DedupKey, Offer: w.Offer,
 			Cause: event.SendCause(w.Cause), RelayOf: w.RelayOf, Write: w.Write, Size: w.Size, Engine: w.Engine,
 			Dedup: dedupOf(w.Dedup), Capture: w.Capture}}, nil
@@ -665,7 +692,10 @@ func decodeBody(k Kind, body []byte) (Record, error) {
 		if err := check(w.Format); err != nil {
 			return fail(err)
 		}
-		return Record{Kind: k, JSeq: w.JSeq, Body: &SuppressedRec{PeerIdx: uint32(w.PeerIdx), DedupKey: w.DedupKey, Cause: event.SendCause(w.Cause), Reason: w.Reason}}, nil
+		if (w.Cache == 0) != (w.Operation == 0) {
+			return fail(fmt.Errorf("invalid suppressed cache reference"))
+		}
+		return Record{Kind: k, JSeq: w.JSeq, Body: &SuppressedRec{Cache: w.Cache, Operation: w.Operation, PeerIdx: uint32(w.PeerIdx), DedupKey: w.DedupKey, Cause: event.SendCause(w.Cause), Reason: w.Reason}}, nil
 	case KindStep:
 		var w stepRLP
 		if err := rlp.DecodeStrict(body, &w); err != nil {
@@ -690,6 +720,8 @@ func decodeBody(k Kind, body []byte) (Record, error) {
 			Env: w.Env, ValsetDigest: w.ValsetDigest, OutDigest: w.OutDigest, TimerGens: w.TimerGens, Entry: entry}}, nil
 	case KindTimer:
 		return decodeTimerRec(body)
+	case KindCache:
+		return decodeCacheRec(body)
 	case KindGap:
 		var w gapRLP
 		if err := rlp.DecodeStrict(body, &w); err != nil {
@@ -722,6 +754,8 @@ func kindOf(body any) (Kind, bool) {
 		return KindGap, true
 	case *TimerRec:
 		return KindTimer, true
+	case *CacheRec:
+		return KindCache, true
 	}
 	return 0, false
 }
@@ -734,9 +768,14 @@ func size(r Record) int64 {
 		if b.IO != nil {
 			n += 48
 		}
+		if b.Attempt != nil {
+			n += 48
+		}
 		return n
 	case *TimerRec:
 		return int64(len(b.Input)) + 256
+	case *CacheRec:
+		return 320 + int64(len(b.Candidates)+len(b.Targets)+len(b.Suppressed))*20
 	case *StepRec:
 		n := int64(len(b.Input)) + 160
 		for _, e := range b.Env {
@@ -755,4 +794,24 @@ func (o msgRLPNoSize) withSize() msgRLP {
 	return msgRLP{Format: o.Format, JSeq: o.JSeq, Dir: o.Dir, PeerIdx: o.PeerIdx, Mono: o.Mono, WallNs: o.WallNs, Code: o.Code,
 		WireCode: o.WireCode, Payload: o.Payload, DedupKey: o.DedupKey, Offer: o.Offer, Cause: o.Cause, RelayOf: o.RelayOf,
 		Write: o.Write}
+}
+
+func encodeSendAttempt(a *SendAttempt) ([]uint64, error) {
+	if a == nil {
+		return nil, nil
+	}
+	if a.Sequence == 0 || (a.Cache == 0) != (a.Operation == 0) {
+		return nil, fmt.Errorf("journal: invalid send attempt")
+	}
+	return []uint64{1, a.Sequence, a.Cache, a.Operation}, nil
+}
+
+func decodeSendAttempt(w []uint64) (*SendAttempt, error) {
+	if len(w) == 0 {
+		return nil, nil
+	}
+	if len(w) != 4 || w[0] != 1 || w[1] == 0 || (w[2] == 0) != (w[3] == 0) {
+		return nil, fmt.Errorf("journal: invalid send attempt")
+	}
+	return &SendAttempt{Sequence: w[1], Cache: w[2], Operation: w[3]}, nil
 }

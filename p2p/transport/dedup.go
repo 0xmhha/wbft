@@ -77,11 +77,13 @@ var ErrReservedOption = errors.New("transport: dedup option is not available")
 //
 // Spec: WBFT-NET-022
 type Dedup struct {
-	mu     sync.Mutex
-	t      Transport
-	opt    DedupOptions
-	recent *lru[types.Address, *lru[types.Hash, struct{}]]
-	known  *lru[types.Hash, struct{}]
+	cacheObserver                CacheObserver
+	cacheInstance, cacheSequence uint64
+	mu                           sync.Mutex
+	t                            Transport
+	opt                          DedupOptions
+	recent                       *lru[types.Address, *lru[types.Hash, struct{}]]
+	known                        *lru[types.Hash, struct{}]
 }
 
 // NewDedup returns a Dedup over t.
@@ -89,12 +91,17 @@ func NewDedup(t Transport, opt DedupOptions) (*Dedup, error) {
 	if opt.KeyWithCode || opt.RecordAfterSend || len(opt.Observers) > 0 {
 		return nil, ErrReservedOption
 	}
-	return &Dedup{
+	d := &Dedup{
 		t:      t,
 		opt:    opt,
 		recent: newLRU[types.Address, *lru[types.Hash, struct{}]](InmemoryPeers),
 		known:  newLRU[types.Hash, struct{}](InmemoryMessages),
-	}, nil
+	}
+	if observer, ok := t.(CacheObserver); ok {
+		d.cacheObserver = observer
+		d.cacheInstance = observer.BeginCache(opt.Self)
+	}
+	return d, nil
 }
 
 // peerCache returns the recent cache of peer, creating it if needed; the
@@ -124,6 +131,9 @@ func (d *Dedup) SeenInbound(peer types.Address, code uint64, payload []byte) (du
 	_, dup = d.known.Get(key)
 	if !dup {
 		d.known.Add(key, struct{}{})
+	}
+	if d.cacheObserver != nil && d.cacheInstance != 0 {
+		d.recordCache(CacheOperation{Action: "inbound", Peer: peer, Code: code, Key: key, PayloadSHA256: payloadSHA256(payload), Known: dup, Recent: recent})
 	}
 	d.mu.Unlock()
 	if d.opt.Inbound != nil {
@@ -162,6 +172,7 @@ func (d *Dedup) GossipTargets(vs *validator.Set, code uint64, payload []byte, ca
 	key := codec.DedupKey(payload)
 	var suppressed []types.Address
 	d.mu.Lock()
+	known := d.known.Contains(key)
 	d.known.Add(key, struct{}{})
 	var targets []types.Address
 	if vs != nil {
@@ -189,14 +200,22 @@ func (d *Dedup) GossipTargets(vs *validator.Set, code uint64, payload []byte, ca
 			targets = append(targets, a)
 		}
 	}
+	var operation uint64
+	if d.cacheObserver != nil && d.cacheInstance != 0 {
+		operation = d.recordCache(CacheOperation{Action: "gossip", Code: code, Key: key, PayloadSHA256: payloadSHA256(payload), Cause: cause, Known: known, Available: plan.Available, Candidates: append([]types.Address(nil), plan.Candidates...), Targets: append([]types.Address(nil), targets...), Suppressed: append([]types.Address(nil), suppressed...)})
+	}
 	d.mu.Unlock()
 	out := code
 	if code < CodeFirst || code > CodeLast {
 		out = CodeLegacy
 	}
 	cs, _ := d.t.(CauseSender)
+	cacheSender, _ := d.t.(CacheSender)
+	traced := cacheSender != nil && operation != 0
 	for _, a := range suppressed {
-		if cs != nil {
+		if traced {
+			cacheSender.SuppressedCache(a, out, payload, cause, SuppressRecentCache, d.cacheInstance, operation)
+		} else if cs != nil {
 			cs.Suppressed(a, out, payload, cause, SuppressRecentCache)
 		}
 		if d.opt.Suppressed != nil {
@@ -204,7 +223,9 @@ func (d *Dedup) GossipTargets(vs *validator.Set, code uint64, payload []byte, ca
 		}
 	}
 	if len(targets) > 0 {
-		if cs != nil {
+		if traced {
+			cacheSender.SendCache(targets, out, payload, cause, d.cacheInstance, operation)
+		} else if cs != nil {
 			cs.SendCause(targets, out, payload, cause)
 		} else {
 			d.t.Send(targets, out, payload)

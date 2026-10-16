@@ -76,13 +76,15 @@ type Transport struct {
 	log   *slog.Logger
 	start time.Time
 
-	mu     sync.Mutex
-	ln     net.Listener
-	peers  map[types.Address]*conn
-	recv   transport.Receiver
-	obs    transport.FrameObserver
-	app    AppHandler
-	closed bool
+	mu            sync.Mutex
+	ln            net.Listener
+	peers         map[types.Address]*conn
+	recv          transport.Receiver
+	obs           transport.FrameObserver
+	obsGeneration uint64
+	observed      map[*conn]*sync.Once
+	app           AppHandler
+	closed        bool
 
 	events chan transport.PeerEvent
 	done   chan struct{}
@@ -105,9 +107,11 @@ type conn struct {
 }
 
 type frame struct {
-	ch      byte
-	code    uint64
-	payload []byte
+	ch                 byte
+	code               uint64
+	payload            []byte
+	attempt            transport.SendAttempt
+	observerGeneration uint64
 }
 
 // New returns a transport that is not started.
@@ -218,6 +222,8 @@ func (t *Transport) SetReceiver(r transport.Receiver) {
 func (t *Transport) SetFrameObserver(o transport.FrameObserver) {
 	t.mu.Lock()
 	t.obs = o
+	t.obsGeneration++
+	t.observed = map[*conn]*sync.Once{}
 	t.mu.Unlock()
 }
 
@@ -226,6 +232,29 @@ func (t *Transport) observer() transport.FrameObserver {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	return t.obs
+}
+
+// frameState registers the actual stream with each recording lifetime before
+// its first frame. Read and write callbacks share one registration barrier;
+// observer replacement never borrows another generation's registration.
+func (t *Transport) frameState(c *conn) (transport.Receiver, transport.FrameObserver, uint64) {
+	t.mu.Lock()
+	receiver, o, generation := t.recv, t.obs, t.obsGeneration
+	if o == nil {
+		t.mu.Unlock()
+		return receiver, o, generation
+	}
+	if t.observed == nil {
+		t.observed = map[*conn]*sync.Once{}
+	}
+	once := t.observed[c]
+	if once == nil {
+		once = &sync.Once{}
+		t.observed[c] = once
+	}
+	t.mu.Unlock()
+	once.Do(func() { o.Attached(c.peer, c.c.RemoteAddr().String()) })
+	return receiver, o, generation
 }
 
 // SetAppHandler installs the receiver of the application channel.
@@ -255,6 +284,11 @@ func (t *Transport) Send(peers []types.Address, code uint64, payload []byte) []t
 	return t.send(peers, frame{ch: chanConsensus, code: code, payload: payload})
 }
 
+// SendAttempt implements transport.AttemptSender without changing wire bytes.
+func (t *Transport) SendAttempt(peers []types.Address, code uint64, payload []byte, attempt transport.SendAttempt) []transport.SendResult {
+	return t.send(peers, frame{ch: chanConsensus, code: code, payload: payload, attempt: attempt})
+}
+
 // SendApp queues a message of the application channel for each peer.
 func (t *Transport) SendApp(peers []types.Address, code uint64, payload []byte) []transport.SendResult {
 	return t.send(peers, frame{ch: chanApp, code: code, payload: payload})
@@ -264,6 +298,8 @@ func (t *Transport) send(peers []types.Address, f frame) []transport.SendResult 
 	res := make([]transport.SendResult, len(peers))
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	f.attempt = transport.BindAttempt(t.obs, f.attempt)
+	f.observerGeneration = t.obsGeneration
 	for i, p := range peers {
 		c := t.peers[p]
 		if c == nil {
@@ -402,9 +438,7 @@ func (t *Transport) run(peer types.Address, nc net.Conn) {
 	if old != nil {
 		t.drop(old, transport.Close{By: transport.ClosedBySelf, Cause: transport.CloseReplaced, Reason: "replaced"})
 	}
-	if o := t.observer(); o != nil {
-		o.Attached(peer, nc.RemoteAddr().String())
-	}
+	_, _, _ = t.frameState(c)
 	t.event(transport.PeerEvent{Addr: peer, Attached: true})
 	done := make(chan struct{})
 	go func() {
@@ -413,6 +447,9 @@ func (t *Transport) run(peer types.Address, nc net.Conn) {
 	}()
 	t.drop(c, t.readLoop(c))
 	<-done
+	t.mu.Lock()
+	delete(t.observed, c)
+	t.mu.Unlock()
 }
 
 func (t *Transport) event(e transport.PeerEvent) {
@@ -459,12 +496,17 @@ func (t *Transport) writeLoop(c *conn) {
 			if err == nil {
 				_, err = w.Write(f.payload)
 			}
-			if o := t.observer(); o != nil && f.ch == chanConsensus {
+			_, o, generation := t.frameState(c)
+			if o != nil && f.ch == chanConsensus {
+				attempt := f.attempt
+				if generation != f.observerGeneration {
+					attempt = transport.SendAttempt{}
+				}
 				res := transport.WriteOK
 				if err != nil {
 					res = transport.WriteError
 				}
-				o.Wrote(c.peer, f.code, f.payload, res)
+				transport.ReportWroteAttempt(o, c.peer, f.code, f.payload, res, attempt, nil)
 			}
 			if err != nil {
 				t.drop(c, writeClose)
@@ -518,7 +560,7 @@ func (t *Transport) readLoop(c *conn) transport.Close {
 		}
 		switch ch {
 		case chanConsensus:
-			if !t.deliver(c.peer, code, payload) {
+			if !t.deliver(c, code, payload) {
 				return frame("frame stage")
 			}
 		case chanApp:
@@ -536,10 +578,9 @@ func (t *Transport) readLoop(c *conn) transport.Close {
 
 // deliver passes a consensus frame through the frame stage to the receiver;
 // it reports false when the connection must be closed.
-func (t *Transport) deliver(peer types.Address, code uint64, payload []byte) bool {
-	t.mu.Lock()
-	r, o := t.recv, t.obs
-	t.mu.Unlock()
+func (t *Transport) deliver(c *conn, code uint64, payload []byte) bool {
+	peer := c.peer
+	r, o, _ := t.frameState(c)
 	data, dc, act, reason := transport.DecodeFrame(code, payload)
 	switch act {
 	case transport.FrameDisconnect:

@@ -140,6 +140,9 @@ type r01Writer struct {
 	scheduler    map[string]*schedulerRun
 	schedulerRun string
 	schedulerErr error
+	cache        map[string]*cacheRun
+	cacheRun     string
+	cacheErr     error
 }
 
 func exportR01(fs fsys.FS, dir, out, fromArg, toArg string) (*exportResult, error) {
@@ -164,6 +167,9 @@ func exportR01(fs fsys.FS, dir, out, fromArg, toArg string) (*exportResult, erro
 	if w.schedulerErr != nil {
 		return nil, w.schedulerErr
 	}
+	if w.cacheErr != nil {
+		return nil, w.cacheErr
+	}
 	var werr error
 	stream := sha256.New()
 	encoder := json.NewEncoder(stream)
@@ -175,7 +181,7 @@ func exportR01(fs fsys.FS, dir, out, fromArg, toArg string) (*exportResult, erro
 			werr = w.record(rec, pos)
 		}
 	})
-	if werr == nil && (w.hasOwnEvidence() || w.hasSchedulerEvidence()) && w.ownStream != ownStreamSum(stream) {
+	if werr == nil && (w.hasOwnEvidence() || w.hasSchedulerEvidence() || w.hasCacheEvidence()) && w.ownStream != ownStreamSum(stream) {
 		werr = errors.New("journal changed while own input evidence was indexed")
 	}
 	if werr == nil {
@@ -227,6 +233,9 @@ func (w *r01Writer) record(rec journal.Record, pos wal.Position) error {
 		if err := w.schedulerRecord(rec, pos); err != nil {
 			return err
 		}
+		if err := w.cacheRecord(rec, pos); err != nil {
+			return err
+		}
 	case *journal.StepRec:
 		h := b.HeadNumber
 		w.head, w.wall, w.mono = &h, b.WallNs, b.Mono
@@ -240,7 +249,12 @@ func (w *r01Writer) record(rec journal.Record, pos wal.Position) error {
 		return w.peer(rec.JSeq, b)
 	case *journal.MsgRec:
 		w.wall, w.mono = b.WallNs, b.Mono
-		return w.msg(rec.JSeq, b)
+		return w.msg(rec.JSeq, b, pos)
+	case *journal.CacheRec:
+		if err := w.cacheRecord(rec, pos); err != nil {
+			return err
+		}
+		return w.tick()
 	case *journal.TimerRec:
 		if err := w.schedulerRecord(rec, pos); err != nil {
 			return err
@@ -258,6 +272,9 @@ func (w *r01Writer) record(rec journal.Record, pos wal.Position) error {
 		r["reason"] = b.Reason
 		if b.Cause != "" {
 			r["cause"] = b.Cause
+		}
+		if err := w.cacheSuppressed(b, r); err != nil {
+			return err
 		}
 		return w.write(r)
 	case *journal.GapRec:
@@ -475,11 +492,14 @@ func inOutcome(offer string) string {
 	}
 }
 
-func (w *r01Writer) msg(seq uint64, b *journal.MsgRec) error {
+func (w *r01Writer) msg(seq uint64, b *journal.MsgRec, pos wal.Position) error {
 	if w.run == nil || !w.inRange() {
 		return w.tick()
 	}
 	r := w.common("frame", seq)
+	if err := w.cacheFrame(seq, b, pos, r); err != nil {
+		return err
+	}
 	r["dir"] = b.Dir
 	r["peer"] = w.peerAddr(b.PeerIdx)
 	if p := w.peers[b.PeerIdx]; p != nil && len(p.NodeID) > 0 {
