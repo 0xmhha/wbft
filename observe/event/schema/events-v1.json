@@ -439,7 +439,7 @@
       "unevaluatedProperties": false
     },
     "SEND": {
-      "description": "A message was put on the wire. A message re-sent after the write-ahead log replay has only code and cause.",
+      "description": "A message was put on the wire. Own broadcasts and messages re-sent after write-ahead log replay carry the signed message view and payload identity. Relay observations may omit the view.",
       "type": "object",
       "allOf": [{ "$ref": "#/$defs/common" }],
       "properties": {

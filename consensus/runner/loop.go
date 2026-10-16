@@ -261,7 +261,7 @@ func (r *Runner) execute(sc *stepCtx) {
 					"code": uint64(o.Code), "dedup_key": codec.DedupKey(o.Payload).Hex(),
 					"available": plan.Available, "candidates": addressTexts(plan.Candidates), "targets": addressTexts(plan.Targets), "suppressed": addressTexts(plan.Suppressed), "output_index": uint64(index) + 1}}, &sc.step)
 				if len(plan.Targets) > 0 {
-					r.sendEvent(sc, uint64(o.Code), o.Payload, event.CauseRelay)
+					r.sendEvent(sc, uint64(o.Code), o.Payload, event.CauseRelay, nil)
 				}
 			}
 		case consensus.Schedule:
@@ -355,7 +355,7 @@ func (r *Runner) broadcast(sc *stepCtx, b consensus.Broadcast) {
 		r.d.Transport.Broadcast(b.Validators, uint64(c.Code), payload, cause)
 	}
 	faultpoint.Hit(r.d.Faults, faultpoint.SendAfter)
-	r.sendEvent(sc, uint64(c.Code), payload, cause)
+	r.sendEvent(sc, uint64(c.Code), payload, cause, &c.View)
 	r.lastOwn[ownKey{code: uint64(c.Code)}] = payload
 	r.internal = append(r.internal, queued{in: consensus.Message{Code: c.Code, Payload: payload, Peer: r.cfg.Core.Self, RecvMono: r.d.Clock.Mono()}, via: viaInternal})
 }
@@ -385,14 +385,24 @@ func (r *Runner) refused(sc *stepCtx, m *codec.Message, err error) {
 	r.internal = append(r.internal, queued{in: consensus.BroadcastFailed{Code: m.Code, View: m.View}, via: viaInternal})
 }
 
-func (r *Runner) sendEvent(sc *stepCtx, code uint64, payload []byte, cause event.SendCause) {
+func (r *Runner) sendEvent(sc *stepCtx, code uint64, payload []byte, cause event.SendCause, view *types.View) {
 	if r.d.Events == nil {
 		return
 	}
+	r.emit(sendRecord(code, payload, cause, view), &sc.step)
+}
+
+// sendRecord binds the observation to the bytes sent. A view is supplied only
+// when the sending path already holds the corresponding message.
+func sendRecord(code uint64, payload []byte, cause event.SendCause, view *types.View) event.Record {
 	sum := sha256.Sum256(payload)
 	key := codec.DedupKey(payload)
-	r.emit(event.Record{Kind: event.Send, Fields: map[string]any{
-		"code": code, "dedup_key": "0x" + hex.EncodeToString(key[:]), "payload_sha256": "0x" + hex.EncodeToString(sum[:]), "cause": cause}}, &sc.step)
+	var observed *event.View
+	if view != nil {
+		observed = event.ViewOf(*view)
+	}
+	return event.Record{Kind: event.Send, View: observed, Fields: map[string]any{
+		"code": code, "dedup_key": "0x" + hex.EncodeToString(key[:]), "payload_sha256": "0x" + hex.EncodeToString(sum[:]), "cause": cause}}
 }
 
 // commit logs the commit request and hands the block to the commit
