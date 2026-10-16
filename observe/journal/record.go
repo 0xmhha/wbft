@@ -189,6 +189,9 @@ type OutcomeRec struct {
 	ErrorClass string
 	Via        string
 	Step       uint64 // core step that handled it, 0 if none
+	// EngineRun identifies the core incarnation of Step. Zero is unknown
+	// for older records and outcomes decided outside a core step.
+	EngineRun uint64
 	// AtOffer marks an outcome decided while the adapter offered the
 	// frame (a known key, the engine not running): it is journaled before
 	// the frame and belongs to the next received frame of Peer with
@@ -420,6 +423,7 @@ type outcomeRLP struct {
 	Via        string
 	Step       uint64
 	AtOffer    uint64 // 0 or 1
+	EngineRun  uint64 `rlp:"optional"`
 }
 
 // outcomeRLPNoAtOffer is an outcome record written before records carried
@@ -522,7 +526,7 @@ func encodeBody(r Record, jseq uint64) ([]byte, error) {
 	case *OutcomeRec:
 		return rlp.Encode(&outcomeRLP{Format: Format, JSeq: jseq, Of: b.Of, Code: b.Code, Peer: b.Peer, DedupKey: b.DedupKey,
 			Outcome: string(b.Outcome), Check: b.Check, Row: uint64(b.Row + 1), Reason: b.Reason, ErrorClass: b.ErrorClass,
-			Via: b.Via, Step: b.Step, AtOffer: boolUint(b.AtOffer)})
+			Via: b.Via, Step: b.Step, AtOffer: boolUint(b.AtOffer), EngineRun: b.EngineRun})
 	case *SuppressedRec:
 		return rlp.Encode(&suppressedRLP{Format: Format, JSeq: jseq, PeerIdx: uint64(b.PeerIdx), DedupKey: b.DedupKey,
 			Cause: string(b.Cause), Reason: b.Reason})
@@ -652,7 +656,7 @@ func decodeBody(k Kind, body []byte) (Record, error) {
 		}
 		return Record{Kind: k, JSeq: w.JSeq, Body: &OutcomeRec{Of: w.Of, Code: w.Code, Peer: w.Peer, DedupKey: w.DedupKey,
 			Outcome: event.OutcomeClass(w.Outcome), Check: w.Check, Row: int64(w.Row) - 1, Reason: w.Reason, ErrorClass: w.ErrorClass,
-			Via: w.Via, Step: w.Step, AtOffer: w.AtOffer != 0}}, nil
+			Via: w.Via, Step: w.Step, AtOffer: w.AtOffer != 0, EngineRun: w.EngineRun}}, nil
 	case KindSuppressed:
 		var w suppressedRLP
 		if err := rlp.DecodeStrict(body, &w); err != nil {
