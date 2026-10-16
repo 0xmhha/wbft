@@ -338,8 +338,8 @@ func (n *Node) start(ctx context.Context) error {
 		n.mu.Unlock()
 		ev.Observe(part.Consume)
 	}
-	n.mu.Lock() // AppEvents reads it from other goroutines
-	n.ev, n.evq = ev, q
+	n.mu.Lock()
+	n.evq = q
 	n.mu.Unlock()
 	evid, err := evidence.Open(n.fs, filepath.Join(n.cfg.DataDir, evidenceDir), evidence.Options{Now: n.clock.Now})
 	if err != nil {
@@ -396,7 +396,14 @@ func (n *Node) start(ctx context.Context) error {
 		return err
 	}
 
-	n.emit(event.Record{Kind: event.NodeStart, Fields: n.startFields(act, recov)})
+	// Publish the writer only after its run boundary. Application callbacks
+	// can arrive during the startup handshake and must not take sequence zero.
+	if err := ev.Write(event.Record{Kind: event.NodeStart, Fields: n.startFields(act, recov)}, event.Stamp{Wall: n.clock.Now(), Mono: n.clock.Mono()}); err != nil {
+		n.log.Warn("event write failed", "err", err)
+	}
+	n.mu.Lock()
+	n.ev = ev
+	n.mu.Unlock()
 	n.logConfig(n.levels.Current())
 	if n.signer == nil {
 		return nil
@@ -911,10 +918,13 @@ func (n *Node) running() bool {
 }
 
 func (n *Node) emit(r event.Record) {
-	if n.ev == nil {
+	n.mu.Lock()
+	ev := n.ev
+	n.mu.Unlock()
+	if ev == nil {
 		return
 	}
-	if err := n.ev.Write(r, event.Stamp{Wall: n.clock.Now(), Mono: n.clock.Mono()}); err != nil {
+	if err := ev.Write(r, event.Stamp{Wall: n.clock.Now(), Mono: n.clock.Mono()}); err != nil {
 		n.log.Warn("event write failed", "err", err)
 	}
 }
