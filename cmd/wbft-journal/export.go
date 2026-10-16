@@ -119,24 +119,27 @@ type r01Writer struct {
 
 	from, to *types.Height
 
-	file      fsys.File
-	run       *exportRun
-	node      types.Address
-	head      *types.Height // the head of the last step
-	wall      int64
-	mono      time.Duration
-	peers     map[uint32]*journal.PeerRec
-	on        map[uint32]bool // attached peers (segment headers repeat them)
-	last      map[linkKey]uint64
-	lastIn    map[types.Hash]uint64    // the last received frame of a message, from any peer
-	wait      []*pendingOutcome        // in journal order
-	relays    []*pendingRelay          // in journal order
-	closes    []*pendingClose          // in journal order
-	disc      map[types.Address]uint64 // the last frame of a peer that ended DISCONNECT, not yet named by a close
-	core      map[types.Hash]uint64    // the received frame of a key the core checked first (a direct core outcome)
-	saved     map[string]bool
-	own       map[string]*ownRun
-	ownStream [32]byte
+	file         fsys.File
+	run          *exportRun
+	node         types.Address
+	head         *types.Height // the head of the last step
+	wall         int64
+	mono         time.Duration
+	peers        map[uint32]*journal.PeerRec
+	on           map[uint32]bool // attached peers (segment headers repeat them)
+	last         map[linkKey]uint64
+	lastIn       map[types.Hash]uint64    // the last received frame of a message, from any peer
+	wait         []*pendingOutcome        // in journal order
+	relays       []*pendingRelay          // in journal order
+	closes       []*pendingClose          // in journal order
+	disc         map[types.Address]uint64 // the last frame of a peer that ended DISCONNECT, not yet named by a close
+	core         map[types.Hash]uint64    // the received frame of a key the core checked first (a direct core outcome)
+	saved        map[string]bool
+	own          map[string]*ownRun
+	ownStream    [32]byte
+	scheduler    map[string]*schedulerRun
+	schedulerRun string
+	schedulerErr error
 }
 
 func exportR01(fs fsys.FS, dir, out, fromArg, toArg string) (*exportResult, error) {
@@ -158,6 +161,9 @@ func exportR01(fs fsys.FS, dir, out, fromArg, toArg string) (*exportResult, erro
 		return nil, err
 	}
 	w.own = w.indexOwnInputs(fs, dir)
+	if w.schedulerErr != nil {
+		return nil, w.schedulerErr
+	}
 	var werr error
 	stream := sha256.New()
 	encoder := json.NewEncoder(stream)
@@ -169,7 +175,7 @@ func exportR01(fs fsys.FS, dir, out, fromArg, toArg string) (*exportResult, erro
 			werr = w.record(rec, pos)
 		}
 	})
-	if werr == nil && w.hasOwnEvidence() && w.ownStream != ownStreamSum(stream) {
+	if werr == nil && (w.hasOwnEvidence() || w.hasSchedulerEvidence()) && w.ownStream != ownStreamSum(stream) {
 		werr = errors.New("journal changed while own input evidence was indexed")
 	}
 	if werr == nil {
@@ -218,9 +224,15 @@ func (w *r01Writer) record(rec journal.Record, pos wal.Position) error {
 				return err
 			}
 		}
+		if err := w.schedulerRecord(rec, pos); err != nil {
+			return err
+		}
 	case *journal.StepRec:
 		h := b.HeadNumber
 		w.head, w.wall, w.mono = &h, b.WallNs, b.Mono
+		if err := w.schedulerRecord(rec, pos); err != nil {
+			return err
+		}
 		if err := w.ownInputRecord(rec.JSeq, b, pos); err != nil {
 			return err
 		}
@@ -229,6 +241,11 @@ func (w *r01Writer) record(rec journal.Record, pos wal.Position) error {
 	case *journal.MsgRec:
 		w.wall, w.mono = b.WallNs, b.Mono
 		return w.msg(rec.JSeq, b)
+	case *journal.TimerRec:
+		if err := w.schedulerRecord(rec, pos); err != nil {
+			return err
+		}
+		return w.tick()
 	case *journal.OutcomeRec:
 		return w.outcome(rec.JSeq, b)
 	case *journal.SuppressedRec:
