@@ -362,7 +362,7 @@
       "unevaluatedProperties": false
     },
     "TIMER_ARM": {
-      "description": "A timer was armed. A timer re-armed after the write-ahead log replay has rearmed and no deadline_mono_ns.",
+      "description": "A timer was armed. A timer restored after write-ahead log replay has rearmed. Its logical deadline_mono_ns is independent of the event writing time; older restored records may omit the deadline.",
       "type": "object",
       "allOf": [{ "$ref": "#/$defs/common" }],
       "properties": {

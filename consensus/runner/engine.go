@@ -420,9 +420,19 @@ func (r *Runner) afterReplay(timers [3]*consensus.ArmTimer, snap *consensus.Snap
 	for _, t := range timers {
 		if t != nil {
 			r.timers.setOwner(r.engineRun, 0, 0, "restore")
-			r.timers.arm(*t, r.d.Clock.Mono())
-			r.emit(event.Record{Kind: event.TimerArm, View: event.ViewOf(t.View), Fields: map[string]any{
-				"timer": t.Kind.String(), "duration_ms": t.Duration.Milliseconds(), "gen": t.Gen, "engine_run": r.engineRun, "rearmed": true}}, nil)
+			// Keep the logical deadline separate from the later event-writing
+			// moment, just as for timers armed by a core step.
+			from := r.d.Clock.Mono()
+			r.timers.arm(*t, from)
+			fields := map[string]any{
+				"timer": t.Kind.String(), "duration_ms": t.Duration.Milliseconds(),
+				"deadline_mono_ns": int64(from + t.Duration),
+				"gen":              t.Gen, "engine_run": r.engineRun, "rearmed": true,
+			}
+			if t.Kind == consensus.RetryTimer {
+				fields["target_round"] = t.Round.String()
+			}
+			r.emit(event.Record{Kind: event.TimerArm, View: event.ViewOf(t.View), Fields: fields}, nil)
 		}
 	}
 	if vars == nil {
