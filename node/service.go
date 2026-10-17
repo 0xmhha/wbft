@@ -15,6 +15,7 @@ import (
 	"github.com/0xmhha/wbft/codec"
 	"github.com/0xmhha/wbft/consensus/privval"
 	"github.com/0xmhha/wbft/observe/event"
+	"github.com/0xmhha/wbft/observe/journal"
 	"github.com/0xmhha/wbft/observe/rejection"
 	"github.com/0xmhha/wbft/types"
 )
@@ -200,7 +201,10 @@ func (s *service) OnSyncState(st app.SyncState) {
 	}
 	s.n.syncMu.Lock()
 	s.n.syncLatest = &st
+	request := nextSyncSequence(&s.n.syncRequests)
+	s.n.syncRequest = request
 	s.n.syncMu.Unlock()
+	s.n.recordSync(&journal.SyncRec{Stage: "requested", Request: request, Syncing: st.Syncing, Success: st.Success, SequenceExhausted: request == 0})
 	select {
 	case s.n.syncWake <- struct{}{}:
 	default:

@@ -70,6 +70,7 @@ func (w *r01Writer) indexOwnInputs(fs fsys.FS, dir string) map[string]*ownRun {
 	err := scan(fs, dir, func(rec journal.Record, pos wal.Position) {
 		w.indexScheduler(rec)
 		w.indexCache(rec, pos)
+		w.indexSync(rec, pos)
 		if encodeErr != nil {
 			return
 		}
@@ -162,6 +163,9 @@ func (w *r01Writer) indexOwnInputs(fs fsys.FS, dir string) map[string]*ownRun {
 		}
 	})
 	if err != nil || encodeErr != nil {
+		if w.hasSyncEvidence() {
+			w.syncErr = fmt.Errorf("cannot index complete sync source: %w", errors.Join(err, encodeErr))
+		}
 		if w.hasCacheEvidence() {
 			w.cacheErr = fmt.Errorf("cannot index complete cache source: %w", errors.Join(err, encodeErr))
 		}
@@ -169,6 +173,9 @@ func (w *r01Writer) indexOwnInputs(fs fsys.FS, dir string) map[string]*ownRun {
 			w.schedulerErr = fmt.Errorf("cannot index complete scheduler source: %w", errors.Join(err, encodeErr))
 		}
 		return nil // the normal export pass reports the damaged prefix
+	}
+	for _, s := range w.syncSources {
+		s.complete = s.sourceComplete()
 	}
 	w.ownStream = ownStreamSum(stream)
 	return runs
