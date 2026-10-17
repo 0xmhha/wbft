@@ -143,6 +143,9 @@ type r01Writer struct {
 	cache        map[string]*cacheRun
 	cacheRun     string
 	cacheErr     error
+	syncSources  map[string]*syncRun
+	syncRunID    string
+	syncErr      error
 }
 
 func exportR01(fs fsys.FS, dir, out, fromArg, toArg string) (*exportResult, error) {
@@ -170,6 +173,9 @@ func exportR01(fs fsys.FS, dir, out, fromArg, toArg string) (*exportResult, erro
 	if w.cacheErr != nil {
 		return nil, w.cacheErr
 	}
+	if w.syncErr != nil {
+		return nil, w.syncErr
+	}
 	var werr error
 	stream := sha256.New()
 	encoder := json.NewEncoder(stream)
@@ -181,7 +187,7 @@ func exportR01(fs fsys.FS, dir, out, fromArg, toArg string) (*exportResult, erro
 			werr = w.record(rec, pos)
 		}
 	})
-	if werr == nil && (w.hasOwnEvidence() || w.hasSchedulerEvidence() || w.hasCacheEvidence()) && w.ownStream != ownStreamSum(stream) {
+	if werr == nil && (w.hasOwnEvidence() || w.hasSchedulerEvidence() || w.hasCacheEvidence() || w.hasSyncEvidence()) && w.ownStream != ownStreamSum(stream) {
 		werr = errors.New("journal changed while own input evidence was indexed")
 	}
 	if werr == nil {
@@ -236,6 +242,9 @@ func (w *r01Writer) record(rec journal.Record, pos wal.Position) error {
 		if err := w.cacheRecord(rec, pos); err != nil {
 			return err
 		}
+		if err := w.syncRecord(rec, pos); err != nil {
+			return err
+		}
 	case *journal.StepRec:
 		h := b.HeadNumber
 		w.head, w.wall, w.mono = &h, b.WallNs, b.Mono
@@ -250,6 +259,8 @@ func (w *r01Writer) record(rec journal.Record, pos wal.Position) error {
 	case *journal.MsgRec:
 		w.wall, w.mono = b.WallNs, b.Mono
 		return w.msg(rec.JSeq, b, pos)
+	case *journal.SyncRec:
+		return w.syncRecord(rec, pos)
 	case *journal.CacheRec:
 		if err := w.cacheRecord(rec, pos); err != nil {
 			return err

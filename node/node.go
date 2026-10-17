@@ -101,10 +101,13 @@ type Node struct {
 	done         chan struct{} // closed by Stop; ends the node's goroutines
 	wg           sync.WaitGroup
 
-	syncMu     sync.Mutex
-	syncLatest *app.SyncState // latest unhandled sync notification
-	syncWake   chan struct{}
-	firstSync  bool // a synchronisation completed in this process
+	syncMu         sync.Mutex
+	syncLatest     *app.SyncState // latest unhandled sync notification
+	syncRequest    uint64         // identity of syncLatest; zero after sequence exhaustion
+	syncRequests   uint64
+	syncOperations uint64
+	syncWake       chan struct{}
+	firstSync      bool // a synchronisation completed in this process
 }
 
 type lifeState uint8
@@ -503,7 +506,7 @@ func (n *Node) openJournal(core consensus.Options, runID string) (*journal.FileW
 	n.mu.Unlock()
 	id := journal.Identity{Self: core.Self, BLSPublicKey: n.signer.BLSPublicKey(), Run: runID, Commit: moduleVersion(),
 		ChainID: info.ChainID, GenesisHash: info.GenesisHash, Mode: n.mode(), WireOffset: n.wireOffset(),
-		Core: journal.CoreOptions{CacheTrace: journal.CacheTraceVersion, TimerTrace: journal.TimerTraceVersion, ChainConfig: info.ChainConfigJSON, Self: core.Self, Improvements: uint64(core.Improvements),
+		Core: journal.CoreOptions{SyncTrace: journal.SyncTraceVersion, CacheTrace: journal.CacheTraceVersion, TimerTrace: journal.TimerTraceVersion, ChainConfig: info.ChainConfigJSON, Self: core.Self, Improvements: uint64(core.Improvements),
 			BacklogLimit: uint64(core.BacklogLimit)}}
 	jw, err := journal.Open(opt, id)
 	if err != nil {
@@ -990,27 +993,7 @@ func (n *Node) syncLoop() {
 			return
 		case <-n.syncWake:
 		}
-		n.syncMu.Lock()
-		s := n.syncLatest
-		first := n.firstSync
-		if s != nil && !s.Syncing && s.Success {
-			n.firstSync = true
-		}
-		n.syncMu.Unlock()
-		if s == nil {
-			continue
-		}
-		switch {
-		case s.Syncing && !first && n.r.Running():
-			if err := n.r.Stop(); err != nil {
-				n.log.Warn("stop the core for synchronisation", "err", err)
-			}
-		case !s.Syncing && !n.r.Running():
-			head := n.d.App.Head()
-			if err := n.r.Start(n.ctx, head.Number.AddUint64(1)); err != nil {
-				n.log.Warn("start the core after synchronisation", "err", err)
-			}
-		}
+		n.handleSync()
 	}
 }
 

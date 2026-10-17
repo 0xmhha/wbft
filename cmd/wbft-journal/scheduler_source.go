@@ -94,6 +94,7 @@ func (w *r01Writer) schedulerRecord(rec journal.Record, pos wal.Position) error 
 		if cache := w.currentCache(); cache != nil && rec.JSeq == cache.declaration {
 			r["cache_trace"] = cacheTraceMetadata(cache)
 		}
+		w.addSyncTrace(r, rec.JSeq)
 	case *journal.TimerRec:
 		op, err := timerMetadata(b)
 		if err != nil {

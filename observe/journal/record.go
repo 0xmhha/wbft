@@ -19,15 +19,16 @@ type Kind uint8
 
 // Record kinds.
 const (
-	KindSegment    Kind = 1 // first record of every segment: who wrote it
-	KindPeer       Kind = 2 // a peer's consensus stream was attached or closed
-	KindMsg        Kind = 3 // a consensus message received or sent
-	KindOutcome    Kind = 4 // what the node did with a received message
-	KindSuppressed Kind = 5 // a send suppressed by the recent cache
-	KindStep       Kind = 6 // one input of the core and the digest of its outputs
-	KindGap        Kind = 7 // records dropped while the queue was full
-	KindCache      Kind = 9 // measured cache mutation and empty-instance declaration
-	KindTimer      Kind = 8 // measured scheduler mutation and queue timing
+	KindSegment    Kind = 1  // first record of every segment: who wrote it
+	KindPeer       Kind = 2  // a peer's consensus stream was attached or closed
+	KindMsg        Kind = 3  // a consensus message received or sent
+	KindOutcome    Kind = 4  // what the node did with a received message
+	KindSuppressed Kind = 5  // a send suppressed by the recent cache
+	KindStep       Kind = 6  // one input of the core and the digest of its outputs
+	KindGap        Kind = 7  // records dropped while the queue was full
+	KindTimer      Kind = 8  // measured scheduler mutation and queue timing
+	KindCache      Kind = 9  // measured cache mutation and empty-instance declaration
+	KindSync       Kind = 10 // submitted and processed application sync controls
 )
 
 func (k Kind) String() string {
@@ -50,12 +51,15 @@ func (k Kind) String() string {
 		return "timer"
 	case KindCache:
 		return "cache"
+	case KindSync:
+		return "sync"
 	}
 	return fmt.Sprintf("kind(%d)", uint8(k))
 }
 
 // Record is one journal record. Body is one of *SegmentRec, *PeerRec,
-// *MsgRec, *OutcomeRec, *SuppressedRec, *StepRec, *GapRec, *TimerRec. JSeq is assigned
+// *MsgRec, *OutcomeRec, *SuppressedRec, *StepRec, *GapRec, *TimerRec, *CacheRec,
+// or *SyncRec. JSeq is assigned
 // by the writer: it increases by one per written record within a run.
 type Record struct {
 	Kind Kind
@@ -85,6 +89,7 @@ type Identity struct {
 type CoreOptions struct {
 	TimerTrace   uint64 `json:"timer_trace,omitempty"`
 	CacheTrace   uint64 `json:"cache_trace,omitempty"`
+	SyncTrace    uint64 `json:"sync_trace,omitempty"`
 	ChainConfig  []byte
 	Self         types.Address
 	Improvements uint64
@@ -289,6 +294,7 @@ type segmentRLP struct {
 	EngineRun    uint64
 	TimerTrace   uint64 `rlp:"optional"`
 	CacheTrace   uint64 `rlp:"optional"`
+	SyncTrace    uint64 `rlp:"optional"`
 }
 
 type peerRLP struct {
@@ -524,7 +530,7 @@ func encodeBody(r Record, jseq uint64) ([]byte, error) {
 			BLSPublicKey: bytesOrEmpty(b.BLSPublicKey), Run: b.Run, Commit: b.Commit, ChainID: bigOrZero(b.ChainID),
 			GenesisHash: b.GenesisHash, Mode: b.Mode, WireOffset: b.WireOffset, ConfigDigest: b.ConfigDigest,
 			ChainConfig: bytesOrEmpty(b.Core.ChainConfig), CoreSelf: b.Core.Self, Improvements: b.Core.Improvements,
-			BacklogLimit: b.Core.BacklogLimit, Profile: b.Core.Profile, EngineRun: b.EngineRun, TimerTrace: b.Core.TimerTrace, CacheTrace: b.Core.CacheTrace})
+			BacklogLimit: b.Core.BacklogLimit, Profile: b.Core.Profile, EngineRun: b.EngineRun, TimerTrace: b.Core.TimerTrace, CacheTrace: b.Core.CacheTrace, SyncTrace: b.Core.SyncTrace})
 	case *PeerRec:
 		return rlp.Encode(&peerRLP{Format: Format, JSeq: jseq, PeerIdx: uint64(b.PeerIdx), Addr: b.Addr, NodeID: bytesOrEmpty(b.NodeID),
 			Remote: b.Remote, Event: b.Event, Reason: b.Reason, By: b.By, Cause: b.Cause})
@@ -574,6 +580,8 @@ func encodeBody(r Record, jseq uint64) ([]byte, error) {
 		return encodeTimerRec(b, jseq)
 	case *CacheRec:
 		return encodeCacheRec(b, jseq)
+	case *SyncRec:
+		return encodeSyncRec(b, jseq)
 	case *GapRec:
 		bk := b.ByKind
 		if bk == nil {
@@ -611,7 +619,7 @@ func decodeBody(k Kind, body []byte) (Record, error) {
 		return Record{Kind: k, JSeq: w.JSeq, Body: &SegmentRec{EngineRun: w.EngineRun, Identity: Identity{
 			Self: w.Self, NodeID: w.NodeID, BLSPublicKey: w.BLSPublicKey, Run: w.Run, Commit: w.Commit, ChainID: w.ChainID,
 			GenesisHash: w.GenesisHash, Mode: w.Mode, WireOffset: w.WireOffset, ConfigDigest: w.ConfigDigest,
-			Core: CoreOptions{ChainConfig: w.ChainConfig, Self: w.CoreSelf, Improvements: w.Improvements, BacklogLimit: w.BacklogLimit, Profile: w.Profile, TimerTrace: w.TimerTrace, CacheTrace: w.CacheTrace},
+			Core: CoreOptions{ChainConfig: w.ChainConfig, Self: w.CoreSelf, Improvements: w.Improvements, BacklogLimit: w.BacklogLimit, Profile: w.Profile, TimerTrace: w.TimerTrace, CacheTrace: w.CacheTrace, SyncTrace: w.SyncTrace},
 		}}}, nil
 	case KindPeer:
 		var w peerRLP
@@ -722,6 +730,8 @@ func decodeBody(k Kind, body []byte) (Record, error) {
 		return decodeTimerRec(body)
 	case KindCache:
 		return decodeCacheRec(body)
+	case KindSync:
+		return decodeSyncRec(body)
 	case KindGap:
 		var w gapRLP
 		if err := rlp.DecodeStrict(body, &w); err != nil {
@@ -756,6 +766,8 @@ func kindOf(body any) (Kind, bool) {
 		return KindTimer, true
 	case *CacheRec:
 		return KindCache, true
+	case *SyncRec:
+		return KindSync, true
 	}
 	return 0, false
 }
@@ -776,6 +788,8 @@ func size(r Record) int64 {
 		return int64(len(b.Input)) + 256
 	case *CacheRec:
 		return 320 + int64(len(b.Candidates)+len(b.Targets)+len(b.Suppressed))*20
+	case *SyncRec:
+		return 256
 	case *StepRec:
 		n := int64(len(b.Input)) + 160
 		for _, e := range b.Env {

@@ -907,3 +907,35 @@ preserve older layouts and R01 output. Readers must understand the new record
 kind and closed metadata before consuming new cache-enabled journals. Source
 coordinate authentication is a separate audit of retained raw bytes; these
 records alone do not establish remote delivery or complete network coverage.
+
+### Application sync control observations
+
+New node journals declare `Core.SyncTrace = 1` and record submitted sync
+states separately from their actual handling by the node. Request identities
+and processing identities are distinct: the existing latest-state queue can
+supersede requests or handle one request more than once. The first-success
+guard and the existing engine stop/start policy are unchanged.
+
+Each processed record retains the selected state, the guard and running state
+before/after handling, the actual action, and whether its control call failed.
+Only an actual engine control call gets event writer cursors. These are next
+sequence numbers sampled immediately before and after that call: the raw event
+range is `[event_before, event_after)`. An empty range is retained, including
+failed calls; timestamps do not establish these boundaries. A missing writer,
+sequence exhaustion, dropped records or missing context remains incomplete
+evidence. Observation uses the existing bounded asynchronous journal queue.
+
+R01 exports retain `sync_control` rows outside frame height filters and keep
+their original journal sequence, segment and offset. `sync_trace` reports the
+available request/processing counts and source completeness. Capabilities from
+one segment share one declaration row with its original sequence. A processed
+row links to its exact submitted request only when the complete retained source
+establishes that identity and state; physical enqueue order need not match the
+logical request order. Export refuses ambiguous identities, unsupported trace
+versions and source changes between its two passes. Source completeness does
+not certify the sync policy or an external downloader result.
+
+The sync capability is an optional trailing RLP field; readers of older records
+preserve their original bytes. Readers must support the additional record kind
+and export metadata before consuming sync-enabled journals. Consensus inputs,
+WAL records, application sync state messages and wire payloads are unchanged.

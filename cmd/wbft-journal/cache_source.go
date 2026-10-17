@@ -181,6 +181,7 @@ func (w *r01Writer) cacheRecord(rec journal.Record, pos wal.Position) error {
 		}
 		r["type"], r["t_wall"], r["t_mono_ns"], r["clock_source"] = "cache_trace", time.Unix(0, 0).UTC().Format(time.RFC3339Nano), int64(0), "unavailable"
 		r["cache_trace"] = cacheTraceMetadata(c)
+		w.addSyncTrace(r, rec.JSeq)
 	case *journal.CacheRec:
 		if b.Action == "begin" {
 			r["type"], r["t_wall"], r["t_mono_ns"], r["clock_source"] = "cache_instance", time.Unix(0, 0).UTC().Format(time.RFC3339Nano), int64(0), "unavailable"
