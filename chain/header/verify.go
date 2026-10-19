@@ -174,6 +174,35 @@ func verifySteps(env *Env, h *types.Header, parents []*types.Header, v, vp *vali
 	// Spec: WBFT-HDR-083
 	n := h.Number.RefLow64() //wbft:low64 HH-20
 	if n == 0 {
+
+		if _, configured := env.Config.RuleActivation(types.MinimalSealerBitmap); configured {
+			var parent *types.Header
+			at := types.Height{}
+			if !h.Number.IsZero() || h.ParentHash != (types.Hash{}) {
+				if len(parents) > 0 {
+					parent = parents[len(parents)-1]
+				} else {
+					parent = env.Chain.HeaderByHash(h.ParentHash)
+				}
+				if parent == nil || codec.BlockHash(parent) != h.ParentHash {
+					return stepErr("H11", "ErrUnknownAncestor", ErrUnknownAncestor)
+				}
+				at = parent.Number.AddUint64(1)
+			}
+			x, err := codec.DecodeExtra(h)
+			if err != nil {
+				if env.Config.Rules(types.MinimalSealerBitmap, at) {
+					return stepErr("H16", "ErrInvalidExtraDataFormat", ErrInvalidExtraDataFormat)
+				}
+				return nil
+			}
+			if err := verifyCurrentBitmaps(env.Config, parent, x); err != nil {
+				return err
+			}
+			if parent != nil {
+				return verifyPreviousBitmaps(env.Config, parent, x, func(hash types.Hash) *types.Header { return bitmapAncestor(env, parents, hash) })
+			}
+		}
 		return nil
 	}
 	// H11
@@ -225,6 +254,9 @@ func verifySteps(env *Env, h *types.Header, parents []*types.Header, v, vp *vali
 	if err != nil {
 		return stepErr("H16", "ErrInvalidExtraDataFormat", ErrInvalidExtraDataFormat)
 	}
+	if err := verifyCurrentBitmaps(env.Config, parent, x); err != nil {
+		return err
+	}
 	// H17
 	if opt.CheckSeals {
 		if err := verifySeals(h, v, x); err != nil {
@@ -246,6 +278,9 @@ func verifySteps(env *Env, h *types.Header, parents []*types.Header, v, vp *vali
 	// H20
 	//
 	// Spec: WBFT-HDR-091, WBFT-HDR-103
+	if err := verifyPreviousBitmaps(env.Config, parent, x, func(hash types.Hash) *types.Header { return bitmapAncestor(env, parents, hash) }); err != nil {
+		return err
+	}
 	if h.Number.CmpUint64(1) > 0 {
 		if err := verifyPrevSeals(parent, vp, x); err != nil {
 			return stepErr("H20", className(err), err)

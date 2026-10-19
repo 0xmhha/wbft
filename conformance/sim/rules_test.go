@@ -55,7 +55,7 @@ func TestChainRuleActivationIsSnapshottedAndIndependentOfNodeTiming(t *testing.T
 
 func TestChainRuleActivationSurvivesActualJournalAndRestart(t *testing.T) {
 	sc := timingCompatibilityScenario(t, 7)
-	sc.Params.RuleActivations = map[types.RuleName]string{types.RejectNumberJump: "4"}
+	sc.Params.RuleActivations = map[types.RuleName]string{types.RejectNumberJump: "4", types.MinimalSealerBitmap: "4"}
 	sc.Params.AllowedFutureBlockTime = timingValue(3)
 	sc.Nodes[1].Timing = &TimingParams{RequestTimeoutSeconds: timingValue(3)}
 	dir := t.TempDir()
@@ -91,9 +91,12 @@ func TestChainRuleActivationSurvivesActualJournalAndRestart(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			at, enabled := cfg.RuleActivation(types.RejectNumberJump)
-			if !enabled || at.String() != "4" || cfg.Rules(types.RejectNumberJump, types.HeightFromUint64(3)) || !cfg.Rules(types.RejectNumberJump, types.HeightFromUint64(4)) || cfg.RulesDigest() == (types.Hash{}) {
-				t.Fatal("actual journal lost chain rule or digest", i, at, enabled)
+
+			for _, rule := range []types.RuleName{types.RejectNumberJump, types.MinimalSealerBitmap} {
+				at, enabled := cfg.RuleActivation(rule)
+				if !enabled || at.String() != "4" || cfg.Rules(rule, types.HeightFromUint64(3)) || !cfg.Rules(rule, types.HeightFromUint64(4)) || cfg.RulesDigest() == (types.Hash{}) {
+					t.Fatal("actual journal lost chain rule or digest", i, rule, at, enabled)
+				}
 			}
 			want := uint64(2000)
 			if i == 1 {

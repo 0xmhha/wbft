@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"path/filepath"
+	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -800,8 +801,18 @@ func (n *Node) improvements() []rpc.Improvement {
 	cfg := n.chainCfg
 	n.mu.Unlock()
 	if cfg != nil {
-		if head := n.d.App.Head(); head != nil && cfg.Rules(types.RejectNumberJump, head.Number.AddUint64(1)) {
-			out = append(out, rpc.Improvement{Name: string(types.RejectNumberJump), Source: "chain"})
+		if head := n.d.App.Head(); head != nil {
+			names := make([]string, 0)
+			at := head.Number.AddUint64(1)
+			for name := range cfg.RuleActivations() { //wbft:unordered sorted below
+				if cfg.Rules(name, at) {
+					names = append(names, string(name))
+				}
+			}
+			sort.Strings(names)
+			for _, name := range names {
+				out = append(out, rpc.Improvement{Name: name, Source: "chain"})
+			}
 		}
 	}
 	for _, name := range app {

@@ -30,9 +30,10 @@ var (
 	ErrEmptyPrevCommittedSeals   = errors.New("zero prev committed seals")
 	ErrInvalidPrevCommittedSeals = errors.New("invalid prev committed seals")
 
-	ErrInvalidSeal        = errors.New("invalid seal")
-	ErrLackOfSealCount    = errors.New("lack of seal count")
-	ErrSealerNotValidator = errors.New("sealer is not validator")
+	ErrInvalidSeal            = errors.New("invalid seal")
+	ErrLackOfSealCount        = errors.New("lack of seal count")
+	ErrSealerNotValidator     = errors.New("sealer is not validator")
+	ErrNonMinimalSealerBitmap = errors.New("non-minimal sealer bitmap")
 
 	ErrInvalidRandaoReveal = errors.New("failed to verify randao reveal signature")
 	ErrInvalidRandaoMix    = errors.New("invalid randao mix")

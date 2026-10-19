@@ -46,6 +46,9 @@ type TrustedEpochs interface {
 type LightInputs struct {
 	Config  *types.Config
 	Trusted TrustedEpochs
+	// Grandparent supplies the parent's activation context. It is needed only
+	// to decide a non-minimal previous bitmap under a scheduled rule.
+	Grandparent *types.Header
 	// PartB, if set, runs the header-only execution-side steps (H3, H5 ..
 	// H9, H13, H14) at their positions.
 	PartB PartB
@@ -118,6 +121,9 @@ func VerifyLight(in LightInputs, h, parent *types.Header) (LightResult, error) {
 	if err != nil {
 		return Invalid, stepErr("H16", "ErrInvalidExtraDataFormat", ErrInvalidExtraDataFormat)
 	}
+	if err := verifyCurrentBitmaps(in.Config, parent, x); err != nil {
+		return Invalid, err
+	}
 	if err := verifySeals(h, v, x); err != nil {
 		return Invalid, stepErr("H17", className(err), err)
 	}
@@ -126,6 +132,18 @@ func VerifyLight(in LightInputs, h, parent *types.Header) (LightResult, error) {
 	}
 	if mix := RandaoMix(parent.MixDigest, x.RandaoReveal); mix != h.MixDigest {
 		return Invalid, stepErr("H19", "ErrInvalidRandaoMix", ErrInvalidRandaoMix)
+	}
+
+	if err := verifyPreviousBitmaps(in.Config, parent, x, func(hash types.Hash) *types.Header {
+		if in.Grandparent != nil && codec.BlockHash(in.Grandparent) == hash {
+			return in.Grandparent
+		}
+		return nil
+	}); err != nil {
+		if errors.Is(err, ErrUnknownAncestor) {
+			return CannotDecide, fmt.Errorf("%w: previous-seal activation context: %v", ErrLightMissing, err)
+		}
+		return Invalid, err
 	}
 	if h.Number.CmpUint64(2) >= 0 {
 		vp, err := in.Trusted.ValidatorsAt(parent.Number, parent.ParentHash)
