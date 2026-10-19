@@ -28,6 +28,9 @@ const FirstProposerDiligenceCap RuleName = "firstProposerDiligenceCap"
 // CommittedEpochDiligence scores only the fully committed prior epoch window.
 const CommittedEpochDiligence RuleName = "committedEpochDiligence"
 
+// ReplayPerBlockPolicy replays each historical block with its configured policy.
+const ReplayPerBlockPolicy RuleName = "replayPerBlockPolicy"
+
 // Rules reports whether name is enabled at the full height at.
 // Missing or null activation heights are disabled.
 func (c *Config) Rules(name RuleName, at Height) bool {
@@ -77,7 +80,7 @@ func parseConsensusRules(raw []byte) (map[RuleName]Height, error) {
 		sort.Strings(names)
 		for _, name := range names {
 			field := "wbftRules." + group + "." + name
-			if group != "consensusRules" || RuleName(name) != RejectNumberJump && RuleName(name) != MinimalSealerBitmap && RuleName(name) != StableCandidateSort && RuleName(name) != FirstProposerDiligenceCap && RuleName(name) != CommittedEpochDiligence {
+			if group != "consensusRules" || RuleName(name) != RejectNumberJump && RuleName(name) != MinimalSealerBitmap && RuleName(name) != StableCandidateSort && RuleName(name) != FirstProposerDiligenceCap && RuleName(name) != CommittedEpochDiligence && RuleName(name) != ReplayPerBlockPolicy {
 				return nil, &ErrConfig{Field: field, Reason: "unknown rule"}
 			}
 			value := strings.TrimSpace(string(keys[name]))

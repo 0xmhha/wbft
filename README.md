@@ -552,8 +552,8 @@ v3.0 ([COPYING](COPYING)).
 
 Chain-level rules come only from the genesis chain configuration's
 `wbftRules.consensusRules`. The supported keys are `rejectNumberJump`,
-`minimalSealerBitmap`, `stableCandidateSort`, `firstProposerDiligenceCap` and
-`committedEpochDiligence`. Each key is disabled when missing or null; a
+`minimalSealerBitmap`, `stableCandidateSort`, `firstProposerDiligenceCap`,
+`committedEpochDiligence` and `replayPerBlockPolicy`. Each key is disabled when missing or null; a
 non-negative JSON integer sets its activation height. Node profiles and local options do not override
 these values. Unknown consensus or feature rule keys refuse startup.
 
@@ -602,6 +602,16 @@ This rule replaces the legacy score calculation when active.
 `stableCandidateSort` independently controls ranking in either mode. Header,
 EpochInfo, wire and signature formats do not change. The activation is bound
 to the actual parent's full height plus one.
+
+`replayPerBlockPolicy` changes only the legacy epoch score replay. Each
+historical block uses the proposer policy configured at its own full height,
+and the first child of genesis starts from the zero proposer address. The
+existing bounded search for each recorded Coinbase and score weighting stay
+in place. Activation uses the actual hash-bound parent plus one before epoch
+classification; an active call must supply that exact height.
+`committedEpochDiligence` retains its separate window and accounting when both
+rules are enabled. Missing, null and future activations preserve legacy replay.
+
 
 The digest is Keccak-256 of the canonical JSON object containing
 `anzeon.wbft`, `transitions` and every `wbftRules` group. Object keys are
