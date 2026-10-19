@@ -2,6 +2,7 @@ package types
 
 import (
 	"fmt"
+	"math/big"
 	"strings"
 	"testing"
 )
@@ -37,6 +38,40 @@ func TestRuleActivation(t *testing.T) {
 		if _, err := ParseChainConfig([]byte(`{"anzeon":{"wbft":{}},"wbftRules":{"consensusRules":{"rejectNumberJump":` + value + `}}}`)); err == nil {
 			t.Fatalf("accepted %s", value)
 		}
+	}
+}
+
+func TestMinimalBitmapRuleConfiguration(t *testing.T) {
+	c := ruleConfig(t, `"wbftRules":{"consensusRules":{"minimalSealerBitmap":10,"rejectNumberJump":20}}`)
+	for _, at := range []uint64{0, 9, 10, 19, 20, 21} {
+		if c.Rules(MinimalSealerBitmap, HeightFromUint64(at)) != (at >= 10) || c.Rules(RejectNumberJump, HeightFromUint64(at)) != (at >= 20) {
+			t.Fatalf("independent activation at %d", at)
+		}
+	}
+	copy := c.RuleActivations()
+	copy[MinimalSealerBitmap] = "0"
+	if at, ok := c.RuleActivation(MinimalSealerBitmap); !ok || at.String() != "10" {
+		t.Fatal("caller changed activation")
+	}
+	if ruleConfig(t, `"wbftRules":{"consensusRules":{"minimalSealerBitmap":null}}`).Rules(MinimalSealerBitmap, HeightFromUint64(20)) {
+		t.Fatal("null activation enabled")
+	}
+	for _, value := range []string{`-1`, `"1"`, `true`, `1.5`, `1e2`} {
+		_, err := ParseChainConfig([]byte(`{"anzeon":{"wbft":{}},"wbftRules":{"consensusRules":{"minimalSealerBitmap":` + value + `}}}`))
+		if err == nil {
+			t.Fatalf("invalid activation accepted: %s", value)
+		}
+	}
+	a := new(big.Int).Add(new(big.Int).Lsh(big.NewInt(1), 64), big.NewInt(3))
+	full := ruleConfig(t, fmt.Sprintf(`"wbftRules":{"consensusRules":{"minimalSealerBitmap":%s}}`, a.String()))
+	for _, delta := range []int64{-1, 0, 1} {
+		at := MustHeightFromBig(new(big.Int).Add(new(big.Int).Set(a), big.NewInt(delta)))
+		if full.Rules(MinimalSealerBitmap, at) != (delta >= 0) {
+			t.Fatalf("full-height activation at %s", at)
+		}
+	}
+	if c.RulesDigest() == ruleConfig(t, `"wbftRules":{"consensusRules":{"minimalSealerBitmap":11,"rejectNumberJump":20}}`).RulesDigest() {
+		t.Fatal("activation missing from digest")
 	}
 }
 

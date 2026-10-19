@@ -551,15 +551,28 @@ v3.0 ([COPYING](COPYING)).
 ## Chain rules
 
 Chain-level rules come only from the genesis chain configuration's
-`wbftRules.consensusRules`. The supported key is `rejectNumberJump`; a
-missing or null value disables it, and a non-negative JSON integer sets
-its activation height. Node profiles and local options do not override
+`wbftRules.consensusRules`. The supported keys are `rejectNumberJump` and
+`minimalSealerBitmap`. Each key is disabled when missing or null; a
+non-negative JSON integer sets its activation height. Node profiles and local options do not override
 these values. Unknown consensus or feature rule keys refuse startup.
 
-`types.Config.Rules` reads activation using full heights. Header rules use
-`parent.Number + 1`, including during proposal and batch verification.
+`types.Config.Rules` reads activation using full heights. Header rules
+select activation from `parent.Number + 1`, including during proposal
+and batch verification.
 `NODE_START`, configuration logs and `wbft_nodeInfo` expose the configured
 activation heights and the rules digest.
+
+`minimalSealerBitmap` checks the representation of present aggregate seals.
+From its activation height, prepared and committed seal bitmaps must omit
+trailing zero bytes. Previous seals use the parent's own activation context,
+so they are checked starting with the next child of an activation block.
+These checks also apply when signature verification is omitted for a
+proposal. Optional absent seals stay absent; ordinary seal-presence and BLS
+checks remain separate. Wire decoding preserves the supplied representation.
+For a scheduled rule, deciding a non-minimal previous bitmap requires the
+grandparent header. Header verification consults the batch and stored
+history. A light caller supplies `LightInputs.Grandparent`; missing context
+remains undecided. Canonical previous bitmaps need no additional context.
 
 The digest is Keccak-256 of the canonical JSON object containing
 `anzeon.wbft`, `transitions` and every `wbftRules` group. Object keys are
