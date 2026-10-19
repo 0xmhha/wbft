@@ -98,3 +98,39 @@ func TestRulesDigest(t *testing.T) {
 		}
 	}
 }
+
+func TestStableCandidateRuleConfiguration(t *testing.T) {
+	c := ruleConfig(t, `"wbftRules":{"consensusRules":{"stableCandidateSort":10,"minimalSealerBitmap":20,"rejectNumberJump":30}}`)
+	for _, at := range []uint64{0, 9, 10, 19, 20, 29, 30, 31} {
+		h := HeightFromUint64(at)
+		if c.Rules(StableCandidateSort, h) != (at >= 10) || c.Rules(MinimalSealerBitmap, h) != (at >= 20) || c.Rules(RejectNumberJump, h) != (at >= 30) {
+			t.Fatalf("independent activation at %d", at)
+		}
+	}
+	copied := c.RuleActivations()
+	copied[StableCandidateSort] = "0"
+	if at, ok := c.RuleActivation(StableCandidateSort); !ok || at.String() != "10" {
+		t.Fatal("caller changed stable ordering activation")
+	}
+	for _, extra := range []string{`"chainId":1`, `"wbftRules":{"consensusRules":{"stableCandidateSort":null}}`} {
+		if ruleConfig(t, extra).Rules(StableCandidateSort, HeightFromUint64(100)) {
+			t.Fatal("missing or null stable ordering enabled")
+		}
+	}
+	for _, value := range []string{`-1`, `"1"`, `true`, `1.5`, `1e2`} {
+		if _, err := ParseChainConfig([]byte(`{"anzeon":{"wbft":{}},"wbftRules":{"consensusRules":{"stableCandidateSort":` + value + `}}}`)); err == nil {
+			t.Fatal("invalid stable ordering activation accepted", value)
+		}
+	}
+	activation := new(big.Int).Add(new(big.Int).Lsh(big.NewInt(1), 64), big.NewInt(3))
+	full := ruleConfig(t, fmt.Sprintf(`"wbftRules":{"consensusRules":{"stableCandidateSort":%s}}`, activation.String()))
+	for _, delta := range []int64{-1, 0, 1} {
+		at := MustHeightFromBig(new(big.Int).Add(new(big.Int).Set(activation), big.NewInt(delta)))
+		if full.Rules(StableCandidateSort, at) != (delta >= 0) {
+			t.Fatal("stable ordering activation truncated", at)
+		}
+	}
+	if c.RulesDigest() == ruleConfig(t, `"wbftRules":{"consensusRules":{"stableCandidateSort":11,"minimalSealerBitmap":20,"rejectNumberJump":30}}`).RulesDigest() {
+		t.Fatal("stable ordering activation missing from digest")
+	}
+}

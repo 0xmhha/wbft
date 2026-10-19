@@ -21,6 +21,9 @@ func TestChainRulesReported(t *testing.T) {
 		{"number", `{"consensusRules":{"rejectNumberJump":0}}`, map[types.RuleName]string{types.RejectNumberJump: "0"}, []string{"rejectNumberJump"}},
 		{"bitmap", `{"consensusRules":{"minimalSealerBitmap":0}}`, map[types.RuleName]string{types.MinimalSealerBitmap: "0"}, []string{"minimalSealerBitmap"}},
 		{"both", `{"consensusRules":{"rejectNumberJump":0,"minimalSealerBitmap":0}}`, map[types.RuleName]string{types.RejectNumberJump: "0", types.MinimalSealerBitmap: "0"}, []string{"minimalSealerBitmap", "rejectNumberJump"}},
+		{"stable", `{"consensusRules":{"stableCandidateSort":0}}`, map[types.RuleName]string{types.StableCandidateSort: "0"}, []string{"stableCandidateSort"}},
+		{"all", `{"consensusRules":{"minimalSealerBitmap":0,"rejectNumberJump":0,"stableCandidateSort":0}}`, map[types.RuleName]string{types.MinimalSealerBitmap: "0", types.RejectNumberJump: "0", types.StableCandidateSort: "0"}, []string{"minimalSealerBitmap", "rejectNumberJump", "stableCandidateSort"}},
+		{"stable-scheduled", `{"consensusRules":{"stableCandidateSort":18446744073709551619}}`, map[types.RuleName]string{types.StableCandidateSort: "18446744073709551619"}, []string{}},
 		{"scheduled", `{"consensusRules":{"minimalSealerBitmap":18446744073709551619}}`, map[types.RuleName]string{types.MinimalSealerBitmap: "18446744073709551619"}, []string{}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
