@@ -46,6 +46,7 @@ func TestChainRulesReported(t *testing.T) {
 				t.Fatal(err)
 			}
 			stop(t, n)
+			checkEvents(events.Bytes())
 			info := (backend{n}).NodeInfo()
 			parsed, err := types.ParseChainConfig(raw)
 			if err != nil {
