@@ -232,14 +232,18 @@ func ComputeNextEpochInfo(chain types.ChainReader, cfg *types.Config, e *types.H
 		return InitialEpochInfo(cfg.Init)
 	}
 
-	useStableOrder := false
-	if _, configured := cfg.RuleActivation(types.StableCandidateSort); configured {
+	useStableOrder, useFirstProposerCap := false, false
+	_, stableConfigured := cfg.RuleActivation(types.StableCandidateSort)
+	_, capConfigured := cfg.RuleActivation(types.FirstProposerDiligenceCap)
+	if stableConfigured || capConfigured {
 		parent := chain.HeaderByHash(e.ParentHash)
 		if parent == nil || codec.BlockHash(parent) != e.ParentHash {
 			return nil, validator.ErrUnknownAncestor
 		}
 		// Rule activation follows the hash-bound parent, not the supplied number.
-		useStableOrder = cfg.Rules(types.StableCandidateSort, parent.Number.AddUint64(1))
+		next := parent.Number.AddUint64(1)
+		useStableOrder = cfg.Rules(types.StableCandidateSort, next)
+		useFirstProposerCap = cfg.Rules(types.FirstProposerDiligenceCap, next)
 	}
 
 	proposed := map[types.Address]uint64{}
@@ -393,7 +397,7 @@ func ComputeNextEpochInfo(chain types.ChainReader, cfg *types.Config, e *types.H
 			}
 			if w := beingProposer[addr]; w > 0 {
 				maxProposed := 2 * len(latest.Validators) * int(w)
-				if addr == firstProposer && ci.wasValidator {
+				if addr == firstProposer && (ci.wasValidator || useFirstProposerCap) {
 					maxProposed -= 2 * validatorsDiff
 				}
 				if maxProposed == 0 {

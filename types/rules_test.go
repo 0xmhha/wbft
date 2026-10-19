@@ -134,3 +134,39 @@ func TestStableCandidateRuleConfiguration(t *testing.T) {
 		t.Fatal("stable ordering activation missing from digest")
 	}
 }
+
+func TestFirstProposerBoundRuleConfiguration(t *testing.T) {
+	c := ruleConfig(t, `"wbftRules":{"consensusRules":{"firstProposerDiligenceCap":10,"stableCandidateSort":20,"minimalSealerBitmap":30,"rejectNumberJump":40}}`)
+	for _, at := range []uint64{0, 9, 10, 19, 20, 29, 30, 39, 40, 41} {
+		h := HeightFromUint64(at)
+		if c.Rules(FirstProposerDiligenceCap, h) != (at >= 10) || c.Rules(StableCandidateSort, h) != (at >= 20) || c.Rules(MinimalSealerBitmap, h) != (at >= 30) || c.Rules(RejectNumberJump, h) != (at >= 40) {
+			t.Fatal("independent activation", at)
+		}
+	}
+	copied := c.RuleActivations()
+	copied[FirstProposerDiligenceCap] = "0"
+	if h, ok := c.RuleActivation(FirstProposerDiligenceCap); !ok || h.String() != "10" {
+		t.Fatal("activation was mutated")
+	}
+	for _, extra := range []string{`"chainId":1`, `"wbftRules":{"consensusRules":{"firstProposerDiligenceCap":null}}`} {
+		if ruleConfig(t, extra).Rules(FirstProposerDiligenceCap, HeightFromUint64(100)) {
+			t.Fatal("missing or null activation enabled")
+		}
+	}
+	for _, value := range []string{`-1`, `"1"`, `true`, `1.5`, `1e2`} {
+		if _, err := ParseChainConfig([]byte(`{"anzeon":{"wbft":{}},"wbftRules":{"consensusRules":{"firstProposerDiligenceCap":` + value + `}}}`)); err == nil {
+			t.Fatal("invalid activation accepted", value)
+		}
+	}
+	activation := new(big.Int).Add(new(big.Int).Lsh(big.NewInt(1), 64), big.NewInt(3))
+	full := ruleConfig(t, fmt.Sprintf(`"wbftRules":{"consensusRules":{"firstProposerDiligenceCap":%s}}`, activation.String()))
+	for _, delta := range []int64{-1, 0, 1} {
+		h := MustHeightFromBig(new(big.Int).Add(new(big.Int).Set(activation), big.NewInt(delta)))
+		if full.Rules(FirstProposerDiligenceCap, h) != (delta >= 0) {
+			t.Fatal("activation height truncated", h)
+		}
+	}
+	if c.RulesDigest() == ruleConfig(t, `"wbftRules":{"consensusRules":{"firstProposerDiligenceCap":11,"stableCandidateSort":20,"minimalSealerBitmap":30,"rejectNumberJump":40}}`).RulesDigest() {
+		t.Fatal("activation omitted from digest")
+	}
+}
