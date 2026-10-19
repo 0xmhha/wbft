@@ -255,6 +255,7 @@
         "rule_activations": {
           "type": "object",
           "properties": {
+            "committedEpochDiligence": { "$ref": "#/$defs/decimal" },
             "firstProposerDiligenceCap": { "$ref": "#/$defs/decimal" },
             "minimalSealerBitmap": { "$ref": "#/$defs/decimal" },
             "rejectNumberJump": { "$ref": "#/$defs/decimal" },

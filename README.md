@@ -551,8 +551,9 @@ v3.0 ([COPYING](COPYING)).
 ## Chain rules
 
 Chain-level rules come only from the genesis chain configuration's
-`wbftRules.consensusRules`. The supported keys are `rejectNumberJump` and
-`minimalSealerBitmap`. Each key is disabled when missing or null; a
+`wbftRules.consensusRules`. The supported keys are `rejectNumberJump`,
+`minimalSealerBitmap`, `stableCandidateSort`, `firstProposerDiligenceCap` and
+`committedEpochDiligence`. Each key is disabled when missing or null; a
 non-negative JSON integer sets its activation height. Node profiles and local options do not override
 these values. Unknown consensus or feature rule keys refuse startup.
 
@@ -573,6 +574,34 @@ For a scheduled rule, deciding a non-minimal previous bitmap requires the
 grandparent header. Header verification consults the batch and stored
 history. A light caller supplies `LightInputs.Grandparent`; missing context
 remains undecided. Canonical previous bitmaps need no additional context.
+
+`committedEpochDiligence` scores the fully committed window from the previous
+actual epoch boundary L through the parent of the current boundary e. Its
+length is e-L, including after a schedule transition. The current block's
+own round and carried signer entries enter the next window; prepared re-proposals
+therefore retain the same epoch information and signing digest.
+
+Each historical block uses its own proposer policy and authority order.
+Selection starts from the parent's Coinbase, or the zero address for genesis.
+All attempts through the successor header's hash-bound `PrevRound` count,
+including full rotations; the historical header's own Round and current seals
+are node-local and do not affect accounting. For the final historical parent,
+the current candidate supplies this previous-round field. It is already part
+of the prepared proposal hash and stays fixed during re-proposal.
+The final-round proposer receives credit for carried previous signatures.
+Capacity uses the parent authority's size, and signing participation uses
+actual membership in that authority. Genesis and its child provide no previous
+certificate observations. A candidate without eligible signing observations
+keeps its prior score; a candidate absent from L starts at the default score.
+The score combines the observed signing and proposal fractions with its prior,
+weighted by eligible slots over ten times the window length. Arithmetic retains
+full precision and rejects invalid ranges rather than clamping.
+
+This rule replaces the legacy score calculation when active.
+`firstProposerDiligenceCap` continues to affect the legacy calculation only;
+`stableCandidateSort` independently controls ranking in either mode. Header,
+EpochInfo, wire and signature formats do not change. The activation is bound
+to the actual parent's full height plus one.
 
 The digest is Keccak-256 of the canonical JSON object containing
 `anzeon.wbft`, `transitions` and every `wbftRules` group. Object keys are

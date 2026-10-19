@@ -84,7 +84,7 @@ func TestRecords(t *testing.T) {
 			"prepared_sealers": []uint32{0, 2}, "committed_sealers": []uint32{}}},
 		{Kind: event.NodeStart, Fields: map[string]any{"refused": "sign state damaged"}},
 		{Kind: event.NodeStart, Fields: map[string]any{"impl": "wbft", "mode": "embedded", "sign_floor": nil,
-			"rule_activations": map[string]string{"firstProposerDiligenceCap": "10"},
+			"rule_activations": map[string]string{"committedEpochDiligence": "8", "firstProposerDiligenceCap": "10"},
 			"wal_recovery":     map[string]any{"records": 0, "torn_bytes": 0, "corrupted": 0}}},
 		{Kind: "MIRROR_MODE", Src: "app", Fields: map[string]any{"instance": "gov", "mode": "replay"}},
 	}
