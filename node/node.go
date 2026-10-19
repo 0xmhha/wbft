@@ -409,6 +409,7 @@ func (n *Node) start(ctx context.Context) error {
 	n.ev = ev
 	n.mu.Unlock()
 	n.logConfig(n.levels.Current())
+	n.warnSameBlockTransitions(cfg)
 	if n.signer == nil {
 		return nil
 	}

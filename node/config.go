@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math/big"
 
 	"github.com/0xmhha/wbft/app"
+	"github.com/0xmhha/wbft/chain/validator"
 	"github.com/0xmhha/wbft/chain/validator/source"
 	"github.com/0xmhha/wbft/consensus/runner"
 	"github.com/0xmhha/wbft/internal/faultpoint"
@@ -149,6 +151,41 @@ func checkChainConfig(cfg *types.Config) error {
 	}
 	if err := cfg.Init.Check(); err != nil {
 		return refuse("%v", err)
+	}
+	return checkEpochSchedule(cfg)
+}
+
+// checkEpochSchedule validates every configured length and the distances
+// between epoch boundaries without changing the schedule or its ordering.
+func checkEpochSchedule(cfg *types.Config) error {
+	length := cfg.Base().EpochLength
+	if length < 2 {
+		return refuse("base epoch length %d must be at least 2", length)
+	}
+	anchor := new(big.Int)
+	divisor := new(big.Int).SetUint64(length)
+	one := big.NewInt(1)
+	for _, transition := range cfg.EpochTransitions() {
+		if transition.Length < 2 {
+			return refuse("epoch length %d at block %s must be at least 2", transition.Length, transition.Block)
+		}
+		if transition.Block.Sign() > 0 {
+			distance := new(big.Int).Sub(transition.Block, anchor)
+			distance.Mod(distance, divisor)
+			if transition.Block.Cmp(one) == 0 || distance.Cmp(one) == 0 {
+				return refuse("epoch transition at block %s follows an epoch boundary by one block", transition.Block)
+			}
+		}
+		anchor.Set(transition.Block)
+		divisor.SetUint64(transition.Length)
+	}
+	// Genesis is always a boundary, including configurations anchored before it.
+	first, err := validator.IsEpochBlock(cfg, types.HeightFromUint64(1))
+	if err != nil {
+		return refuse("epoch schedule: %v", err)
+	}
+	if first {
+		return refuse("epoch boundary at block 1 follows genesis by one block")
 	}
 	return nil
 }

@@ -677,7 +677,7 @@
         "kind": { "const": "HEALTH" },
         "what": {
           "enum": ["head_mismatch", "peer_inbound_overflow", "peer_inbound_disconnect", "privval_refusal", "sign_floor_skip",
-            "snapshot_missing_at_preprepare", "snapshot_missing_at_head", "consensus_halted", "disconnect"]
+            "snapshot_missing_at_preprepare", "snapshot_missing_at_head", "consensus_halted", "disconnect", "same_block_transitions"]
         },
         "peer": { "$ref": "#/$defs/address" },
         "code": { "$ref": "#/$defs/code" },
