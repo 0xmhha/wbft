@@ -342,3 +342,29 @@ func TestCheckNoEpochInfo(t *testing.T) {
 		t.Fatalf("EpochInfo: %v", err)
 	}
 }
+
+func TestStableCandidateOrder(t *testing.T) {
+	cs := []ScoredCandidate{
+		{Power: 1, Diligence: 9}, {Power: 2, Diligence: 0}, {Power: 1, Diligence: 9},
+		{Power: ^uint64(0), Diligence: ^uint64(0)}, {Power: 2, Diligence: 0}, {Power: 1, Diligence: 10},
+	}
+	before := slices.Clone(cs)
+	if got := stableCandidateOrder(cs); !slices.Equal(got, []int{3, 1, 4, 5, 0, 2}) {
+		t.Fatal("stable score order", got)
+	}
+	if !slices.Equal(cs, before) {
+		t.Fatal("candidate input was mutated")
+	}
+	if got := stableCandidateOrder(nil); len(got) != 0 {
+		t.Fatal("nonempty order for no candidates")
+	}
+	ties := make([]ScoredCandidate, 16)
+	for i := range ties {
+		ties[i] = ScoredCandidate{Power: 1, Diligence: 5}
+	}
+	for i, index := range stableCandidateOrder(ties) {
+		if i != index {
+			t.Fatal("equal scores changed input order")
+		}
+	}
+}

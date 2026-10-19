@@ -30,6 +30,7 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"sort"
 
 	"github.com/0xmhha/wbft/chain/validator"
 	"github.com/0xmhha/wbft/codec"
@@ -78,6 +79,25 @@ func SortCandidates(cs []ScoredCandidate) []int {
 			return a.Power > b.Power
 		}
 		return a.Diligence > b.Diligence
+	})
+	return idx
+}
+
+// stableCandidateOrder preserves the input position of equal-score candidates.
+func stableCandidateOrder(cs []ScoredCandidate) []int {
+	idx := make([]int, len(cs))
+	for i := range idx {
+		idx[i] = i
+	}
+	sort.SliceStable(idx, func(i, j int) bool {
+		a, b := cs[idx[i]], cs[idx[j]]
+		if a.Power != b.Power {
+			return a.Power > b.Power
+		}
+		if a.Diligence != b.Diligence {
+			return a.Diligence > b.Diligence
+		}
+		return idx[i] < idx[j]
 	})
 	return idx
 }
@@ -210,6 +230,16 @@ func ComputeNextEpochInfo(chain types.ChainReader, cfg *types.Config, e *types.H
 	}
 	if e.Number.IsZero() {
 		return InitialEpochInfo(cfg.Init)
+	}
+
+	useStableOrder := false
+	if _, configured := cfg.RuleActivation(types.StableCandidateSort); configured {
+		parent := chain.HeaderByHash(e.ParentHash)
+		if parent == nil || codec.BlockHash(parent) != e.ParentHash {
+			return nil, validator.ErrUnknownAncestor
+		}
+		// Rule activation follows the hash-bound parent, not the supplied number.
+		useStableOrder = cfg.Rules(types.StableCandidateSort, parent.Number.AddUint64(1))
 	}
 
 	proposed := map[types.Address]uint64{}
@@ -385,7 +415,12 @@ func ComputeNextEpochInfo(chain types.ChainReader, cfg *types.Config, e *types.H
 	for i, c := range next.Candidates {
 		scored[i] = ScoredCandidate{Addr: c.Addr, Power: 1, Diligence: c.Diligence}
 	}
-	order := SortCandidates(scored)
+	var order []int
+	if useStableOrder {
+		order = stableCandidateOrder(scored)
+	} else {
+		order = SortCandidates(scored)
+	}
 	next.Validators = make([]uint32, 0)
 	next.BLSPublicKeys = make([][]byte, 0)
 	n := uint64(len(order))

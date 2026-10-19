@@ -256,7 +256,8 @@
           "type": "object",
           "properties": {
             "minimalSealerBitmap": { "$ref": "#/$defs/decimal" },
-            "rejectNumberJump": { "$ref": "#/$defs/decimal" }
+            "rejectNumberJump": { "$ref": "#/$defs/decimal" },
+            "stableCandidateSort": { "$ref": "#/$defs/decimal" }
           },
           "additionalProperties": false
         },
