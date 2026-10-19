@@ -225,6 +225,10 @@ func ComputeNextEpochInfo(chain types.ChainReader, cfg *types.Config, e *types.H
 	if err != nil {
 		return nil, err
 	}
+	usePerBlockPolicy, err := ruleForEpochHeader(chain, cfg, e, types.ReplayPerBlockPolicy)
+	if err != nil {
+		return nil, err
+	}
 	isEpoch, err := validator.IsEpochBlock(cfg, e.Number)
 	if err != nil {
 		return nil, err
@@ -258,6 +262,7 @@ func ComputeNextEpochInfo(chain types.ChainReader, cfg *types.Config, e *types.H
 	submitted := map[types.Address]uint64{}
 	beingProposer := map[types.Address]int64{}
 	var proposers []types.Address
+	var proposerHeights []types.Height
 	var epochLength uint64
 	var firstProposer, lastProposer types.Address
 
@@ -275,6 +280,9 @@ func ComputeNextEpochInfo(chain types.ChainReader, cfg *types.Config, e *types.H
 		}
 		proposer := it.Coinbase
 		proposers = append(proposers, proposer)
+		if usePerBlockPolicy {
+			proposerHeights = append(proposerHeights, it.Number)
+		}
 
 		parent := chain.Header(it.ParentHash, it.Number.RefLow64()-1) //wbft:low64 HH-54
 		if parent == nil {
@@ -295,6 +303,9 @@ func ComputeNextEpochInfo(chain types.ChainReader, cfg *types.Config, e *types.H
 		if parent.Number.IsZero() {
 			// Block 1 carries no previous-block seals.
 			beingProposer[proposer]--
+			if usePerBlockPolicy {
+				lastProposer = types.Address{}
+			}
 		} else {
 			prepareSigners, err := signerAddresses(info, extra.PrevPreparedSeal)
 			if err != nil {
@@ -360,7 +371,21 @@ func ComputeNextEpochInfo(chain types.ChainReader, cfg *types.Config, e *types.H
 	if err != nil {
 		return nil, err
 	}
+	policyID := pol.ID
 	for i := len(proposers) - 1; i >= 0; i-- {
+		if usePerBlockPolicy {
+			historical := cfg.ConfigAt(proposerHeights[i]).ProposerPolicy
+			if historical == nil {
+				return nil, validator.ErrNoProposerPolicy
+			}
+			if historical.ID != policyID {
+				valSet, err = validator.NewSet(current, latest.BLSPublicKeys, *historical)
+				if err != nil {
+					return nil, err
+				}
+				policyID = historical.ID
+			}
+		}
 		proposer := proposers[i]
 		for round := 0; ; round++ {
 			if round >= len(current) {

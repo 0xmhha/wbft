@@ -27,19 +27,7 @@ import (
 // committedRuleForHeader resolves activation before classifying the supplied
 // number as an epoch or genesis. Only the actual genesis has no parent.
 func committedRuleForHeader(chain types.ChainReader, cfg *types.Config, e *types.Header) (bool, error) {
-	if _, configured := cfg.RuleActivation(types.CommittedEpochDiligence); !configured || e.Number.IsZero() && e.ParentHash == (types.Hash{}) {
-		return false, nil
-	}
-	parent := chain.HeaderByHash(e.ParentHash)
-	if parent == nil || codec.BlockHash(parent) != e.ParentHash {
-		return false, validator.ErrUnknownAncestor
-	}
-	next := parent.Number.AddUint64(1)
-	active := cfg.Rules(types.CommittedEpochDiligence, next)
-	if active && e.Number.Cmp(next) != 0 {
-		return false, validator.ErrUnknownAncestor
-	}
-	return active, nil
+	return ruleForEpochHeader(chain, cfg, e, types.CommittedEpochDiligence)
 }
 
 // committedParent follows a hash-bound edge and checks the full height.

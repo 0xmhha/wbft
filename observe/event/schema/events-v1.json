@@ -259,6 +259,7 @@
             "firstProposerDiligenceCap": { "$ref": "#/$defs/decimal" },
             "minimalSealerBitmap": { "$ref": "#/$defs/decimal" },
             "rejectNumberJump": { "$ref": "#/$defs/decimal" },
+            "replayPerBlockPolicy": { "$ref": "#/$defs/decimal" },
             "stableCandidateSort": { "$ref": "#/$defs/decimal" }
           },
           "additionalProperties": false
