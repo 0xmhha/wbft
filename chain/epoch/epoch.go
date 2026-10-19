@@ -221,6 +221,10 @@ type candidateInfo struct {
 //
 // Spec: WBFT-EPOCH-008, WBFT-EPOCH-009, WBFT-EPOCH-010, WBFT-EPOCH-011, WBFT-EPOCH-013, WBFT-EPOCH-019, WBFT-EPOCH-020
 func ComputeNextEpochInfo(chain types.ChainReader, cfg *types.Config, e *types.Header, candidates []types.CandidateEntry) (*types.EpochInfo, error) {
+	useCommittedWindow, err := committedRuleForHeader(chain, cfg, e)
+	if err != nil {
+		return nil, err
+	}
 	isEpoch, err := validator.IsEpochBlock(cfg, e.Number)
 	if err != nil {
 		return nil, err
@@ -244,6 +248,10 @@ func ComputeNextEpochInfo(chain types.ChainReader, cfg *types.Config, e *types.H
 		next := parent.Number.AddUint64(1)
 		useStableOrder = cfg.Rules(types.StableCandidateSort, next)
 		useFirstProposerCap = cfg.Rules(types.FirstProposerDiligenceCap, next)
+	}
+
+	if useCommittedWindow {
+		return computeCommittedEpochInfo(chain, cfg, e, candidates, useStableOrder)
 	}
 
 	proposed := map[types.Address]uint64{}
@@ -415,6 +423,11 @@ func ComputeNextEpochInfo(chain types.ChainReader, cfg *types.Config, e *types.H
 		next.Candidates[i] = types.Candidate{Addr: addr, Diligence: d}
 	}
 
+	return selectNextValidators(e, candidates, next, useStableOrder)
+}
+
+// selectNextValidators applies the common ranking and shuffle to either score mode.
+func selectNextValidators(e *types.Header, candidates []types.CandidateEntry, next *types.EpochInfo, useStableOrder bool) (*types.EpochInfo, error) {
 	scored := make([]ScoredCandidate, len(next.Candidates))
 	for i, c := range next.Candidates {
 		scored[i] = ScoredCandidate{Addr: c.Addr, Power: 1, Diligence: c.Diligence}
