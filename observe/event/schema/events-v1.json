@@ -254,7 +254,10 @@
         "rules_digest": { "$ref": "#/$defs/hash" },
         "rule_activations": {
           "type": "object",
-          "properties": { "rejectNumberJump": { "$ref": "#/$defs/decimal" } },
+          "properties": {
+            "minimalSealerBitmap": { "$ref": "#/$defs/decimal" },
+            "rejectNumberJump": { "$ref": "#/$defs/decimal" }
+          },
           "additionalProperties": false
         },
         "wal_recovery": {
