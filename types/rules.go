@@ -22,6 +22,9 @@ const MinimalSealerBitmap RuleName = "minimalSealerBitmap"
 // StableCandidateSort orders equal-score candidates by their input position.
 const StableCandidateSort RuleName = "stableCandidateSort"
 
+// FirstProposerDiligenceCap uses the prior set for the first proposer bound.
+const FirstProposerDiligenceCap RuleName = "firstProposerDiligenceCap"
+
 // Rules reports whether name is enabled at the full height at.
 // Missing or null activation heights are disabled.
 func (c *Config) Rules(name RuleName, at Height) bool {
@@ -71,7 +74,7 @@ func parseConsensusRules(raw []byte) (map[RuleName]Height, error) {
 		sort.Strings(names)
 		for _, name := range names {
 			field := "wbftRules." + group + "." + name
-			if group != "consensusRules" || RuleName(name) != RejectNumberJump && RuleName(name) != MinimalSealerBitmap && RuleName(name) != StableCandidateSort {
+			if group != "consensusRules" || RuleName(name) != RejectNumberJump && RuleName(name) != MinimalSealerBitmap && RuleName(name) != StableCandidateSort && RuleName(name) != FirstProposerDiligenceCap {
 				return nil, &ErrConfig{Field: field, Reason: "unknown rule"}
 			}
 			value := strings.TrimSpace(string(keys[name]))
