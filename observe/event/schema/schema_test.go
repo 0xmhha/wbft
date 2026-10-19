@@ -69,6 +69,7 @@ func TestRecords(t *testing.T) {
 	hash := "0x" + strings.Repeat("ab", 32)
 	addr := "0x" + strings.Repeat("cd", 20)
 	good := []event.Record{
+		{Kind: event.Health, Fields: map[string]any{"what": "same_block_transitions", "reason": "2 transitions at block 6 retain their configured application order"}},
 		{Kind: event.BuildHandover, View: view, Fields: map[string]any{"build_id": "build-1", "number": view.Seq, "wait_ns": "0", "parent": hash}},
 		{Kind: event.BuildStarted, View: view, Fields: map[string]any{"build_id": "build-1", "number": view.Seq}},
 		{Kind: event.BuildFinished, View: view, Fields: map[string]any{"build_id": "build-1", "number": view.Seq, "status": "submitted", "hash": hash}},
