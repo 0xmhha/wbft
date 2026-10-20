@@ -188,7 +188,7 @@ func RunTrace(j JournalReader, opts TraceOptions, yield func(StepResult) error) 
 				return ErrTraceConfiguration
 			}
 			if cfg == nil || b.Run != writerRun {
-				c, err := types.ParseChainConfig(b.Core.ChainConfig)
+				c, err := b.Core.Configuration()
 				if err != nil {
 					return fmt.Errorf("stepdriver: segment chain configuration: %w", err)
 				}

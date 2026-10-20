@@ -272,6 +272,10 @@ func (n *Node) start(ctx context.Context) error {
 	if err != nil {
 		return refuse("%v", err)
 	}
+	cfg, err = cfg.CheckedProposerPolicy()
+	if err != nil {
+		return refuse("%v", err)
+	}
 	if err := checkChainConfig(cfg); err != nil {
 		return err
 	}
@@ -508,7 +512,7 @@ func (n *Node) openJournal(core consensus.Options, runID string) (*journal.FileW
 	n.mu.Unlock()
 	id := journal.Identity{Self: core.Self, BLSPublicKey: n.signer.BLSPublicKey(), Run: runID, Commit: moduleVersion(),
 		ChainID: info.ChainID, GenesisHash: info.GenesisHash, Mode: n.mode(), WireOffset: n.wireOffset(),
-		Core: journal.CoreOptions{SyncTrace: journal.SyncTraceVersion, CacheTrace: journal.CacheTraceVersion, TimerTrace: journal.TimerTraceVersion, ChainConfig: info.ChainConfigJSON, Self: core.Self, Improvements: uint64(core.Improvements),
+		Core: journal.CoreOptions{ProposerPolicyProfile: journal.CheckedProposerPolicyProfile, SyncTrace: journal.SyncTraceVersion, CacheTrace: journal.CacheTraceVersion, TimerTrace: journal.TimerTraceVersion, ChainConfig: info.ChainConfigJSON, Self: core.Self, Improvements: uint64(core.Improvements),
 			BacklogLimit: uint64(core.BacklogLimit)}}
 	jw, err := journal.Open(opt, id)
 	if err != nil {
@@ -790,14 +794,16 @@ func (n *Node) mode() string {
 }
 
 // improvements lists the enabled improvements with their source: the core's
-// restart-safety rules, checked parent-chain epoch lookup (the defaults of
-// every profile), and the execution layer's.
+// restart-safety rules, checked parent-chain lookup, effective proposer policy
+// and integer thresholds (the defaults of every profile), and the execution layer's.
 func (n *Node) improvements() []rpc.Improvement {
 	out := []rpc.Improvement{}
 	for _, name := range consensus.RestartSafety.Names() {
 		out = append(out, rpc.Improvement{Name: name, Source: "profile"})
 	}
 	out = append(out, rpc.Improvement{Name: "parent_epoch_lookup", Source: "profile"})
+	out = append(out, rpc.Improvement{Name: "integer_quorum", Source: "profile"})
+	out = append(out, rpc.Improvement{Name: "checked_proposer_policy", Source: "profile"})
 	n.mu.Lock()
 	app := n.info.AppImprovements
 	cfg := n.chainCfg

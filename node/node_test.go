@@ -15,10 +15,12 @@ import (
 	"github.com/0xmhha/wbft/app"
 	"github.com/0xmhha/wbft/chain/epoch"
 	"github.com/0xmhha/wbft/codec"
+	"github.com/0xmhha/wbft/conformance/stepdriver"
 	"github.com/0xmhha/wbft/crypto/keccak"
 	"github.com/0xmhha/wbft/internal/fsys"
 	"github.com/0xmhha/wbft/mempool"
 	"github.com/0xmhha/wbft/observe/event"
+	"github.com/0xmhha/wbft/observe/journal"
 	"github.com/0xmhha/wbft/observe/participation"
 	"github.com/0xmhha/wbft/rpc"
 	"github.com/0xmhha/wbft/types"
@@ -216,8 +218,20 @@ func TestStartChecks(t *testing.T) {
 	}{
 		{"interface version", func(r *app.InfoResponse) { r.AppMajors = []uint32{app.Major + 1} }},
 		{"genesis hash", func(r *app.InfoResponse) { r.GenesisHash = types.Hash{1} }},
-		{"no proposer policy", func(r *app.InfoResponse) {
+		{"empty genesis validators", func(r *app.InfoResponse) {
 			r.ChainConfigJSON = []byte(`{"chainId":8282,"anzeon":{"wbft":{"blockPeriodSeconds":1},"init":{"validators":[]}}}`)
+		}},
+		{"unsupported proposer policy", func(r *app.InfoResponse) {
+			var raw map[string]any
+			if err := json.Unmarshal(r.ChainConfigJSON, &raw); err != nil {
+				t.Fatal(err)
+			}
+			raw["anzeon"].(map[string]any)["wbft"].(map[string]any)["proposerPolicy"] = 2
+			encoded, err := json.Marshal(raw)
+			if err != nil {
+				t.Fatal(err)
+			}
+			r.ChainConfigJSON = encoded
 		}},
 		{"consensus rule", func(r *app.InfoResponse) {
 			var m map[string]any
@@ -347,6 +361,8 @@ func TestRPC(t *testing.T) {
 	imps, _ := json.Marshal(info["improvements"])
 	want := `[{"name":"one_round0_proposal","source":"profile"},{"name":"bad_block_release_mark","source":"profile"},` +
 		`{"name":"parent_epoch_lookup","source":"profile"},` +
+		`{"name":"integer_quorum","source":"profile"},` +
+		`{"name":"checked_proposer_policy","source":"profile"},` +
 		`{"name":"app_rule","source":"app"}]`
 	if info["mode"] != "embedded" || len(info["blsPublicKey"].(string)) != 2+96 || info["build"] != "cgo" ||
 		info["version"] == "" || string(imps) != want {
@@ -594,5 +610,79 @@ func TestHeaderCopy(t *testing.T) {
 	if len(evs.Result) != 3 || evs.Result[0]["kind"] != "NODE_START" || evs.Result[0]["seq"] != float64(0) ||
 		evs.Result[2]["seq"] != float64(2) {
 		t.Fatalf("wbft_events %v", evs.Result)
+	}
+}
+
+func TestEffectivePolicyDefaultKeepsOriginalInfo(t *testing.T) {
+	key := testKey(0)
+	raw, g := testGenesis(t, key)
+	a := &infoApp{newTestApp(raw, g), func(info *app.InfoResponse) {
+		var obj map[string]any
+		if err := json.Unmarshal(info.ChainConfigJSON, &obj); err != nil {
+			t.Fatal(err)
+		}
+		delete(obj["anzeon"].(map[string]any)["wbft"].(map[string]any), "proposerPolicy")
+		encoded, err := json.Marshal(obj)
+		if err != nil {
+			t.Fatal(err)
+		}
+		info.ChainConfigJSON = encoded
+	}}
+	mem := fsys.NewMem()
+	n, err := New(Config{DataDir: "/data"}, Deps{App: a, Authority: a, fs: mem, key: key})
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.cons = n.Consensus()
+	if err = n.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	stopped := false
+	defer func() {
+		if !stopped {
+			stop(t, n)
+		}
+	}()
+	a.waitHead(t, 2, 20*time.Second)
+	if n.chainCfg.Base().ProposerPolicy == nil || n.chainCfg.Base().ProposerPolicy.ID != 0 {
+		t.Fatal("effective default absent")
+	}
+	original, err := types.ParseChainConfig(n.info.ChainConfigJSON)
+	if err != nil || original.Base().ProposerPolicy != nil {
+		t.Fatal("original info declaration changed", err)
+	}
+	stop(t, n)
+	stopped = true
+	records, err := journal.ReadAll(mem, "/data/journal")
+	if err != nil {
+		t.Fatal(err)
+	}
+	segments := 0
+	for _, record := range records {
+		if segment, ok := record.Body.(*journal.SegmentRec); ok {
+			segments++
+			source, err := types.ParseChainConfig(segment.Core.ChainConfig)
+			if err != nil || source.Base().ProposerPolicy != nil || segment.Core.ProposerPolicyProfile != journal.CheckedProposerPolicyProfile {
+				t.Fatal("journal changed source policy or lost effective profile", err)
+			}
+		}
+	}
+	if segments == 0 {
+		t.Fatal("missing journal configuration")
+	}
+	reader, err := journal.OpenReader(mem, "/data/journal")
+	if err != nil {
+		t.Fatal(err)
+	}
+	steps := 0
+	err = stepdriver.RunTrace(reader, stepdriver.TraceOptions{Blocks: appBlocks{a.testApp}}, func(result stepdriver.StepResult) error {
+		steps++
+		if !result.Match {
+			return fmt.Errorf("step %d output differs", result.Step)
+		}
+		return nil
+	})
+	if err != nil || steps == 0 {
+		t.Fatal("default-policy journal did not replay", steps, err)
 	}
 }
