@@ -60,17 +60,19 @@ func (s *State) config(n types.Height) types.Params {
 // the branch, updates the round state, the validators and the proposer, runs
 // set_state(AcceptRequest), resets the round-change set, the prepared
 // certificate and the extra seals by the requested round, notifies the block
-// builder and starts the round timer. It returns without any change when no
-// branch applies.
+// builder and starts the round timer. ResetHeightState uses round zero for
+// new-sequence initialization regardless of the requested round. It returns
+// without any change when no branch applies. The result reports whether a new
+// sequence was entered.
 //
 // Spec: WBFT-SM-022, WBFT-SM-023, WBFT-SM-026, WBFT-SM-027, WBFT-SM-028, WBFT-SM-029, WBFT-SM-030
-func (st *step) startNewRound(round types.Round, cause string) {
+func (st *step) startNewRound(round types.Round, cause string) bool {
 	s := st.s
 	head := st.env.Head()
 	s.head = head
 	last := head.Header
 	if last == nil {
-		return
+		return false
 	}
 
 	var branch string
@@ -81,11 +83,11 @@ func (st *step) startNewRound(round types.Round, cause string) {
 		branch = branchCatchUp
 	case sameAsPrevious(last.Number, s.cur.view.Sequence):
 		if round.IsZero() || round.Cmp(s.cur.view.Round) < 0 {
-			return
+			return false
 		}
 		branch = branchRoundChange
 	default:
-		return
+		return false
 	}
 
 	var newView types.View
@@ -117,22 +119,27 @@ func (st *step) startNewRound(round types.Round, cause string) {
 		},
 	}})
 	st.setState(AcceptRequest)
-	if round.RefLow64() == 0 { //wbft:low64 HH-70
+	effectiveRound := round
+	if branch != branchRoundChange && s.opt.Improvements.Has(ResetHeightState) {
+		effectiveRound = newView.Round
+	}
+	if effectiveRound.RefLow64() == 0 { //wbft:low64 HH-70
 		s.certificate = nil
 		s.rcs = newRoundChangeSet()
 		st.clearExtraSeals(last.Number)
 	} else {
-		s.rcs.clearLowerThan(round)
+		s.rcs.clearLowerThan(effectiveRound)
 	}
-	s.rcs.newRound(round)
+	s.rcs.newRound(effectiveRound)
 	// Spec: WBFT-PARAM-053 (block period for the next block: latest + 1)
 	st.emit(RequestBuild{
 		Height:      newView.Sequence,
-		Round:       round,
+		Round:       effectiveRound,
 		HeadTime:    last.Time,
 		BlockPeriod: s.config(last.Number.AddUint64(1)).BlockPeriodSeconds,
 	})
 	st.startRoundTimer()
+	return branch != branchRoundChange
 }
 
 // sameAsPrevious reports last == int64(seq) - 1: the right side is computed
@@ -290,8 +297,10 @@ func (st *step) onTimeout(t Timeout) {
 			}
 		}
 		next := s.cur.view.Round.AddUint64(1)
-		st.startNewRound(next, causeTimeout)
-		st.broadcastRoundChange(next)
+		newHeight := st.startNewRound(next, causeTimeout)
+		if !newHeight || !s.opt.Improvements.Has(ResetHeightState) {
+			st.broadcastRoundChange(next)
+		}
 	case RetryTimer:
 		// Retry expiries are not cancellable once queued.
 		st.broadcastRoundChange(t.Round)
@@ -339,8 +348,10 @@ func (st *step) onCommitResult(result CommitResult) {
 		return
 	}
 	next := s.cur.view.Round.AddUint64(1)
-	st.startNewRound(next, event.CauseFinalizeFail)
-	st.broadcastRoundChange(next)
+	newHeight := st.startNewRound(next, event.CauseFinalizeFail)
+	if !newHeight || !s.opt.Improvements.Has(ResetHeightState) {
+		st.broadcastRoundChange(next)
+	}
 }
 
 // checkRequest is check_request.

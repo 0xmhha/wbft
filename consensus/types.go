@@ -155,6 +155,12 @@ const (
 	// AdvanceOnCommitFailure enters the next round when importing the
 	// currently decided block fails. It does not change header validity.
 	AdvanceOnCommitFailure
+	// ResetHeightState initializes a new height at round zero even when a
+	// queued timeout or round change requested a later round.
+	ResetHeightState
+	// ScanReadyBacklog releases ready messages behind entries that still
+	// belong to a future phase, without changing their queue priority.
+	ScanReadyBacklog
 )
 
 // RestartSafety is the set of the restart-safety rules of the core. Nodes
@@ -168,6 +174,8 @@ var improvementNames = [...]string{
 	BadBlockReleaseMark:    "bad_block_release_mark",
 	WatchCommittedImport:   "commit_watchdog",
 	AdvanceOnCommitFailure: "advance_on_commit_failure",
+	ResetHeightState:       "reset_height_state",
+	ScanReadyBacklog:       "scan_ready_backlog",
 }
 
 // ParseImprovement finds a known local behavior by its reported name.

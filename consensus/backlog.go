@@ -128,7 +128,8 @@ func (st *step) addToBacklog(v *Verified) int {
 // current set are dropped; each other queue is released in priority order
 // until its first message that is still FUTURE, which is put back. Messages
 // classified PROCESS or EXTRA_SEAL are scheduled for replay; the others are
-// dropped. Sources are visited in address order.
+// dropped. ScanReadyBacklog retains FUTURE entries and scans the rest of the
+// bounded queue for ready messages. Sources are visited in address order.
 //
 // Spec: WBFT-SM-073
 func (st *step) processBacklog() {
@@ -142,11 +143,17 @@ func (st *step) processBacklog() {
 			delete(s.backlog, src)
 			continue
 		}
+		var future []backlogEntry
 		for len(q.entries) > 0 {
 			e := q.entries[0]
 			cls := CheckMessage(s.cur.view, s.state, s.prior.round, e.m.Msg.Code, e.m.Msg.View)
 			if cls == Future {
-				break
+				if !s.opt.Improvements.Has(ScanReadyBacklog) {
+					break
+				}
+				future = append(future, e)
+				q.entries = q.entries[1:]
+				continue
 			}
 			q.entries = q.entries[1:]
 			delete(q.keys, e.key)
@@ -157,6 +164,7 @@ func (st *step) processBacklog() {
 				st.backlogEvent(opDrop, e.m, cls.String())
 			}
 		}
+		q.entries = append(future, q.entries...)
 	}
 }
 
