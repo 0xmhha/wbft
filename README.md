@@ -1044,3 +1044,19 @@ one of these options is enabled. Older two-field input records retain their
 original encoding. Readers of new opted-in journals and WALs must understand
 the bound result format. Ordinary node startup still uses its durable commit
 handshake before starting or replaying the consensus engine.
+
+### Local height and backlog ordering
+
+`reset_height_state` initializes every new height at round zero, including a
+catch-up observed while processing a queued round timeout or an F+1 round change.
+It clears the previous prepared certificate and round-change set, requests a
+round-zero proposal and suppresses the old height's target-round broadcast. The
+requested round remains in the round-entry audit record. Same-height round
+changes and already queued retry timers retain their existing behavior.
+
+`scan_ready_backlog` scans past messages that are still future for the current
+phase, releasing ready messages in their existing priority order. Future entries
+keep their order and duplicate slots; membership checks and queue limits remain
+in effect. Both options are off by default and use the existing named node
+configuration, reporting and exact journal mask. They do not change header
+validity, chain configuration or message encodings.

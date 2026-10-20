@@ -16,7 +16,7 @@ import (
 func TestImportOptionsConstructionAndReporting(t *testing.T) {
 	key := testKey(0)
 	raw, genesis := testGenesis(t, key)
-	for _, names := range [][]string{nil, {"commit_watchdog"}, {"advance_on_commit_failure"}, {"commit_watchdog", "advance_on_commit_failure"}} {
+	for _, names := range [][]string{nil, {"commit_watchdog"}, {"advance_on_commit_failure"}, {"commit_watchdog", "advance_on_commit_failure"}, {"reset_height_state"}, {"scan_ready_backlog"}, {"commit_watchdog", "advance_on_commit_failure", "reset_height_state", "scan_ready_backlog"}} {
 		a := newTestApp(raw, genesis)
 		var events bytes.Buffer
 		original := append([]string(nil), names...)

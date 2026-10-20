@@ -200,8 +200,10 @@ func (st *step) handleRoundChange(v *Verified) (bool, int) {
 	if num == validator.FPlusOneThreshold(s.validators.Len()) {
 		target := s.rcs.minRoundAbove(r0)
 		st.emitQuorum("F_PLUS_ONE", num)
-		st.startNewRound(target, causeFPlusOne)
-		st.broadcastRoundChange(target)
+		newHeight := st.startNewRound(target, causeFPlusOne)
+		if !newHeight || !s.opt.Improvements.Has(ResetHeightState) {
+			st.broadcastRoundChange(target)
+		}
 		return true, rowRCFPlusOne
 	}
 	if s.rcs.countAt(r0) >= s.quorum() && s.isProposer(s.opt.Self) && s.cur.preprepareSent.Cmp(r0) < 0 {
