@@ -149,6 +149,12 @@ const (
 	// one of the restart-safety rules: without it the sign rules of the
 	// private validator refuse every such ROUND-CHANGE.
 	BadBlockReleaseMark
+	// WatchCommittedImport replaces the decided view's round timeout with
+	// a monitor that waits for import completion or a bad-block result.
+	WatchCommittedImport
+	// AdvanceOnCommitFailure enters the next round when importing the
+	// currently decided block fails. It does not change header validity.
+	AdvanceOnCommitFailure
 )
 
 // RestartSafety is the set of the restart-safety rules of the core. Nodes
@@ -158,8 +164,25 @@ var RestartSafety = ImprovementSet(0).With(OneRound0Proposal).With(BadBlockRelea
 // improvementNames are the names a node reports for its improvements
 // (NODE_START, wbft_nodeInfo).
 var improvementNames = [...]string{
-	OneRound0Proposal:   "one_round0_proposal",
-	BadBlockReleaseMark: "bad_block_release_mark",
+	OneRound0Proposal:      "one_round0_proposal",
+	BadBlockReleaseMark:    "bad_block_release_mark",
+	WatchCommittedImport:   "commit_watchdog",
+	AdvanceOnCommitFailure: "advance_on_commit_failure",
+}
+
+// ParseImprovement finds a known local behavior by its reported name.
+func ParseImprovement(name string) (Improvement, bool) {
+	for i, n := range improvementNames {
+		if n == name {
+			return Improvement(i), true
+		}
+	}
+	return 0, false
+}
+
+// KnownImprovements is the mask of local behaviors this build implements.
+func KnownImprovements() ImprovementSet {
+	return (1 << len(improvementNames)) - 1
 }
 
 // String returns the improvement's name.

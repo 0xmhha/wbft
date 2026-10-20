@@ -82,6 +82,10 @@ type roundState struct {
 	// badBlockReleased records that the bad-block rule released a prepared
 	// pair in this sequence (BadBlockReleaseMark).
 	badBlockReleased bool
+	// importHash and importResultSeen belong only to this decided view.
+	// They are set only when an import-related behavior is enabled.
+	importHash       *types.Hash
+	importResultSeen bool
 }
 
 func newRoundState(view types.View) *roundState {
@@ -200,9 +204,10 @@ func (s *State) Step(env Env, in Input) []Output {
 		st.onTimeout(v)
 	case BroadcastFailed:
 		st.onBroadcastFailed(v)
-	case CommitResult, PeerConnected:
-		// The reference does not learn the import result and has no
-		// reconnect path; nothing changes.
+	case CommitResult:
+		st.onCommitResult(v)
+	case PeerConnected:
+		// The reference has no reconnect path; nothing changes.
 	}
 	return st.out
 }

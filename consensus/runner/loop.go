@@ -504,7 +504,11 @@ func (r *Runner) finalizeDone(j commitJob, err error) {
 	}
 	r.emit(event.Record{Kind: event.CommitResult, Fields: f}, nil)
 	r.appMu.Lock()
-	r.appQ = append(r.appQ, queued{in: consensus.CommitResult{Hash: hash, Err: err}, via: viaApp})
+	result := consensus.CommitResult{Hash: hash, Err: err}
+	if r.cfg.Core.Improvements.Has(consensus.WatchCommittedImport) || r.cfg.Core.Improvements.Has(consensus.AdvanceOnCommitFailure) {
+		result.View = &types.View{Sequence: j.block.Header.Number, Round: j.round}
+	}
+	r.appQ = append(r.appQ, queued{in: result, via: viaApp})
 	r.appMu.Unlock()
 	r.wake()
 }

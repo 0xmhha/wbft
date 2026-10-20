@@ -279,6 +279,16 @@ func (st *step) onTimeout(t Timeout) {
 		if !s.roundLive || t.Gen != s.gen[RoundTimer] {
 			return
 		}
+		if s.opt.Improvements.Has(WatchCommittedImport) && s.state == Committed && s.cur.importHash != nil {
+			if head := st.env.Head().Header; head != nil && head.Number.Cmp(s.cur.view.Sequence) >= 0 {
+				st.startNewRound(types.Round{}, causeNewHead)
+				return
+			}
+			if !st.env.IsBadBlock(*s.cur.importHash) {
+				st.startRoundTimer()
+				return
+			}
+		}
 		next := s.cur.view.Round.AddUint64(1)
 		st.startNewRound(next, causeTimeout)
 		st.broadcastRoundChange(next)
@@ -304,6 +314,33 @@ func (st *step) onTimeout(t Timeout) {
 		}
 		st.emit(Schedule{In: Replay{Msg: m}})
 	}
+}
+
+// onCommitResult consumes at most one result for the currently decided block.
+// A result from an earlier view cannot change a new round or sequence.
+func (st *step) onCommitResult(result CommitResult) {
+	s := st.s
+	if s.state != Committed || s.cur.importHash == nil || *s.cur.importHash != result.Hash || s.cur.importResultSeen || result.View == nil || result.View.Cmp(s.cur.view) != 0 {
+		return
+	}
+	s.cur.importResultSeen = true
+	if result.Err == nil {
+		if s.opt.Improvements.Has(WatchCommittedImport) {
+			s.roundLive = false
+			st.emit(CancelTimers{Kinds: []TimerKind{RoundTimer}})
+		}
+		return
+	}
+	if !s.opt.Improvements.Has(AdvanceOnCommitFailure) {
+		return
+	}
+	if head := st.env.Head().Header; head != nil && head.Number.Cmp(s.cur.view.Sequence) >= 0 {
+		st.startNewRound(types.Round{}, causeNewHead)
+		return
+	}
+	next := s.cur.view.Round.AddUint64(1)
+	st.startNewRound(next, event.CauseFinalizeFail)
+	st.broadcastRoundChange(next)
 }
 
 // checkRequest is check_request.

@@ -54,14 +54,15 @@ const (
 // Node is a consensus node: it runs the consensus core for the application
 // and offers the application the Consensus service.
 type Node struct {
-	cfg      Config
-	d        Deps
-	log      *slog.Logger
-	fs       fsys.FS
-	clock    runner.Clock
-	buildIDs atomic.Uint64
-	snaps    *source.Cache
-	svc      *service
+	cfg              Config
+	d                Deps
+	log              *slog.Logger
+	fs               fsys.FS
+	clock            runner.Clock
+	buildIDs         atomic.Uint64
+	coreImprovements consensus.ImprovementSet
+	snaps            *source.Cache
+	svc              *service
 
 	// ctl serialises Start and Stop; mu guards the fields below for short
 	// reads and is never held while the application is called.
@@ -130,8 +131,18 @@ func New(cfg Config, d Deps) (*Node, error) {
 	if _, native := d.Authority.(source.Native); native && !cfg.Standalone {
 		return nil, fmt.Errorf("%w: a native authority source runs only in standalone mode", ErrConfig)
 	}
+	improvements := consensus.RestartSafety
+	seenImprovements := map[string]bool{}
+	for _, name := range cfg.Improvements {
+		i, ok := consensus.ParseImprovement(name)
+		if !ok || seenImprovements[name] {
+			return nil, fmt.Errorf("%w: unknown or repeated consensus improvement %q", ErrConfig, name)
+		}
+		seenImprovements[name] = true
+		improvements = improvements.With(i)
+	}
 	n := &Node{cfg: cfg, d: d, fs: d.fs, clock: d.clock, snaps: source.NewCache(source.DefaultCacheSize), paths: newHeadPaths(headPathsKept), ring: newEventRing(eventsKept),
-		syncWake: make(chan struct{}, 1)}
+		syncWake: make(chan struct{}, 1), coreImprovements: improvements}
 	if n.fs == nil {
 		n.fs = fsys.OS{}
 	}
@@ -420,7 +431,7 @@ func (n *Node) start(ctx context.Context) error {
 
 	// 6. Consensus core. With a journal, the transport's frames and peer
 	// streams are recorded too.
-	core := consensus.Options{Config: cfg, Self: self, Improvements: consensus.RestartSafety}
+	core := consensus.Options{Config: cfg, Self: self, Improvements: n.coreImprovements}
 	jw, err := n.openJournal(core, runID)
 	if err != nil {
 		return err
@@ -794,12 +805,17 @@ func (n *Node) mode() string {
 }
 
 // improvements lists the enabled improvements with their source: the core's
-// restart-safety rules, checked parent-chain lookup, effective proposer policy
-// and integer thresholds (the defaults of every profile), and the execution layer's.
+// restart-safety rules and explicit node options, checked parent-chain lookup,
+// effective proposer policy and integer thresholds, and the execution layer's.
 func (n *Node) improvements() []rpc.Improvement {
 	out := []rpc.Improvement{}
-	for _, name := range consensus.RestartSafety.Names() {
-		out = append(out, rpc.Improvement{Name: name, Source: "profile"})
+	for _, name := range n.coreImprovements.Names() {
+		i, _ := consensus.ParseImprovement(name)
+		source := "node"
+		if consensus.RestartSafety.Has(i) {
+			source = "profile"
+		}
+		out = append(out, rpc.Improvement{Name: name, Source: source})
 	}
 	out = append(out, rpc.Improvement{Name: "parent_epoch_lookup", Source: "profile"})
 	out = append(out, rpc.Improvement{Name: "integer_quorum", Source: "profile"})

@@ -1010,3 +1010,37 @@ WAL records, application sync state messages and wire payloads are unchanged.
 Snapshots distinguish missing candidate input from a known empty list and bind it to the parent's hash and full height. Proposal verification rejects unavailable input and mismatched epoch information. Header-only synchronization checks known input but can defer absent parent state to the mandatory execution check; this is not complete state validation from headers alone. Light verification reports `CANNOT_DECIDE` for an activated epoch when only headers are available. Non-epoch headers cannot carry epoch information once the rule is active.
 
 The deterministic simulator uses the same parent-state candidate schedule when this rule is active. Its `LightChecks` result retains `CANNOT_DECIDE` observations separately from successful state-bound header checks, including the checked block identity and reason.
+
+### Local import monitoring
+
+`node.Config.Improvements` accepts explicit local behavior names. The default
+remains the existing restart-safety set. Unknown or repeated names are rejected;
+these settings cannot disable restart safety and do not change header validity,
+chain configuration or wire payloads. Enabled names are reported with source
+`node` in `NODE_START` and `wbft_nodeInfo`; journal metadata retains the exact mask.
+
+`commit_watchdog` resets the round timer after a block is decided. While import
+is pending and the block is not marked bad, expiry renews the monitor without
+changing rounds. Successful import cancels it and waits for the new-head event.
+A bad block still permits round recovery, and the existing F+1 path remains
+available. A slow application can therefore keep this node at the decided view
+longer than the default behavior.
+
+Normal progress is tested with all-default, all-enabled and mixed nodes. A
+separate deterministic case with every import taking longer than the round
+timeout records an existing progress boundary: the all-enabled configuration
+progresses, while the default and half-enabled configurations do not. That
+boundary is retained explicitly and is not a mixed-deployment liveness claim.
+
+`advance_on_commit_failure` separately advances to the next round on a failed
+import of the current decided block. Results must match both its hash and its
+full height/round; only the first result is consumed. Results from another view,
+unbound historical results and queued superseded timer expiries cannot change
+the current view. These options are individually opt-in and do not declare that
+every behavior of an `improved` profile is implemented.
+
+The runner appends the decided view to import-result input records only when
+one of these options is enabled. Older two-field input records retain their
+original encoding. Readers of new opted-in journals and WALs must understand
+the bound result format. Ordinary node startup still uses its durable commit
+handshake before starting or replaying the consensus engine.

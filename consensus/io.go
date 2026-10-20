@@ -64,10 +64,14 @@ type Timeout struct {
 }
 
 // CommitResult reports the result of importing a committed block. The
-// reference does not learn it; the core records nothing.
+// reference does not learn it. Optional import behaviors consume only the
+// first result whose hash matches the current decided view.
 type CommitResult struct {
 	Hash types.Hash
 	Err  error
+	// View binds an import attempt to its decided view. Nil is the legacy
+	// record; import-related behaviors require an exact view as well as hash.
+	View *types.View
 }
 
 // BroadcastFailed reports that a Broadcast output could not be signed or
