@@ -125,7 +125,7 @@ func (st *step) startNewRound(round types.Round, cause string) bool {
 	}
 	if effectiveRound.RefLow64() == 0 { //wbft:low64 HH-70
 		s.certificate = nil
-		s.rcs = newRoundChangeSet()
+		s.rcs = s.newRoundChanges()
 		st.clearExtraSeals(last.Number)
 	} else {
 		s.rcs.clearLowerThan(effectiveRound)
@@ -189,7 +189,11 @@ func (st *step) updateRoundState(nextVS *validator.Set, view types.View, roundCh
 			c.preparedBlock = nil
 			c.certificate = nil
 			c.badBlockReleased = true
-			st.clearExtraSeals(c.view.Sequence.AddUint64(1))
+			if s.opt.Improvements.Has(ClearCurrentExtraSeals) {
+				st.clearExtraSealsAt(c.view.Sequence)
+			} else {
+				st.clearExtraSeals(c.view.Sequence.AddUint64(1))
+			}
 		}
 		n := newRoundState(view)
 		n.preprepare = c.preprepare
