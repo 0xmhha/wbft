@@ -1106,3 +1106,17 @@ remain available; a prior entry already overwritten by a newer vote cannot
 be recovered. Ordinary height-transition cleanup keeps its existing behavior.
 Both options are independent and off by default, with the existing named
 configuration and journal mask and no header, message or WAL format change.
+
+`validate_round_proposals` is an independent, default-off local option.
+Before reproposing a prepared block, it calls proposal validation after the
+existing quorum and justification checks. A normal future timestamp waits
+on a distinct local `round_proposal` timer; failure does not select a builder
+fallback. Local rejection records use `local_reproposal`, without claiming
+an inbound PRE-PREPARE or physical frame.
+
+The option extends local timer/checkpoint records to a fourth generation.
+Default configurations retain the three reference timer generations and
+cancellation outputs. New readers can restore three-generation checkpoints;
+older readers do not support the additional local timer. Header and network
+message encodings are unchanged. These checks do not establish execution
+validity, physical provenance or a complete improved profile.

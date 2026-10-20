@@ -225,7 +225,7 @@ type Runner struct {
 	buildSeq  types.Height
 	boundary  []wal.Position // positions of the last end-of-height records
 	floorSkip map[string]bool
-	lastGen   [3]uint64
+	lastGen   [4]uint64
 	replay    ReplayInfo
 
 	running  atomic.Bool

@@ -31,6 +31,14 @@ type Vars struct {
 	PriorProposal     *types.Hash
 	ExtraPrepareSeals []VoteVar
 	ExtraCommitSeals  []VoteVar
+	RoundProposalWait *RoundProposalWaitVar `json:"round_proposal_wait,omitempty"`
+}
+
+// RoundProposalWaitVar describes a local timestamp wait, not a received frame.
+type RoundProposalWaitVar struct {
+	View       types.View
+	Hash       types.Hash
+	Generation uint64
 }
 
 // PreprepareVar is the last accepted PRE-PREPARE.
@@ -77,6 +85,9 @@ func (s *State) Vars() *Vars {
 		Prepares:       sortedAddrs(c.prepares),
 		Commits:        sortedAddrs(c.commits),
 		PriorRound:     s.prior.round,
+	}
+	if s.opt.Improvements.Has(ValidateRoundProposals) && s.roundProposalLive {
+		v.RoundProposalWait = &RoundProposalWaitVar{View: s.roundProposalView, Hash: s.roundProposalHash, Generation: s.gen[RoundProposalTimer]}
 	}
 	if c.preparedBlock != nil {
 		h := blockHash(c.preparedBlock)

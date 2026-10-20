@@ -16,7 +16,7 @@ import (
 func TestImportOptionsConstructionAndReporting(t *testing.T) {
 	key := testKey(0)
 	raw, genesis := testGenesis(t, key)
-	for _, names := range [][]string{nil, {"commit_watchdog"}, {"advance_on_commit_failure"}, {"commit_watchdog", "advance_on_commit_failure"}, {"reset_height_state"}, {"scan_ready_backlog"}, {"cancel_stale_retries"}, {"follow_higher_rounds"}, {"bind_prepared_certificate"}, {"drop_unbound_extra_seals"}, {"resume_round_proposals"}, {"refresh_round_certificates"}, {"clear_current_extra_seals"}, {"commit_watchdog", "advance_on_commit_failure", "reset_height_state", "scan_ready_backlog", "cancel_stale_retries", "follow_higher_rounds", "bind_prepared_certificate", "drop_unbound_extra_seals", "resume_round_proposals", "refresh_round_certificates", "clear_current_extra_seals"}} {
+	for _, names := range [][]string{nil, {"commit_watchdog"}, {"advance_on_commit_failure"}, {"commit_watchdog", "advance_on_commit_failure"}, {"reset_height_state"}, {"scan_ready_backlog"}, {"cancel_stale_retries"}, {"follow_higher_rounds"}, {"bind_prepared_certificate"}, {"drop_unbound_extra_seals"}, {"resume_round_proposals"}, {"refresh_round_certificates"}, {"clear_current_extra_seals"}, {"validate_round_proposals"}, {"commit_watchdog", "advance_on_commit_failure", "reset_height_state", "scan_ready_backlog", "cancel_stale_retries", "follow_higher_rounds", "bind_prepared_certificate", "drop_unbound_extra_seals", "resume_round_proposals", "refresh_round_certificates", "clear_current_extra_seals", "validate_round_proposals"}} {
 		a := newTestApp(raw, genesis)
 		var events bytes.Buffer
 		original := append([]string(nil), names...)

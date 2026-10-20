@@ -47,12 +47,12 @@ func validTimerRec(r *TimerRec) bool {
 	case "arm", "replace", "cancelled", "queued", "pop":
 		return len(r.Input) > 0 && r.ArmEngineRun > 0 && len(r.Kinds) == 0
 	case "cancel":
-		if len(r.Input) != 0 || len(r.Kinds) > 3 {
+		if len(r.Input) != 0 || len(r.Kinds) > 4 {
 			return false
 		}
 		seen := map[uint64]bool{}
 		for _, kind := range r.Kinds {
-			if kind > 2 || seen[kind] {
+			if kind > 3 || seen[kind] {
 				return false
 			}
 			seen[kind] = true

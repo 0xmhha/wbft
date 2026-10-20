@@ -246,10 +246,11 @@ func (st *step) setState(to StateName) {
 // Spec: WBFT-SM-030, WBFT-SM-075, WBFT-TIMER-010, WBFT-TIMER-013
 func (st *step) startRoundTimer() {
 	s := st.s
-	st.emit(CancelTimers{Kinds: AllTimers})
+	st.emit(CancelTimers{Kinds: TimerKinds(st.s.opt.Improvements)})
 	s.retryLive = false
 	s.futureLive = false
 	s.future = nil
+	s.roundProposalLive = false
 	s.gen[RoundTimer]++
 	s.roundLive = true
 	// Spec: WBFT-PARAM-053 (timeouts at the current sequence)
@@ -320,6 +321,12 @@ func (st *step) onTimeout(t Timeout) {
 		}
 		// Without the option, retry expiries remain usable once queued.
 		st.broadcastRoundChange(t.Round)
+	case RoundProposalTimer:
+		if !s.opt.Improvements.Has(ValidateRoundProposals) || !s.roundProposalLive || t.Gen != s.gen[RoundProposalTimer] || t.View.Cmp(s.cur.view) != 0 || s.roundProposalView.Cmp(s.cur.view) != 0 {
+			return
+		}
+		s.roundProposalLive = false
+		st.proposeRoundChange()
 	case FutureTimer:
 		// An expiry that carries its PRE-PREPARE was queued before the
 		// timer was cancelled or replaced (a cancelled timer that had not

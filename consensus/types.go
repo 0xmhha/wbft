@@ -95,9 +95,10 @@ type TimerKind uint8
 
 // Timer kinds.
 const (
-	RoundTimer  TimerKind = iota // round-change timer of the current view
-	RetryTimer                   // ROUND-CHANGE retransmission timer
-	FutureTimer                  // deferred PRE-PREPARE whose proposal is from the future
+	RoundTimer         TimerKind = iota // round-change timer of the current view
+	RetryTimer                          // ROUND-CHANGE retransmission timer
+	FutureTimer                         // deferred PRE-PREPARE whose proposal is from the future
+	RoundProposalTimer                  // local prepared proposal waiting for its timestamp
 )
 
 func (k TimerKind) String() string {
@@ -108,12 +109,25 @@ func (k TimerKind) String() string {
 		return "retry"
 	case FutureTimer:
 		return "future"
+	case RoundProposalTimer:
+		return "round_proposal"
 	}
 	return "unknown"
 }
 
-// AllTimers lists every timer kind.
+// AllTimers lists the three reference timer kinds.
 var AllTimers = []TimerKind{RoundTimer, RetryTimer, FutureTimer}
+
+// SupportedTimers includes the optional local proposal timer.
+var SupportedTimers = []TimerKind{RoundTimer, RetryTimer, FutureTimer, RoundProposalTimer}
+
+// TimerKinds returns the timer kinds used by a configured core.
+func TimerKinds(improvements ImprovementSet) []TimerKind {
+	if improvements.Has(ValidateRoundProposals) {
+		return SupportedTimers
+	}
+	return AllTimers
+}
 
 // Protocol thresholds of check_message and the backlog.
 //
@@ -182,6 +196,9 @@ const (
 	// ClearCurrentExtraSeals releases extra seals only at the current height
 	// when the application marks the prepared block as bad.
 	ClearCurrentExtraSeals
+	// ValidateRoundProposals checks a prepared proposal locally before
+	// reproposing it and waits for a normal future timestamp.
+	ValidateRoundProposals
 )
 
 // RestartSafety is the set of the restart-safety rules of the core. Nodes
@@ -204,6 +221,7 @@ var improvementNames = [...]string{
 	ResumeRoundProposals:     "resume_round_proposals",
 	RefreshRoundCertificates: "refresh_round_certificates",
 	ClearCurrentExtraSeals:   "clear_current_extra_seals",
+	ValidateRoundProposals:   "validate_round_proposals",
 }
 
 // ParseImprovement finds a known local behavior by its reported name.
@@ -270,6 +288,12 @@ type Options struct {
 type HeadInfo struct {
 	Header   *types.Header
 	Proposer types.Address
+}
+
+// RoundProposalValidator distinguishes local candidate validation from a
+// received PRE-PREPARE. Environments without it use ValidateProposal.
+type RoundProposalValidator interface {
+	ValidateRoundProposal(b *types.Block) (time.Duration, error)
 }
 
 // Env is the only way the core reads the outside world. Calls are

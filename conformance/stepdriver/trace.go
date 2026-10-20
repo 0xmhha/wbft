@@ -235,9 +235,9 @@ func RunTrace(j JournalReader, opts TraceOptions, yield func(StepResult) error) 
 				core = consensus.NewState(copts)
 				ledger.reset()
 				everStarted = true
-				var g [3]uint64
-				copy(g[:], b.TimerGens)
-				core.RestoreTimerGens(g)
+				if err := core.RestoreTimerGenerations(b.TimerGens); err != nil {
+					return &TraceError{Approximate: approximate, WriterRun: writerRun, EngineRun: original.EngineRun, Step: original.Step, Err: err}
+				}
 				run, last = b.EngineRun, b.Step-1
 			}
 			if core == nil {
