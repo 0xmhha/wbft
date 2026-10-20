@@ -114,3 +114,18 @@ func BuildWait(headTime, blockPeriod uint64, round types.Round, nowUnixNano int6
 func (r RequestBuild) Wait(nowUnixNano int64) time.Duration {
 	return BuildWait(r.HeadTime, r.BlockPeriod, r.Round, nowUnixNano)
 }
+
+// roundTimeoutWithOptions keeps the public reference computation intact.
+// The local cap applies only when both duration products are ordinary positive
+// values. Overflow in these two duration products retains the reference path.
+// Earlier configuration-unit conversion is outside this local policy.
+func roundTimeoutWithOptions(p types.Params, r types.Round, flags ImprovementSet) (time.Duration, TimeoutWarning) {
+	if flags.Has(CapInitialRoundTimeout) && p.RequestTimeoutMs > 0 && p.RequestTimeoutMs <= uint64(math.MaxInt64/int64(time.Millisecond)) && p.MaxRequestTimeoutSeconds > 0 && p.MaxRequestTimeoutSeconds <= uint64(math.MaxInt64/int64(time.Second)) {
+		base := time.Duration(p.RequestTimeoutMs) * time.Millisecond
+		limit := time.Duration(p.MaxRequestTimeoutSeconds) * time.Second
+		if base > limit {
+			return limit, NoWarning
+		}
+	}
+	return RoundTimeout(p, r)
+}

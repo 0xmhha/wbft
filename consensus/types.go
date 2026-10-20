@@ -199,6 +199,9 @@ const (
 	// ValidateRoundProposals checks a prepared proposal locally before
 	// reproposing it and waits for a normal future timestamp.
 	ValidateRoundProposals
+	// CapInitialRoundTimeout applies an ordinary positive timeout cap from
+	// the first round, while preserving reference arithmetic when disabled.
+	CapInitialRoundTimeout
 )
 
 // RestartSafety is the set of the restart-safety rules of the core. Nodes
@@ -222,6 +225,7 @@ var improvementNames = [...]string{
 	RefreshRoundCertificates: "refresh_round_certificates",
 	ClearCurrentExtraSeals:   "clear_current_extra_seals",
 	ValidateRoundProposals:   "validate_round_proposals",
+	CapInitialRoundTimeout:   "cap_initial_round_timeout",
 }
 
 // ParseImprovement finds a known local behavior by its reported name.
