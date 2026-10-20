@@ -59,6 +59,9 @@ type LightInputs struct {
 // ErrLightMissing is the reason of a CannotDecide verdict.
 var ErrLightMissing = errors.New("light: missing input")
 
+// ErrLightEpochState identifies epoch checks that require application state.
+var ErrLightEpochState = errors.New("parent candidate state and epoch ancestry")
+
 // VerifyLight decides whether h, with its parent (whose block hash must be
 // h.ParentHash), is a correctly finalized WBFT header, using only headers:
 // the rules H4, H11, H12, H15a, H16 .. H20 of header verification and the
@@ -161,6 +164,9 @@ func VerifyLight(in LightInputs, h, parent *types.Header) (LightResult, error) {
 	}
 	if (x.EpochInfo != nil) != isEpoch {
 		return Invalid, fmt.Errorf("EpochInfo presence does not match the epoch schedule")
+	}
+	if isEpoch && in.Config.Rules(types.EpochInfoInProposal, parent.Number.AddUint64(1)) {
+		return CannotDecide, fmt.Errorf("%w: %w", ErrLightMissing, ErrLightEpochState)
 	}
 	return Valid, nil
 }

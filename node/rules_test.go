@@ -18,6 +18,7 @@ func TestChainRulesReported(t *testing.T) {
 		activations map[types.RuleName]string
 		enabled     []string
 	}{
+		{"proposal-epoch", `{"consensusRules":{"committedEpochDiligence":0,"epochInfoInProposal":0},"sourceRules":{"candidatesFromParentState":0}}`, map[types.RuleName]string{types.CommittedEpochDiligence: "0", types.EpochInfoInProposal: "0"}, []string{"committedEpochDiligence", "epochInfoInProposal"}},
 		{"number", `{"consensusRules":{"rejectNumberJump":0}}`, map[types.RuleName]string{types.RejectNumberJump: "0"}, []string{"rejectNumberJump"}},
 		{"bitmap", `{"consensusRules":{"minimalSealerBitmap":0}}`, map[types.RuleName]string{types.MinimalSealerBitmap: "0"}, []string{"minimalSealerBitmap"}},
 		{"both", `{"consensusRules":{"rejectNumberJump":0,"minimalSealerBitmap":0}}`, map[types.RuleName]string{types.RejectNumberJump: "0", types.MinimalSealerBitmap: "0"}, []string{"minimalSealerBitmap", "rejectNumberJump"}},

@@ -46,6 +46,9 @@ import (
 //
 // Spec: WBFT-HDR-070, WBFT-VAL-010
 func ValidatorsForVerifying(env *Env, h *types.Header, parents []*types.Header) (v, vp *validator.Set, err error) {
+	if _, err := epochProposalContext(env, h, parents); err != nil {
+		return nil, nil, err
+	}
 	if err := verifyNumber(env, h, parents); err != nil {
 		return nil, nil, err
 	}
@@ -174,6 +177,20 @@ func verifySteps(env *Env, h *types.Header, parents []*types.Header, v, vp *vali
 	// Spec: WBFT-HDR-083
 	n := h.Number.RefLow64() //wbft:low64 HH-20
 	if n == 0 {
+		active, err := epochProposalContext(env, h, parents)
+		if err != nil {
+			return err
+		}
+		if active {
+			x, err := codec.DecodeExtra(h)
+			if err != nil {
+				return stepErr("H16", "ErrInvalidExtraDataFormat", ErrInvalidExtraDataFormat)
+			}
+			parent := bitmapAncestor(env, parents, h.ParentHash)
+			if err := verifyProposedEpoch(env, h, parent, parents, x, opt); err != nil {
+				return err
+			}
+		}
 
 		if _, configured := env.Config.RuleActivation(types.MinimalSealerBitmap); configured {
 			var parent *types.Header
@@ -256,6 +273,9 @@ func verifySteps(env *Env, h *types.Header, parents []*types.Header, v, vp *vali
 	}
 	if err := verifyCurrentBitmaps(env.Config, parent, x); err != nil {
 		return err
+	}
+	if err := verifyProposedEpoch(env, h, parent, parents, x, opt); err != nil {
+		return stepErr("epoch_info", "", err)
 	}
 	// H17
 	if opt.CheckSeals {

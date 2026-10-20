@@ -287,8 +287,19 @@ type Violation struct {
 
 func (v Violation) String() string { return fmt.Sprintf("%s at %x: %s", v.Kind, v.Node[:4], v.Detail) }
 
+// LightCheck records a partial light verdict alongside a successful state-bound check.
+type LightCheck struct {
+	Node              types.Address
+	Number            string
+	Hash              types.Hash
+	Verdict           string
+	Reason            string
+	FullStateVerified bool
+}
+
 // Result is the outcome of a run.
 type Result struct {
+	LightChecks       []LightCheck                 `json:",omitempty"`
 	MessageDeliveries []MessageDeliveryObservation `json:",omitempty"`
 	Heads             []uint64                     // final head per node
 	Chain             []*types.Block               // longest chain of the run, from genesis
@@ -424,6 +435,8 @@ type simulation struct {
 	refused  int
 	damaged  int
 	ctx      context.Context
+
+	lightChecks []LightCheck
 }
 
 type verificationKey struct {
@@ -822,6 +835,7 @@ func (s *simulation) result() *Result {
 	s.checkEvents()
 	res := &Result{Rounds: s.rounds, Violations: s.viol, Crashes: s.crashes, Replays: s.replays, Refinalize: s.refinal, Refusals: s.refused,
 		LockChecks: s.locks, Damaged: s.damaged, Evidence: s.evidence, Journals: map[types.Address]map[string][]byte{}, Events: map[string][]byte{}, SimTime: s.l.c.Mono()}
+	res.LightChecks = append([]LightCheck(nil), s.lightChecks...)
 	for i := uint64(0); ; i++ {
 		b := s.decBlock[i]
 		if b == nil {
