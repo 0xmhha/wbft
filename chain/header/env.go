@@ -28,7 +28,8 @@ type Env struct {
 	PartB PartB
 
 	// Snapshots gives the authority snapshot of an executed block (steps
-	// H15b and H21). Nil means no snapshot is available.
+	// H15b and H21), including candidate input for an activated child epoch.
+	// Nil means no snapshot is available.
 	Snapshots SnapshotReader
 
 	// Now is the verifier's clock (step H2 and the future-proposal wait).

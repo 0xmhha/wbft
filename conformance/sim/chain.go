@@ -55,7 +55,11 @@ func chainConfigJSON(p Params, genesis []Validator) ([]byte, error) {
 			rules[name] = json.RawMessage(value)
 		}
 		// The official configuration parser validates supported rule names.
-		cfg["wbftRules"] = map[string]any{"consensusRules": rules}
+		groups := map[string]any{"consensusRules": rules}
+		if at, configured := rules[types.EpochInfoInProposal]; configured {
+			groups["sourceRules"] = map[string]json.RawMessage{"candidatesFromParentState": at}
+		}
+		cfg["wbftRules"] = groups
 	}
 	return json.Marshal(cfg)
 }

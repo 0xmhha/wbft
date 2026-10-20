@@ -78,7 +78,11 @@ func newApp(n *node) *app {
 }
 
 func (a *app) snapshot(h *types.Header) {
-	s, err := source.NewAuthoritySnapshot(h.Number, codec.BlockHash(h), uint256.NewInt(types.InitialGasTip), nil, nil, nil)
+	var candidates []types.CandidateEntry
+	if a.n.cfg.Rules(types.EpochInfoInProposal, h.Number.AddUint64(1)) {
+		candidates = a.n.s.candidates(index(h))
+	}
+	s, err := source.NewAuthoritySnapshot(h.Number, codec.BlockHash(h), uint256.NewInt(types.InitialGasTip), nil, nil, candidates)
 	if err == nil {
 		a.snaps[codec.BlockHash(h)] = s
 	}
@@ -229,7 +233,11 @@ func (a *app) build(head *types.Header) (*types.Block, error) {
 		}
 	}
 	if isEpoch, err := validator.IsEpochBlock(a.n.cfg, n); err == nil && isEpoch {
-		ei, err := epoch.ComputeNextEpochInfo(a.chain, a.n.cfg, h, s.candidates(index(h)))
+		at := index(h)
+		if a.n.cfg.Rules(types.EpochInfoInProposal, n) {
+			at = index(head)
+		}
+		ei, err := epoch.ComputeNextEpochInfo(a.chain, a.n.cfg, h, s.candidates(at))
 		if err != nil {
 			return nil, err
 		}
@@ -353,8 +361,14 @@ func (a *app) importBlock(b *types.Block, path string) error {
 			return err
 		}
 		if r, err := header.VerifyLight(header.LightInputs{Config: a.n.cfg, Trusted: trusted{a}}, b.Header, a.chain.head.Header); r != header.Valid {
-			s.violate("header", a.n.v.address, "block %d light verification %s: %v", h, r, err)
-			return fmt.Errorf("light verification %s", r)
+			snapshot, known := a.Get(b.Header.ParentHash)
+			if r != header.CannotDecide || !errors.Is(err, header.ErrLightEpochState) || !known || snapshot == nil || !snapshot.HasCandidates() {
+				s.violate("header", a.n.v.address, "block %d light verification %s: %v", h, r, err)
+				return fmt.Errorf("light verification %s", r)
+			}
+			// The state-bound check above succeeded with known candidates.
+			// Preserve the light verifier's partial verdict separately.
+			s.lightChecks = append(s.lightChecks, LightCheck{Node: a.n.v.address, Number: b.Header.Number.String(), Hash: codec.BlockHash(b.Header), Verdict: r.String(), Reason: err.Error(), FullStateVerified: true})
 		}
 		s.verified[key] = true
 	}

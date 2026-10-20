@@ -1001,3 +1001,12 @@ The sync capability is an optional trailing RLP field; readers of older records
 preserve their original bytes. Readers must support the additional record kind
 and export metadata before consuming sync-enabled journals. Consensus inputs,
 WAL records, application sync state messages and wire payloads are unchanged.
+
+
+### Epoch information before voting
+
+`consensusRules.epochInfoInProposal` checks epoch information using candidates supplied by the parent authority snapshot. It requires `committedEpochDiligence` at the same or an earlier height so that a prepared proposal keeps its epoch information and digest across round changes. The execution layer must select parent-state candidates consistently for building, snapshots and execution checks; SDK applications require `sourceRules.candidatesFromParentState` at or before activation. Missing or null activations preserve the existing behavior.
+
+Snapshots distinguish missing candidate input from a known empty list and bind it to the parent's hash and full height. Proposal verification rejects unavailable input and mismatched epoch information. Header-only synchronization checks known input but can defer absent parent state to the mandatory execution check; this is not complete state validation from headers alone. Light verification reports `CANNOT_DECIDE` for an activated epoch when only headers are available. Non-epoch headers cannot carry epoch information once the rule is active.
+
+The deterministic simulator uses the same parent-state candidate schedule when this rule is active. Its `LightChecks` result retains `CANNOT_DECIDE` observations separately from successful state-bound header checks, including the checked block identity and reason.

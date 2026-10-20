@@ -31,6 +31,9 @@ const CommittedEpochDiligence RuleName = "committedEpochDiligence"
 // ReplayPerBlockPolicy replays each historical block with its configured policy.
 const ReplayPerBlockPolicy RuleName = "replayPerBlockPolicy"
 
+// EpochInfoInProposal checks epoch information against parent-state candidates.
+const EpochInfoInProposal RuleName = "epochInfoInProposal"
+
 // Rules reports whether name is enabled at the full height at.
 // Missing or null activation heights are disabled.
 func (c *Config) Rules(name RuleName, at Height) bool {
@@ -80,7 +83,7 @@ func parseConsensusRules(raw []byte) (map[RuleName]Height, error) {
 		sort.Strings(names)
 		for _, name := range names {
 			field := "wbftRules." + group + "." + name
-			if group != "consensusRules" || RuleName(name) != RejectNumberJump && RuleName(name) != MinimalSealerBitmap && RuleName(name) != StableCandidateSort && RuleName(name) != FirstProposerDiligenceCap && RuleName(name) != CommittedEpochDiligence && RuleName(name) != ReplayPerBlockPolicy {
+			if group != "consensusRules" || RuleName(name) != RejectNumberJump && RuleName(name) != MinimalSealerBitmap && RuleName(name) != StableCandidateSort && RuleName(name) != FirstProposerDiligenceCap && RuleName(name) != CommittedEpochDiligence && RuleName(name) != ReplayPerBlockPolicy && RuleName(name) != EpochInfoInProposal {
 				return nil, &ErrConfig{Field: field, Reason: "unknown rule"}
 			}
 			value := strings.TrimSpace(string(keys[name]))
@@ -96,6 +99,12 @@ func parseConsensusRules(raw []byte) (map[RuleName]Height, error) {
 				return nil, &ErrConfig{Field: field, Reason: "invalid activation"}
 			}
 			out[RuleName(name)] = MustHeightFromBig(n)
+		}
+	}
+	if at, ok := out[EpochInfoInProposal]; ok {
+		committed, present := out[CommittedEpochDiligence]
+		if !present || committed.Cmp(at) > 0 {
+			return nil, &ErrConfig{Field: "wbftRules.consensusRules.epochInfoInProposal", Reason: "requires committedEpochDiligence at or before activation"}
 		}
 	}
 	return out, nil

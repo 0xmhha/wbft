@@ -26,24 +26,27 @@ type AuthoritySnapshot struct {
 	hash   types.Hash
 	gasTip *uint256.Int
 
-	candidates  []types.CandidateEntry
-	scope       []types.Address // sorted
-	blacklisted []types.Address // sorted, subset of scope
+	candidates      []types.CandidateEntry
+	candidatesKnown bool
+	scope           []types.Address // sorted
+	blacklisted     []types.Address // sorted, subset of scope
 }
 
 // NewAuthoritySnapshot freezes a snapshot. It requires a non-nil gas tip and
 // blacklisted to be a subset of scope. The inputs are copied.
+// Nil candidates denote missing input; a supplied empty slice denotes known input.
 func NewAuthoritySnapshot(number types.Height, hash types.Hash, gasTip *uint256.Int,
 	scope, blacklisted []types.Address, candidates []types.CandidateEntry) (*AuthoritySnapshot, error) {
 	if gasTip == nil {
 		return nil, ErrNilGasTip
 	}
 	s := &AuthoritySnapshot{
-		number:      number,
-		hash:        hash,
-		gasTip:      new(uint256.Int).Set(gasTip),
-		scope:       sortedUnique(scope),
-		blacklisted: sortedUnique(blacklisted),
+		number:          number,
+		hash:            hash,
+		gasTip:          new(uint256.Int).Set(gasTip),
+		scope:           sortedUnique(scope),
+		blacklisted:     sortedUnique(blacklisted),
+		candidatesKnown: candidates != nil,
 	}
 	for _, b := range s.blacklisted {
 		if _, ok := slices.BinarySearchFunc(s.scope, b, cmpAddr); !ok {
@@ -76,7 +79,10 @@ func (s *AuthoritySnapshot) GasTip() *uint256.Int { return new(uint256.Int).Set(
 // Scope returns a copy of the scope, sorted.
 func (s *AuthoritySnapshot) Scope() []types.Address { return append([]types.Address(nil), s.scope...) }
 
-// Candidates returns a copy of the candidates (set only for epoch blocks).
+// HasCandidates distinguishes a supplied empty candidate list from missing input.
+func (s *AuthoritySnapshot) HasCandidates() bool { return s.candidatesKnown }
+
+// Candidates returns a copy of the candidates supplied for the child epoch.
 func (s *AuthoritySnapshot) Candidates() []types.CandidateEntry {
 	out := make([]types.CandidateEntry, len(s.candidates))
 	for i, c := range s.candidates {
@@ -105,6 +111,8 @@ type AuthoritySource interface {
 	// and their BLS keys, from the state after the system-contract upgrades
 	// and the base-fee distribution of that block and before its state root
 	// is computed (post_state).
+	// An activated execution-layer rule may select the parent's state instead.
+	// Its snapshot for the child epoch must supply that same candidate list.
 	//
 	// Spec: WBFT-EPOCH-007
 	CandidatesAfterExecution(ctx context.Context) ([]types.CandidateEntry, error)
