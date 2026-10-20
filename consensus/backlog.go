@@ -247,3 +247,16 @@ func (st *step) clearExtraSeals(n types.Height) {
 		}
 	}
 }
+
+// clearExtraSealsAt releases the current height's votes without deleting
+// surviving prior-height entries. It cannot recover an overwritten entry.
+func (st *step) clearExtraSealsAt(n types.Height) {
+	s := st.s
+	for _, m := range []map[types.Address]*Verified{s.extraPrepare, s.extraCommit} {
+		for _, a := range sortedAddrs(m) {
+			if m[a].Msg.View.Sequence.Cmp(n) == 0 {
+				delete(m, a)
+			}
+		}
+	}
+}

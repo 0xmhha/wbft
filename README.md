@@ -1093,3 +1093,16 @@ quorum and justification checks for that round, with a prepared block taking
 priority. It does not send twice after a successful proposal broadcast.
 These three options are independent, disabled by default, and preserve the
 existing header, message and WAL formats and mandatory restart safeguards.
+
+`refresh_round_certificates` selects the highest prepared certificate from
+the currently stored round-change messages whenever a sender replaces its
+entry. It retains the existing certificate eligibility checks and uses sender
+address order to resolve equal prepared rounds. The default retains the
+original increasing-only cache and first-arrival selection for ties.
+
+`clear_current_extra_seals` clears only the current height's extra seals when
+the application releases a bad prepared block. Surviving prior-height entries
+remain available; a prior entry already overwritten by a newer vote cannot
+be recovered. Ordinary height-transition cleanup keeps its existing behavior.
+Both options are independent and off by default, with the existing named
+configuration and journal mask and no header, message or WAL format change.

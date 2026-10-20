@@ -131,7 +131,7 @@ func (s *State) reset() {
 	s.validators = nil
 	s.proposer = -1
 	s.certificate = nil
-	s.rcs = newRoundChangeSet()
+	s.rcs = s.newRoundChanges()
 	s.pending = nil
 	s.backlog = make(map[types.Address]*backlogQueue)
 	s.extraPrepare = make(map[types.Address]*Verified)
@@ -142,6 +142,12 @@ func (s *State) reset() {
 	s.retryLive = false
 	s.futureLive = false
 	s.future = nil
+}
+
+func (s *State) newRoundChanges() *roundChangeSet {
+	rcs := newRoundChangeSet()
+	rcs.refresh = s.opt.Improvements.Has(RefreshRoundCertificates)
+	return rcs
 }
 
 // TimerGens returns the generation counters of the three timers.

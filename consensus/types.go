@@ -176,6 +176,12 @@ const (
 	// ResumeRoundProposals retries the current round's justified proposal
 	// when a builder request arrives after its round-change quorum.
 	ResumeRoundProposals
+	// RefreshRoundCertificates selects the highest prepared certificate from
+	// the currently stored round changes after a sender replaces its entry.
+	RefreshRoundCertificates
+	// ClearCurrentExtraSeals releases extra seals only at the current height
+	// when the application marks the prepared block as bad.
+	ClearCurrentExtraSeals
 )
 
 // RestartSafety is the set of the restart-safety rules of the core. Nodes
@@ -196,6 +202,8 @@ var improvementNames = [...]string{
 	BindPreparedCertificate:  "bind_prepared_certificate",
 	DropUnboundExtraSeals:    "drop_unbound_extra_seals",
 	ResumeRoundProposals:     "resume_round_proposals",
+	RefreshRoundCertificates: "refresh_round_certificates",
+	ClearCurrentExtraSeals:   "clear_current_extra_seals",
 }
 
 // ParseImprovement finds a known local behavior by its reported name.

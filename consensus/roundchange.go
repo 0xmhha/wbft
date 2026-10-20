@@ -33,7 +33,8 @@ import (
 // roundChangeSet is RoundChangeSet of A-05 section 3.1, keyed by the low 64
 // bits of the round.
 type roundChangeSet struct {
-	rounds map[uint64]*roundChanges
+	rounds  map[uint64]*roundChanges
+	refresh bool
 }
 
 type roundChanges struct {
@@ -41,6 +42,13 @@ type roundChanges struct {
 	highestRound *types.Round
 	highestBlock *types.Block
 	highestJust  []*Verified
+	prepared     map[types.Address]roundPrepared
+}
+
+type roundPrepared struct {
+	round *types.Round
+	block *types.Block
+	just  []*Verified
 }
 
 func newRoundChangeSet() *roundChangeSet {
@@ -55,6 +63,9 @@ func (rcs *roundChangeSet) entry(k uint64) *roundChanges {
 	e := rcs.rounds[k]
 	if e == nil {
 		e = &roundChanges{msgs: make(map[types.Address]*Verified)}
+		if rcs.refresh {
+			e.prepared = make(map[types.Address]roundPrepared)
+		}
 		rcs.rounds[k] = e
 	}
 	return e
@@ -75,19 +86,39 @@ func (rcs *roundChangeSet) sortedKeys() []uint64 {
 // Spec: WBFT-SM-056
 func (rcs *roundChangeSet) newRound(r types.Round) { rcs.entry(roundKey(r)) }
 
-// add stores m for round r, replacing an earlier ROUND-CHANGE of its source,
-// and raises the highest prepared round of r when pr is higher and the
-// PREPAREs match.
+// add stores m for round r, replacing an earlier ROUND-CHANGE of its source.
+// The default raises the cached prepared round only. The refresh policy
+// selects from the current matching certificates after every replacement.
 //
 // Spec: WBFT-SM-055
 func (rcs *roundChangeSet) add(r types.Round, m *Verified, pr *types.Round, pb *types.Block, prepares []*Verified, quorum int) {
 	e := rcs.entry(roundKey(r))
 	e.msgs[m.Source] = m
+	if rcs.refresh {
+		delete(e.prepared, m.Source)
+		if pr != nil && hasMatchingRoundChangeAndPrepares(summarizeRoundChange(m), summarizePrepares(prepares), quorum) {
+			e.prepared[m.Source] = roundPrepared{round: pr, block: pb, just: prepares}
+		}
+		e.refreshHighest()
+		return
+	}
 	if pr != nil && (e.highestRound == nil || pr.Cmp(*e.highestRound) > 0) {
 		if hasMatchingRoundChangeAndPrepares(summarizeRoundChange(m), summarizePrepares(prepares), quorum) {
 			e.highestRound = pr
 			e.highestBlock = pb
 			e.highestJust = prepares
+		}
+	}
+}
+
+// refreshHighest considers only current entries, with address order resolving
+// equal prepared rounds independently of message arrival order.
+func (e *roundChanges) refreshHighest() {
+	e.highestRound, e.highestBlock, e.highestJust = nil, nil, nil
+	for _, source := range sortedAddrs(e.prepared) {
+		p := e.prepared[source]
+		if e.highestRound == nil || p.round.Cmp(*e.highestRound) > 0 {
+			e.highestRound, e.highestBlock, e.highestJust = p.round, p.block, p.just
 		}
 	}
 }
