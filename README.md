@@ -25,6 +25,16 @@ Block storage, synchronisation, devp2p, the EVM, governance and transaction
 rules are not part of `wbft`; applications provide them through the
 interfaces of package `app`, `chain/validator/source`, `mempool` and `p2p/transport`.
 
+Nodes derive an independent effective proposer configuration at startup: an
+omitted policy selects RoundRobin (0), and explicit base or transition policies
+must select RoundRobin (0) or Sticky (1). The original application JSON and rule
+declarations remain unchanged. Production quorum and early round-change
+thresholds use integer arithmetic, including at large committee sizes; an empty
+committee retains a quorum of one. These defaults are reported as
+`checked_proposer_policy` and `integer_quorum` with source `profile`.
+`types.ParseChainConfig`, `Config.CheckProposerPolicy`, `validator.QuorumSize`
+and `validator.InFPlusOneWindow` retain their explicit reference semantics.
+
 ## Status
 
 Milestone **W1 (pure modules)** is complete: `crypto/keccak`,

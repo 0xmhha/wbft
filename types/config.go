@@ -273,8 +273,9 @@ func (c *Config) CheckTransitions() error {
 
 // CheckProposerPolicy reports a configuration whose base parameters have no
 // proposer policy. The reference aborts whenever it builds a validator set
-// with the base policy and when a validator starts its engine, so a node
-// refuses such a configuration at start-up.
+// with the base policy and when a validator starts its engine. This explicit
+// reference check preserves that refusal; nodes first derive their effective
+// configuration with CheckedProposerPolicy.
 //
 // Spec: WBFT-PARAM-032, WBFT-PARAM-034
 func (c *Config) CheckProposerPolicy() error {

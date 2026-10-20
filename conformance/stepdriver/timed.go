@@ -738,6 +738,16 @@ func runTimedEntries(entries []timedSourceEntry, j JournalReader, opts TimedOpti
 			if e != nil {
 				return e
 			}
+			switch entry.config.ProposerPolicyProfile {
+			case "":
+			case journal.CheckedProposerPolicyProfile:
+				cfg, e = cfg.CheckedProposerPolicy()
+				if e != nil {
+					return e
+				}
+			default:
+				return ErrTraceConfiguration
+			}
 			self = entry.config.Self
 			engine = 0
 		}

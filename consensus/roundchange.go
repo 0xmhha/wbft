@@ -197,7 +197,7 @@ func (st *step) handleRoundChange(v *Verified) (bool, int) {
 		s.rcs.add(m.View.Round, v, pr, pb, ps, s.quorum())
 	}
 	num := s.rcs.higherRoundSenders(r0)
-	if validator.InFPlusOneWindow(num, s.validators.Len()) {
+	if num == validator.FPlusOneThreshold(s.validators.Len()) {
 		target := s.rcs.minRoundAbove(r0)
 		st.emitQuorum("F_PLUS_ONE", num)
 		st.startNewRound(target, causeFPlusOne)

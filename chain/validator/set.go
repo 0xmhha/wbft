@@ -121,8 +121,8 @@ func (s *Set) Contains(a types.Address) bool {
 // F returns FValue(Len()).
 func (s *Set) F() float64 { return FValue(len(s.members)) }
 
-// Quorum returns QuorumSize(Len()).
-func (s *Set) Quorum() int { return QuorumSize(len(s.members)) }
+// Quorum returns the integer threshold for the actual committee size.
+func (s *Set) Quorum() int { return IntegerQuorumSize(len(s.members)) }
 
 // CalcProposer returns the index of the proposer for round (the low 64 bits
 // of the round) after lastProposer, or -1 for an empty set. With a zero last
