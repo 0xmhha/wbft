@@ -26,7 +26,7 @@ func (r *Runner) startEngine(_ context.Context, head *types.Header) error {
 	r.internal = nil
 	r.lastOwn = map[ownKey][]byte{}
 	r.floorSkip = map[string]bool{}
-	r.lastGen = [3]uint64{}
+	r.lastGen = [4]uint64{}
 	r.replay = ReplayInfo{}
 	if jw, ok := r.d.Journal.(interface{ SetEngineRun(uint64) }); ok {
 		jw.SetEngineRun(r.engineRun)
@@ -45,7 +45,7 @@ func (r *Runner) startEngine(_ context.Context, head *types.Header) error {
 	}
 	replayed := false
 	var journalRecs []*journal.StepRec
-	var replayTimers [3]*consensus.ArmTimer
+	var replayTimers [4]*consensus.ArmTimer
 	if plan != nil && len(plan.steps) > 0 {
 		core, recs, res := r.runReplay(plan)
 		if res.err != nil && res.lastPartial {
@@ -109,7 +109,7 @@ func (r *Runner) startEngine(_ context.Context, head *types.Header) error {
 		if err := r.writeRunStart(from, r.env.head, snap, true); err != nil {
 			return err
 		}
-		r.afterReplay(replayTimers, snap)
+		r.afterReplayTimers(replayTimers[:], snap)
 	}
 	r.lastHead.Store(r.env.head)
 	r.startHousekeeping()
@@ -127,7 +127,7 @@ func (r *Runner) writeRunStart(from types.Height, head *types.Header, snap *cons
 	if r.d.WAL == nil {
 		return nil
 	}
-	rec, err := encodeBoundary(walRunStart, boundaryRec{From: from, Head: head, Validators: snap.Validators, Replayed: replayed})
+	rec, err := encodeBoundary(walRunStart, boundaryRec{From: from, Head: head, Validators: snap.Validators, Replayed: replayed, LocalTimer: r.cfg.Core.Improvements.Has(consensus.ValidateRoundProposals)})
 	if err != nil {
 		return err
 	}
@@ -175,7 +175,7 @@ func (r *Runner) stopEngine(reason string) {
 type replayPlan struct {
 	head  *types.Header
 	vs    *validator.Set
-	gens  [3]uint64
+	gens  []uint64
 	steps []walStep
 }
 
@@ -213,7 +213,7 @@ func (r *Runner) planReplay(from types.Height) (*replayPlan, error) {
 	if start < 0 {
 		return &replayPlan{}, nil
 	}
-	plan := &replayPlan{head: b.Head, vs: b.Validators, gens: b.Gens}
+	plan := &replayPlan{head: b.Head, vs: b.Validators, gens: b.timerGenerations()}
 	var cur *walStep
 	flush := func() {
 		if cur != nil {
@@ -273,9 +273,9 @@ type replayResult struct {
 	fed         int
 	err         error
 	lastPartial bool // the error is at the last step and may be a torn step
-	lastGen     [3]uint64
+	lastGen     [4]uint64
 	lastOwn     map[ownKey][]byte
-	timers      [3]*consensus.ArmTimer
+	timers      [4]*consensus.ArmTimer
 }
 
 // runReplay feeds a plan to a new core: a Start from the boundary, then
@@ -285,7 +285,10 @@ type replayResult struct {
 func (r *Runner) runReplay(plan *replayPlan) (*consensus.State, []*journal.StepRec, replayResult) {
 	res := replayResult{lastOwn: map[ownKey][]byte{}}
 	core := consensus.NewState(r.cfg.Core)
-	core.RestoreTimerGens(plan.gens)
+	if err := core.RestoreTimerGenerations(plan.gens); err != nil {
+		res.err = err
+		return core, nil, res
+	}
 	var recs []*journal.StepRec
 	var step uint64
 	senv := &startEnv{head: plan.head, vs: plan.vs}
@@ -323,7 +326,7 @@ func (r *Runner) runReplay(plan *replayPlan) (*consensus.State, []*journal.StepR
 	outs := core.Step(senv, consensus.Start{})
 	track(outs)
 	record(inputlog.KindStart, startBody, viaWAL, outs, nil, plan.head)
-	recs[0].TimerGens = plan.gens[:]
+	recs[0].TimerGens = append([]uint64(nil), plan.gens...)
 	env := &replayEnv{head: plan.head}
 	for i, s := range plan.steps {
 		in, err := inputlog.Decode(s.kind, s.body, nil)
@@ -416,6 +419,10 @@ func compareOwn(outs []consensus.Output, own []ownRec, last map[ownKey][]byte) e
 // ROUND-CHANGE of the current view again; one the core has not counted yet
 // is also delivered to the core.
 func (r *Runner) afterReplay(timers [3]*consensus.ArmTimer, snap *consensus.Snapshot) {
+	r.afterReplayTimers(timers[:], snap)
+}
+
+func (r *Runner) afterReplayTimers(timers []*consensus.ArmTimer, snap *consensus.Snapshot) {
 	vars := r.core.Vars()
 	for _, t := range timers {
 		if t != nil {

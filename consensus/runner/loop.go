@@ -194,7 +194,7 @@ func (r *Runner) handle(q queued) {
 		}
 	}
 	before := r.core.Snapshot()
-	gens := r.core.TimerGens()
+	gens := r.core.AllTimerGens()
 	r.env.begin(true)
 	outs := r.core.Step(r.env, q.in)
 	answers := r.env.end()
@@ -213,11 +213,16 @@ func (r *Runner) handle(q queued) {
 
 // endHeight writes the end-of-height record of the head the core left
 // for, prunes the write-ahead log and releases the builder of the height.
-func (r *Runner) endHeight(snap *consensus.Snapshot, gens [3]uint64) {
+func (r *Runner) endHeight(snap *consensus.Snapshot, gens [4]uint64) {
 	h := r.env.head
 	faultpoint.Hit(r.d.Faults, faultpoint.EndHeightBefore)
 	if r.d.WAL != nil {
-		rec, err := encodeBoundary(walEndHeight, boundaryRec{From: h.Number.AddUint64(1), Head: h, Validators: snap.Validators, Replayed: true, Gens: gens})
+		b := boundaryRec{From: h.Number.AddUint64(1), Head: h, Validators: snap.Validators, Replayed: true}
+		copy(b.Gens[:], gens[:])
+		if r.cfg.Core.Improvements.Has(consensus.ValidateRoundProposals) {
+			b.LocalTimer, b.LocalGen = true, gens[3]
+		}
+		rec, err := encodeBoundary(walEndHeight, b)
 		if err != nil {
 			r.halt(err)
 			return

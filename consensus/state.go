@@ -25,6 +25,7 @@ package consensus
 
 import (
 	"bytes"
+	"fmt"
 	"slices"
 
 	"github.com/0xmhha/wbft/chain/validator"
@@ -42,11 +43,14 @@ type State struct {
 	// Timer generations. A generation increases with every ArmTimer of its
 	// kind and is never reset, so an expiry of a timer of an earlier run is
 	// recognised after a restart.
-	gen        [3]uint64
-	roundLive  bool // the round timer of generation gen[RoundTimer] is armed
-	retryLive  bool // the retry timer of generation gen[RetryTimer] is armed
-	futureLive bool // the future timer of generation gen[FutureTimer] is armed
-	future     *Verified
+	gen               [4]uint64
+	roundLive         bool // the round timer of generation gen[RoundTimer] is armed
+	retryLive         bool // the retry timer of generation gen[RetryTimer] is armed
+	futureLive        bool // the future timer of generation gen[FutureTimer] is armed
+	future            *Verified
+	roundProposalLive bool
+	roundProposalView types.View
+	roundProposalHash types.Hash
 
 	cur          *roundState
 	state        StateName
@@ -142,6 +146,9 @@ func (s *State) reset() {
 	s.retryLive = false
 	s.futureLive = false
 	s.future = nil
+	s.roundProposalLive = false
+	s.roundProposalView = types.View{}
+	s.roundProposalHash = types.Hash{}
 }
 
 func (s *State) newRoundChanges() *roundChangeSet {
@@ -151,7 +158,7 @@ func (s *State) newRoundChanges() *roundChangeSet {
 }
 
 // TimerGens returns the generation counters of the three timers.
-func (s *State) TimerGens() [3]uint64 { return s.gen }
+func (s *State) TimerGens() [3]uint64 { return [3]uint64{s.gen[0], s.gen[1], s.gen[2]} }
 
 // RestoreTimerGens sets the generation counters of a stopped core, so that
 // a core rebuilt from a log continues the generations of the core that
@@ -159,8 +166,34 @@ func (s *State) TimerGens() [3]uint64 { return s.gen }
 // nothing while the core runs.
 func (s *State) RestoreTimerGens(g [3]uint64) {
 	if !s.running {
-		s.gen = g
+		copy(s.gen[:], g[:])
+		s.gen[RoundProposalTimer] = 0
 	}
+}
+
+// AllTimerGens returns the supported counters as a value, including the
+// optional local counter. Writers select the configured checkpoint width.
+func (s *State) AllTimerGens() [4]uint64 { return s.gen }
+
+// TimerGenerations includes the local timer only when its behavior is enabled.
+// It returns an independent copy suitable for journal and WAL boundaries.
+func (s *State) TimerGenerations() []uint64 {
+	return append([]uint64(nil), s.gen[:len(TimerKinds(s.opt.Improvements))]...)
+}
+
+// RestoreTimerGenerations restores a complete stopped-core timer checkpoint.
+// Three-generation reference checkpoints remain readable. A four-generation
+// checkpoint requires the corresponding local behavior.
+func (s *State) RestoreTimerGenerations(g []uint64) error {
+	if s.running {
+		return fmt.Errorf("consensus: timer checkpoint requires a stopped core")
+	}
+	if len(g) != 0 && len(g) != 3 && (len(g) != 4 || !s.opt.Improvements.Has(ValidateRoundProposals)) {
+		return fmt.Errorf("consensus: unsupported timer checkpoint length %d", len(g))
+	}
+	s.gen = [4]uint64{}
+	copy(s.gen[:], g)
+	return nil
 }
 
 // Running reports whether the core has been started and not stopped.
@@ -236,7 +269,7 @@ func (st *step) onStart() {
 //
 // Spec: WBFT-SM-009
 func (st *step) onStop() {
-	st.emit(CancelTimers{Kinds: AllTimers})
+	st.emit(CancelTimers{Kinds: TimerKinds(st.s.opt.Improvements)})
 	st.s.reset()
 	st.s.running = false
 }

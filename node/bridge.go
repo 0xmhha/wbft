@@ -94,18 +94,28 @@ func (c *chainView) ValidatorsAt(n types.Height, parent types.Hash) (*validator.
 // ValidateProposal verifies a proposal and records a rejection; a proposal
 // from the future is not rejected, the core waits for it.
 func (c *chainView) ValidateProposal(b *types.Block) (time.Duration, error) {
-	d, err := header.VerifyProposal(c.env("preprepare"), b)
+	return c.validateProposal(b, "preprepare")
+}
+
+// ValidateRoundProposal checks a local prepared candidate without claiming
+// that a PRE-PREPARE was received from a peer.
+func (c *chainView) ValidateRoundProposal(b *types.Block) (time.Duration, error) {
+	return c.validateProposal(b, "local_reproposal")
+}
+
+func (c *chainView) validateProposal(b *types.Block, path string) (time.Duration, error) {
+	d, err := header.VerifyProposal(c.env(path), b)
 	if errors.Is(err, header.ErrSnapshotMissing) && c.emit != nil {
 		// The core sends no PREPARE for it and does not wait
 		// (app-interface.md 5.4): the application stored the parent
 		// before its snapshot.
-		c.emit(event.Record{Kind: event.Health, Fields: map[string]any{"what": "snapshot_missing_at_preprepare",
+		c.emit(event.Record{Kind: event.Health, Fields: map[string]any{"what": "snapshot_missing_at_" + path,
 			"h": b.Header.Number.String(), "hash": "0x" + hex.EncodeToString(codec.BlockHash(b.Header).Bytes()),
 			"parent": "0x" + hex.EncodeToString(b.Header.ParentHash.Bytes())}})
 	}
 	if err != nil && !errors.Is(err, header.ErrFutureBlock) && c.rej != nil {
 		r := rejection.Record{Number: b.Header.Number.String(), Hash: "0x" + hex.EncodeToString(codec.BlockHash(b.Header).Bytes()),
-			Path: "preprepare", Time: c.now()}
+			Path: path, Time: c.now()}
 		var se *header.StepError
 		if errors.As(err, &se) {
 			r.Step, r.Class = se.Step, se.Class

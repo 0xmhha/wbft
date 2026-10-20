@@ -15,15 +15,16 @@ import (
 // fired drops it, and an expiry already queued stays queued (the core
 // decides what a late expiry does, by its generation).
 type scheduler struct {
-	clock    Clock
-	wake     func()
-	mu       sync.Mutex // runner.timers.mu
-	live     [3]*timerEntry
-	fired    []consensus.Timeout
-	queued   []*timerEntry
-	owner    timerOwner
-	sequence uint64
-	trace    func(*journal.TimerRec)
+	clock      Clock
+	wake       func()
+	mu         sync.Mutex // runner.timers.mu
+	live       [4]*timerEntry
+	fired      []consensus.Timeout
+	queued     []*timerEntry
+	owner      timerOwner
+	sequence   uint64
+	localTimer bool
+	trace      func(*journal.TimerRec)
 }
 
 type timerOwner struct {
@@ -50,6 +51,9 @@ func (s *scheduler) arm(a consensus.ArmTimer, from time.Duration) {
 	}
 	s.mu.Lock()
 	e.owner = s.owner
+	if a.Kind == consensus.RoundProposalTimer {
+		s.localTimer = true
+	}
 	if old := s.live[a.Kind]; old != nil {
 		old.done = true
 		if old.t != nil {
@@ -133,7 +137,13 @@ func (s *scheduler) pop() (consensus.Timeout, bool) {
 
 // clear cancels every timer and drops the queued expiries.
 func (s *scheduler) clear() {
-	s.cancel(consensus.AllTimers)
+	s.mu.Lock()
+	kinds := consensus.AllTimers
+	if s.localTimer {
+		kinds = consensus.SupportedTimers
+	}
+	s.mu.Unlock()
+	s.cancel(kinds)
 	s.mu.Lock()
 	s.fired = nil
 	s.queued = nil

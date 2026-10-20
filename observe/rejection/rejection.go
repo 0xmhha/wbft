@@ -27,7 +27,7 @@ type Record struct {
 	Hash   string    `json:"hash"`
 	Step   string    `json:"step"`       // "P1".."P7", "V0a", "V0b", "H1".."H21" or a Part B step; empty when unknown
 	Class  string    `json:"errorClass"` // the specification error name; empty when unknown
-	Path   string    `json:"path"`       // "preprepare", "sealed_locally", "imported" or "synced"
+	Path   string    `json:"path"`       // "preprepare", "local_reproposal", "sealed_locally", "imported" or "synced"
 	Time   time.Time `json:"time"`
 }
 

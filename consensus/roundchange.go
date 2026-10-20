@@ -23,8 +23,10 @@
 package consensus
 
 import (
+	"errors"
 	"slices"
 
+	"github.com/0xmhha/wbft/chain/header"
 	"github.com/0xmhha/wbft/chain/validator"
 	"github.com/0xmhha/wbft/codec"
 	"github.com/0xmhha/wbft/types"
@@ -255,6 +257,10 @@ func (st *step) proposeRoundChange() (bool, int) {
 		st.emitQuorum("ROUND_CHANGE", s.rcs.countAt(r0))
 		e := s.rcs.rounds[roundKey(r0)]
 		proposal := e.highestBlock
+		if s.opt.Improvements.Has(ValidateRoundProposals) && s.roundProposalLive && (proposal == nil || blockHash(proposal) != s.roundProposalHash || s.roundProposalView.Cmp(s.cur.view) != 0) {
+			s.roundProposalLive = false
+			st.emit(CancelTimers{Kinds: []TimerKind{RoundProposalTimer}})
+		}
 		if proposal == nil {
 			if s.cur.pendingRequest == nil {
 				return s.opt.Improvements.Has(ResumeRoundProposals), rowRCNoProposal
@@ -268,6 +274,29 @@ func (st *step) proposeRoundChange() (bool, int) {
 		ps := e.highestJust
 		if !IsJustified(blockHash(proposal), s.cur.view, summarizeRoundChanges(rcs), summarizePrepares(ps), s.quorum()) {
 			return true, rowRCNotJustified
+		}
+		if e.highestBlock != nil && s.opt.Improvements.Has(ValidateRoundProposals) {
+			hash := blockHash(proposal)
+			if s.roundProposalLive && s.roundProposalView.Cmp(s.cur.view) == 0 && s.roundProposalHash == hash {
+				return true, rowRCStored
+			}
+			if s.roundProposalLive {
+				s.roundProposalLive = false
+				st.emit(CancelTimers{Kinds: []TimerKind{RoundProposalTimer}})
+			}
+			validate := st.env.ValidateProposal
+			if local, ok := st.env.(RoundProposalValidator); ok {
+				validate = local.ValidateRoundProposal
+			}
+			wait, err := validate(proposal)
+			if err != nil {
+				if errors.Is(err, header.ErrFutureBlock) {
+					s.gen[RoundProposalTimer]++
+					s.roundProposalLive, s.roundProposalView, s.roundProposalHash = true, s.cur.view, hash
+					st.emit(ArmTimer{Kind: RoundProposalTimer, View: s.cur.view, Round: s.cur.view.Round, Gen: s.gen[RoundProposalTimer], Duration: wait, Digest: hash})
+				}
+				return true, rowRCStored
+			}
 		}
 		st.sendPreprepare(proposal, rcs, ps)
 		return true, rowRCProposed

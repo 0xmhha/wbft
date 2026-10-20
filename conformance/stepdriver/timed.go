@@ -765,12 +765,9 @@ func runTimedEntries(entries []timedSourceEntry, j JournalReader, opts TimedOpti
 			armDeadlines = map[[2]uint64]time.Duration{}
 			state = consensus.NewState(consensus.Options{Config: cfg, Self: self, Improvements: consensus.ImprovementSet(entry.config.Improvements), BacklogLimit: int(entry.config.BacklogLimit)})
 			if len(b.TimerGens) != 0 {
-				if len(b.TimerGens) != 3 {
+				if err := state.RestoreTimerGenerations(b.TimerGens); err != nil {
 					return ErrTraceInvalidInput
 				}
-				var gens [3]uint64
-				copy(gens[:], b.TimerGens)
-				state.RestoreTimerGens(gens)
 			}
 		}
 		if state == nil {

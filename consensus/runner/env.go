@@ -69,6 +69,16 @@ func (e *liveEnv) ValidateProposal(b *types.Block) (time.Duration, error) {
 	return d, err
 }
 
+func (e *liveEnv) ValidateRoundProposal(b *types.Block) (time.Duration, error) {
+	validate := e.r.d.Chain.ValidateProposal
+	if local, ok := e.r.d.Chain.(consensus.RoundProposalValidator); ok {
+		validate = local.ValidateRoundProposal
+	}
+	d, err := validate(b)
+	e.note(inputlog.ProposalCall(codec.BlockHash(b.Header), d, err))
+	return d, err
+}
+
 func (e *liveEnv) IsBadBlock(h types.Hash) bool {
 	bad := e.r.d.Chain.IsBadBlock(h)
 	e.note(inputlog.EnvCall{Kind: inputlog.EnvIsBadBlock, Key: h, Bad: bad})
@@ -132,6 +142,10 @@ func (e *replayEnv) ValidateProposal(b *types.Block) (time.Duration, error) {
 		return 0, errReplayShort
 	}
 	return c.ProposalAnswer()
+}
+
+func (e *replayEnv) ValidateRoundProposal(b *types.Block) (time.Duration, error) {
+	return e.ValidateProposal(b)
 }
 
 func (e *replayEnv) IsBadBlock(h types.Hash) bool {
