@@ -137,7 +137,7 @@ func hValidatorsAt(_ string, input json.RawMessage) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	vs, err := validator.ValidatorsAt(chain, cfg, n, ph, nil)
+	vs, err := validator.CanonicalValidatorsAt(chain, cfg, n, ph, nil)
 	if err != nil {
 		return nil, err
 	}

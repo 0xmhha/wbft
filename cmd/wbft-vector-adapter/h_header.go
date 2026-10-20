@@ -46,8 +46,11 @@ func headerEnv(f *fixtureIn, now Dec) (*header.Env, error) {
 	return &header.Env{
 		Config: cfg,
 		Chain:  chain,
-		PartB:  &snetpartb.PartB{Forks: fk},
-		Now:    nowAt(sec),
+		ValidatorLookup: func(n types.Height, parent types.Hash, parents []*types.Header) (*validator.Set, error) {
+			return validator.CanonicalValidatorsAt(chain, cfg, n, parent, parents)
+		},
+		PartB: &snetpartb.PartB{Forks: fk},
+		Now:   nowAt(sec),
 	}, nil
 }
 
@@ -107,7 +110,7 @@ type fixtureTrust struct {
 }
 
 func (t *fixtureTrust) ValidatorsAt(n types.Height, parentHash types.Hash) (*validator.Set, error) {
-	return validator.ValidatorsAt(t.chain, t.cfg, n, parentHash, nil)
+	return validator.CanonicalValidatorsAt(t.chain, t.cfg, n, parentHash, nil)
 }
 
 func hVerifyLight(_ string, input json.RawMessage) (any, error) {
@@ -126,11 +129,18 @@ func hVerifyLight(_ string, input json.RawMessage) (any, error) {
 	if err != nil {
 		return nil, err
 	}
+	parent := chain.HeaderByHash(h.ParentHash)
+	trusted := &fixtureTrust{chain: chain, cfg: cfg}
+	if !h.Number.IsZero() && parent != nil {
+		if _, err := trusted.ValidatorsAt(h.Number, h.ParentHash); err != nil {
+			return obj{"result": header.CannotDecide.String()}, nil
+		}
+	}
 	res, _ := header.VerifyLight(header.LightInputs{
 		Config:  cfg,
-		Trusted: &fixtureTrust{chain: chain, cfg: cfg},
+		Trusted: trusted,
 		PartB:   &snetpartb.PartB{Forks: fk},
-	}, h, chain.HeaderByHash(h.ParentHash))
+	}, h, parent)
 	return obj{"result": res.String()}, nil
 }
 

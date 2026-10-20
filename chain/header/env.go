@@ -3,6 +3,7 @@ package header
 import (
 	"time"
 
+	"github.com/0xmhha/wbft/chain/validator"
 	"github.com/0xmhha/wbft/chain/validator/source"
 	"github.com/0xmhha/wbft/types"
 )
@@ -12,6 +13,11 @@ import (
 type Env struct {
 	Config *types.Config
 	Chain  types.ChainReader
+
+	// ValidatorLookup optionally supplies a governing-set resolver. Nil uses
+	// the checked parent-chain lookup. Reference conformance supplies its
+	// canonical-index resolver explicitly.
+	ValidatorLookup func(types.Height, types.Hash, []*types.Header) (*validator.Set, error)
 
 	// BadBlock reports a block hash recorded as bad (step P2). Nil means
 	// none is.
@@ -68,4 +74,11 @@ func (env *Env) partB(step string, h, parent *types.Header, body types.BodyRaw) 
 		return stepErr(step, "PartB", err)
 	}
 	return nil
+}
+
+func (env *Env) validatorsAt(n types.Height, parent types.Hash, parents []*types.Header) (*validator.Set, error) {
+	if env.ValidatorLookup != nil {
+		return env.ValidatorLookup(n, parent, parents)
+	}
+	return validator.ValidatorsAt(env.Chain, env.Config, n, parent, parents)
 }

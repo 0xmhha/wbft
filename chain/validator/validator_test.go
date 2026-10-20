@@ -298,7 +298,7 @@ func TestValidatorsAt(t *testing.T) {
 	check(5, hs[4], []int{3, 4}, 0)
 	check(6, hs[5], []int{3, 4}, 1)
 
-	// Without the canonical epoch header the lookup walks back.
+	// Stored parent hashes remain sufficient without a canonical epoch index.
 	walk := newMemChain()
 	for i, h := range hs {
 		walk.add(h, i != 4)
@@ -325,8 +325,30 @@ func TestValidatorsAt(t *testing.T) {
 		}
 		noInfo.add(h, true)
 	}
-	if _, err := ValidatorsAt(noInfo, cfg, types.HeightFromUint64(5), types.Hash{}, nil); !errors.Is(err, ErrEpochInfoNil) {
+	if _, err := ValidatorsAt(noInfo, cfg, types.HeightFromUint64(5), codec.BlockHash(noInfo.byNum[4]), nil); !errors.Is(err, ErrEpochInfoNil) {
 		t.Errorf("epoch info nil: %v", err)
+	}
+}
+
+func TestEpochLookupAcrossPendingAndStoredHeaders(t *testing.T) {
+	cfg := types.NewConfig(types.WBFTParams{EpochLength: 4, ProposerPolicy: u64(0)}, nil, types.GenesisInit{}, nil)
+	c := newMemChain()
+	hs := []*types.Header{mkHeader(t, 0, nil, epochOf(1, 2))}
+	for n := uint64(1); n <= 7; n++ {
+		var ei *types.EpochInfo
+		if n == 4 {
+			ei = epochOf(3, 4)
+		}
+		hs = append(hs, mkHeader(t, n, hs[n-1], ei))
+	}
+	for _, h := range hs[:6] {
+		c.add(h, true)
+	}
+	for _, pending := range [][]*types.Header{hs[6:], hs[5:], hs[4:]} {
+		n, ei, err := EpochInfoFor(c, cfg, types.HeightFromUint64(8), codec.BlockHash(hs[7]), pending)
+		if err != nil || n.RefLow64() != 4 || ei == nil || ei.Candidates[0].Addr != addr(3) {
+			t.Fatalf("pending/stored epoch lookup: %v, %v", n, err)
+		}
 	}
 }
 

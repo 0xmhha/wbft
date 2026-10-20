@@ -96,6 +96,16 @@ func LastEpochBlock(cfg *types.Config, n types.Height) (types.Height, error) {
 //
 // Spec: WBFT-VAL-004, WBFT-VAL-006, WBFT-VAL-009, WBFT-VAL-011
 func ValidatorsAt(chain types.ChainReader, cfg *types.Config, n types.Height, parentHash types.Hash, parents []*types.Header) (*Set, error) {
+	return validatorsAt(chain, cfg, n, parentHash, parents, false)
+}
+
+// CanonicalValidatorsAt preserves canonical-index-first lookup for reference
+// conformance. Node and application code use ValidatorsAt.
+func CanonicalValidatorsAt(chain types.ChainReader, cfg *types.Config, n types.Height, parentHash types.Hash, parents []*types.Header) (*Set, error) {
+	return validatorsAt(chain, cfg, n, parentHash, parents, true)
+}
+
+func validatorsAt(chain types.ChainReader, cfg *types.Config, n types.Height, parentHash types.Hash, parents []*types.Header, canonicalFirst bool) (*Set, error) {
 	if n.IsZero() {
 		pol := cfg.Base().ProposerPolicy
 		if pol == nil {
@@ -103,7 +113,7 @@ func ValidatorsAt(chain types.ChainReader, cfg *types.Config, n types.Height, pa
 		}
 		return NewSet(cfg.Init.Validators, cfg.Init.BLSPublicKeys, *pol)
 	}
-	_, ei, err := EpochInfoFor(chain, cfg, n, parentHash, parents)
+	_, ei, err := epochInfoFor(chain, cfg, n, parentHash, parents, canonicalFirst)
 	if err != nil {
 		return nil, err
 	}
@@ -117,9 +127,9 @@ func ValidatorsAt(chain types.ChainReader, cfg *types.Config, n types.Height, pa
 
 // EpochInfoFor returns the number and the EpochInfo of the epoch header that
 // governs block n >= 1: the header at last_epoch_block(uint64(n) - 1). The
-// header stored as canonical at that index is used if there is one; otherwise
-// the lookup walks back from the parent of n, first through parents (last
-// element first) and then through stored headers. A missing header is
+// lookup walks back from the parent of n, first through parents (last
+// element first) and then through stored headers. Every header must match
+// the expected parent hash and index. A missing or disconnected header is
 // ErrUnknownAncestor; an undecodable extra is its decoding error; an epoch
 // header without EpochInfo is ErrEpochInfoNil.
 //
@@ -127,13 +137,20 @@ func ValidatorsAt(chain types.ChainReader, cfg *types.Config, n types.Height, pa
 //
 // Spec: WBFT-HDR-071, WBFT-HDR-121
 func EpochInfoFor(chain types.ChainReader, cfg *types.Config, n types.Height, parentHash types.Hash, parents []*types.Header) (types.Height, *types.EpochInfo, error) {
+	return epochInfoFor(chain, cfg, n, parentHash, parents, false)
+}
+
+func epochInfoFor(chain types.ChainReader, cfg *types.Config, n types.Height, parentHash types.Hash, parents []*types.Header, canonicalFirst bool) (types.Height, *types.EpochInfo, error) {
 	parentNumber := n.RefLow64() - 1 //wbft:low64 HH-41
 	last, err := LastEpochBlock(cfg, types.HeightFromUint64(parentNumber))
 	if err != nil {
 		return types.Height{}, nil, err
 	}
-	if h := chain.HeaderByNumber(last.RefLow64()); h != nil { //wbft:low64 HH-43
-		return extractEpochInfo(h)
+	lastIndex := last.RefLow64() //wbft:low64 HH-43
+	if canonicalFirst {
+		if h := chain.HeaderByNumber(lastIndex); h != nil {
+			return extractEpochInfo(h)
+		}
 	}
 	pending := parents
 	var block *types.Header
@@ -147,10 +164,17 @@ func EpochInfoFor(chain types.ChainReader, cfg *types.Config, n types.Height, pa
 		if block == nil {
 			return types.Height{}, nil, ErrUnknownAncestor
 		}
-		if last.Cmp(block.Number) == 0 {
+		index := block.Number.RefLow64() //wbft:low64 HH-44
+		if !canonicalFirst && (index != parentNumber || codec.BlockHash(block) != parentHash) {
+			return types.Height{}, nil, ErrUnknownAncestor
+		}
+		if (!canonicalFirst && index == lastIndex) || (canonicalFirst && last.Cmp(block.Number) == 0) {
 			break
 		}
-		parentHash, parentNumber = block.ParentHash, block.Number.RefLow64()-1 //wbft:low64 HH-44
+		if !canonicalFirst && (index < lastIndex || index == 0) {
+			return types.Height{}, nil, ErrUnknownAncestor
+		}
+		parentHash, parentNumber = block.ParentHash, index-1
 	}
 	return extractEpochInfo(block)
 }

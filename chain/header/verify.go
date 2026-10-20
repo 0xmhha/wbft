@@ -49,7 +49,7 @@ func ValidatorsForVerifying(env *Env, h *types.Header, parents []*types.Header) 
 	if err := verifyNumber(env, h, parents); err != nil {
 		return nil, nil, err
 	}
-	v, err = validator.ValidatorsAt(env.Chain, env.Config, h.Number, h.ParentHash, parents)
+	v, err = env.validatorsAt(h.Number, h.ParentHash, parents)
 	if err != nil {
 		return nil, nil, stepErr("V0a", "ErrUnknownAncestor", ErrUnknownAncestor)
 	}
@@ -67,7 +67,7 @@ func ValidatorsForVerifying(env *Env, h *types.Header, parents []*types.Header) 
 	if parent == nil {
 		return nil, nil, stepErr("V0b", "ErrUnknownAncestor", ErrUnknownAncestor)
 	}
-	vp, err = validator.ValidatorsAt(env.Chain, env.Config, parent.Number, parent.ParentHash, rest)
+	vp, err = env.validatorsAt(parent.Number, parent.ParentHash, rest)
 	if err != nil {
 		return nil, nil, stepErr("V0b", "", err)
 	}

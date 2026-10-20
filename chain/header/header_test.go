@@ -304,8 +304,8 @@ func TestVerifyHeaderFirstFailingStep(t *testing.T) {
 		{"future", next(1, func(h *types.Header) { h.Time = now + 10 }, nil), now, "H2", ErrFutureBlock},
 		{"future and bad difficulty", next(1, func(h *types.Header) { h.Time = now + 10; h.Difficulty = big.NewInt(2) }, nil), now, "H2", ErrFutureBlock},
 		{"difficulty", next(1, func(h *types.Header) { h.Difficulty = big.NewInt(0) }, nil), now, "H4", ErrInvalidDifficulty},
-		{"unknown parent", next(1, nil, func(h *types.Header) { h.ParentHash = types.Hash{1} }), now, "V0b", ErrUnknownAncestor},
-		{"parent number", next(1, nil, func(h *types.Header) { h.ParentHash = codec.BlockHash(b.hs[5]) }), now, "V0b", ErrUnknownAncestor},
+		{"unknown parent", next(1, nil, func(h *types.Header) { h.ParentHash = types.Hash{1} }), now, "V0a", ErrUnknownAncestor},
+		{"parent number", next(1, nil, func(h *types.Header) { h.ParentHash = codec.BlockHash(b.hs[5]) }), now, "V0a", ErrUnknownAncestor},
 		{"timestamp", next(1, func(h *types.Header) { h.Time = parent.Time }, nil), now, "H12", ErrInvalidTimestamp},
 		{"coinbase", next(5, nil, nil), now, "H15a", ErrUnauthorized},
 		{"extra", next(1, nil, func(h *types.Header) { h.Extra = append(h.Extra, 0) }), now, "H16", ErrInvalidExtraDataFormat},
@@ -347,7 +347,7 @@ func TestVerifyHeaderBatchSemantics(t *testing.T) {
 	}
 	env := &Env{Config: b.cfg, Chain: store.chain, Now: b.env(now).Now}
 	errs := VerifyHeaderBatch(env, []*types.Header{b.hs[5], b.hs[7]}, headerOnly)
-	if errs[0] != nil || stepOf(errs[1]) != "H11" {
+	if errs[0] != nil || !errors.Is(errs[1], ErrUnknownAncestor) || stepOf(errs[1]) != "V0a" {
 		t.Errorf("gap: %v", errs)
 	}
 	errs = VerifyHeaderBatch(env, []*types.Header{b.hs[6], b.hs[7]}, headerOnly)
