@@ -254,7 +254,7 @@ func (st *step) startRoundTimer() {
 	s.gen[RoundTimer]++
 	s.roundLive = true
 	// Spec: WBFT-PARAM-053 (timeouts at the current sequence)
-	d, _ := RoundTimeout(s.config(s.cur.view.Sequence), s.cur.view.Round)
+	d, _ := roundTimeoutWithOptions(s.config(s.cur.view.Sequence), s.cur.view.Round, s.opt.Improvements)
 	st.emit(ArmTimer{Kind: RoundTimer, View: s.cur.view, Round: s.cur.view.Round, Duration: d, Gen: s.gen[RoundTimer]})
 }
 

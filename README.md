@@ -1120,3 +1120,14 @@ cancellation outputs. New readers can restore three-generation checkpoints;
 older readers do not support the additional local timer. Header and network
 message encodings are unchanged. These checks do not establish execution
 validity, physical provenance or a complete improved profile.
+
+
+`cap_initial_round_timeout` is a default-off local option. When the base
+request timeout exceeds a positive cap and both duration products fit normally,
+the first round also uses the cap. The public reference timeout function remains
+unchanged; overflow in the millisecond-base and second-cap duration products
+keeps its reference path. Earlier configuration-unit conversion is outside this
+local policy. This changes local timing,
+not header or network message encoding, and does not establish every schedule
+or complete-profile acceptance. Existing optional-behavior observations retain
+their scope rather than becoming reference conformance passes.
