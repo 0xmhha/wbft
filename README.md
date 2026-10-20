@@ -1060,3 +1060,19 @@ keep their order and duplicate slots; membership checks and queue limits remain
 in effect. Both options are off by default and use the existing named node
 configuration, reporting and exact journal mask. They do not change header
 validity, chain configuration or message encodings.
+
+`cancel_stale_retries` independently ignores retry timer expiries after
+cancellation, replacement or a change of the full height/round view. A queued
+expiry can therefore remain in the runner's recorded timer queue without
+causing a stale round-change broadcast or rearming a cancelled retry. Current
+active retries still send and rearm normally. This option is off by default;
+it uses the existing named settings and exact journal mask. Timer input
+encodings, durable WAL and header validity remain unchanged.
+
+`follow_higher_rounds` applies the existing F+1 round-following rule whenever
+at least its threshold of distinct higher-round senders is available. This
+allows a later valid round-change message to advance a node when previously
+retained messages have already moved the count above that threshold. It keeps
+the existing F+1-before-proposal evaluation order and lowest-higher-round
+selection. The option is off by default; it can skip rounds sooner than the
+default behavior and does not change header validity or wire encodings.

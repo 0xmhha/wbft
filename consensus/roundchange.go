@@ -197,7 +197,12 @@ func (st *step) handleRoundChange(v *Verified) (bool, int) {
 		s.rcs.add(m.View.Round, v, pr, pb, ps, s.quorum())
 	}
 	num := s.rcs.higherRoundSenders(r0)
-	if num == validator.FPlusOneThreshold(s.validators.Len()) {
+	threshold := validator.FPlusOneThreshold(s.validators.Len())
+	follow := num == threshold
+	if s.opt.Improvements.Has(FollowHigherRoundChanges) {
+		follow = num >= threshold
+	}
+	if follow {
 		target := s.rcs.minRoundAbove(r0)
 		st.emitQuorum("F_PLUS_ONE", num)
 		newHeight := st.startNewRound(target, causeFPlusOne)

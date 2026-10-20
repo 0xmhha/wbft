@@ -44,6 +44,7 @@ type State struct {
 	// recognised after a restart.
 	gen        [3]uint64
 	roundLive  bool // the round timer of generation gen[RoundTimer] is armed
+	retryLive  bool // the retry timer of generation gen[RetryTimer] is armed
 	futureLive bool // the future timer of generation gen[FutureTimer] is armed
 	future     *Verified
 
@@ -135,6 +136,7 @@ func (s *State) reset() {
 	s.seen = make(map[seenKey]seenEntry)
 	s.prior = priorState{}
 	s.roundLive = false
+	s.retryLive = false
 	s.futureLive = false
 	s.future = nil
 }

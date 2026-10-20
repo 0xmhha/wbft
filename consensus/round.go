@@ -239,6 +239,7 @@ func (st *step) setState(to StateName) {
 func (st *step) startRoundTimer() {
 	s := st.s
 	st.emit(CancelTimers{Kinds: AllTimers})
+	s.retryLive = false
 	s.futureLive = false
 	s.future = nil
 	s.gen[RoundTimer]++
@@ -254,6 +255,7 @@ func (st *step) startRoundTimer() {
 func (st *step) armRetryTimer() {
 	s := st.s
 	s.gen[RetryTimer]++
+	s.retryLive = true
 	d := time.Duration(s.config(s.cur.view.Sequence).RequestTimeoutMs) * time.Millisecond
 	st.emit(ArmTimer{Kind: RetryTimer, View: s.cur.view, Round: s.cur.view.Round, Duration: d, Gen: s.gen[RetryTimer]})
 }
@@ -302,7 +304,13 @@ func (st *step) onTimeout(t Timeout) {
 			st.broadcastRoundChange(next)
 		}
 	case RetryTimer:
-		// Retry expiries are not cancellable once queued.
+		if s.opt.Improvements.Has(CancelStaleRetries) {
+			if !s.retryLive || t.Gen != s.gen[RetryTimer] || t.View.Cmp(s.cur.view) != 0 {
+				return
+			}
+			s.retryLive = false
+		}
+		// Without the option, retry expiries remain usable once queued.
 		st.broadcastRoundChange(t.Round)
 	case FutureTimer:
 		// An expiry that carries its PRE-PREPARE was queued before the
