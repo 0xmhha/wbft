@@ -187,6 +187,7 @@ func (st *step) updateRoundState(nextVS *validator.Set, view types.View, roundCh
 		if c.preparedBlock != nil && st.env.IsBadBlock(blockHash(c.preparedBlock)) {
 			c.preparedRound = nil
 			c.preparedBlock = nil
+			c.certificate = nil
 			c.badBlockReleased = true
 			st.clearExtraSeals(c.view.Sequence.AddUint64(1))
 		}
@@ -194,6 +195,9 @@ func (st *step) updateRoundState(nextVS *validator.Set, view types.View, roundCh
 		n.preprepare = c.preprepare
 		n.preparedRound = c.preparedRound
 		n.preparedBlock = c.preparedBlock
+		if c.preparedRound != nil && c.preparedBlock != nil {
+			n.certificate = c.certificate
+		}
 		n.pendingRequest = c.pendingRequest
 		n.badBlockReleased = c.badBlockReleased
 		s.cur = n
@@ -396,6 +400,8 @@ func (st *step) onRequest(b *types.Block) {
 			return
 		}
 		st.sendPreprepare(b, nil, nil)
+	} else if s.state == AcceptRequest && s.opt.Improvements.Has(ResumeRoundProposals) {
+		st.proposeRoundChange()
 	}
 }
 

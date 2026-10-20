@@ -1076,3 +1076,20 @@ retained messages have already moved the count above that threshold. It keeps
 the existing F+1-before-proposal evaluation order and lowest-higher-round
 selection. The option is off by default; it can skip rounds sooner than the
 default behavior and does not change header validity or wire encodings.
+
+
+`bind_prepared_certificate` independently keeps the prepared certificate with
+its locked block and round. It carries that certificate across same-height
+rounds and clears it with the pair on release or a new height. The original
+certificate lifetime remains available when the option is disabled.
+
+`drop_unbound_extra_seals` suppresses relay of late votes when there is no
+current or prior proposal against which to check their seals. Late votes with
+a matching target retain their existing storage and relay behavior.
+
+`resume_round_proposals` relays a round-change quorum even when the proposer
+is still waiting for its builder. A later proposal request repeats the same
+quorum and justification checks for that round, with a prepared block taking
+priority. It does not send twice after a successful proposal broadcast.
+These three options are independent, disabled by default, and preserve the
+existing header, message and WAL formats and mandatory restart safeguards.

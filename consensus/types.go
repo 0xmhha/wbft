@@ -167,6 +167,15 @@ const (
 	// FollowHigherRoundChanges applies the F+1 rule when at least the
 	// threshold of distinct higher-round senders remains available.
 	FollowHigherRoundChanges
+	// BindPreparedCertificate keeps justification copies with the prepared
+	// pair through round changes, release and new-height initialization.
+	BindPreparedCertificate
+	// DropUnboundExtraSeals does not relay late votes without a target
+	// proposal against which their seals can be checked.
+	DropUnboundExtraSeals
+	// ResumeRoundProposals retries the current round's justified proposal
+	// when a builder request arrives after its round-change quorum.
+	ResumeRoundProposals
 )
 
 // RestartSafety is the set of the restart-safety rules of the core. Nodes
@@ -184,6 +193,9 @@ var improvementNames = [...]string{
 	ScanReadyBacklog:         "scan_ready_backlog",
 	CancelStaleRetries:       "cancel_stale_retries",
 	FollowHigherRoundChanges: "follow_higher_rounds",
+	BindPreparedCertificate:  "bind_prepared_certificate",
+	DropUnboundExtraSeals:    "drop_unbound_extra_seals",
+	ResumeRoundProposals:     "resume_round_proposals",
 }
 
 // ParseImprovement finds a known local behavior by its reported name.

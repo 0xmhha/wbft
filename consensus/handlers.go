@@ -231,7 +231,11 @@ func (st *step) handlePrepare(v *Verified) (bool, int) {
 			c := *x.Msg
 			cert = append(cert, &Verified{Msg: &c, Source: x.Source})
 		}
-		s.certificate = cert
+		if s.opt.Improvements.Has(BindPreparedCertificate) {
+			s.cur.certificate = cert
+		} else {
+			s.certificate = cert
+		}
 		s.cur.preparedBlock = p
 		st.emitQuorum("PREPARE", len(s.cur.prepares))
 		st.setState(Prepared)
