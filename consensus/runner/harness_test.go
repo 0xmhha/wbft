@@ -329,6 +329,8 @@ type tnode struct {
 	opts   consensus.Options
 	// noJournal boots the runner without a message journal.
 	noJournal bool
+	// timerTrace enables measured scheduler records in the test journal.
+	timerTrace bool
 	// refused is the codes of the signatures privval refused (Deps.Refused).
 	refused []uint64
 }
@@ -372,7 +374,11 @@ func (n *tnode) boot() {
 	if err != nil {
 		t.Fatal(err)
 	}
-	jw, err := journal.Open(journal.Options{FS: n.jfs, Dir: "/j", Synchronous: true}, journal.Identity{Self: n.k.addrs[n.self]})
+	id := journal.Identity{Self: n.k.addrs[n.self]}
+	if n.timerTrace {
+		id.Core.TimerTrace = journal.TimerTraceVersion
+	}
+	jw, err := journal.Open(journal.Options{FS: n.jfs, Dir: "/j", Synchronous: true}, id)
 	if err != nil {
 		t.Fatal(err)
 	}

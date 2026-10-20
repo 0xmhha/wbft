@@ -161,6 +161,12 @@ const (
 	// ScanReadyBacklog releases ready messages behind entries that still
 	// belong to a future phase, without changing their queue priority.
 	ScanReadyBacklog
+	// CancelStaleRetries ignores retry expiries after cancellation,
+	// replacement or a change of the full height/round view.
+	CancelStaleRetries
+	// FollowHigherRoundChanges applies the F+1 rule when at least the
+	// threshold of distinct higher-round senders remains available.
+	FollowHigherRoundChanges
 )
 
 // RestartSafety is the set of the restart-safety rules of the core. Nodes
@@ -170,12 +176,14 @@ var RestartSafety = ImprovementSet(0).With(OneRound0Proposal).With(BadBlockRelea
 // improvementNames are the names a node reports for its improvements
 // (NODE_START, wbft_nodeInfo).
 var improvementNames = [...]string{
-	OneRound0Proposal:      "one_round0_proposal",
-	BadBlockReleaseMark:    "bad_block_release_mark",
-	WatchCommittedImport:   "commit_watchdog",
-	AdvanceOnCommitFailure: "advance_on_commit_failure",
-	ResetHeightState:       "reset_height_state",
-	ScanReadyBacklog:       "scan_ready_backlog",
+	OneRound0Proposal:        "one_round0_proposal",
+	BadBlockReleaseMark:      "bad_block_release_mark",
+	WatchCommittedImport:     "commit_watchdog",
+	AdvanceOnCommitFailure:   "advance_on_commit_failure",
+	ResetHeightState:         "reset_height_state",
+	ScanReadyBacklog:         "scan_ready_backlog",
+	CancelStaleRetries:       "cancel_stale_retries",
+	FollowHigherRoundChanges: "follow_higher_rounds",
 }
 
 // ParseImprovement finds a known local behavior by its reported name.
