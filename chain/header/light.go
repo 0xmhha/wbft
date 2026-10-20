@@ -75,6 +75,9 @@ func VerifyLight(in LightInputs, h, parent *types.Header) (LightResult, error) {
 	}
 	v, err := in.Trusted.ValidatorsAt(h.Number, h.ParentHash)
 	if err != nil {
+		if parentErr := lightParentError(h, parent); parentErr != nil {
+			return Invalid, parentErr
+		}
 		return CannotDecide, fmt.Errorf("%w: validator set: %v", ErrLightMissing, err)
 	}
 	if in.Now != nil {
@@ -100,11 +103,8 @@ func VerifyLight(in LightInputs, h, parent *types.Header) (LightResult, error) {
 			return Invalid, err
 		}
 	}
-	// H11 compares the low 64 bits of the parent number with the full
-	// Number - 1.
-	want, _ := h.Number.Sub(types.HeightFromUint64(1))
-	if types.HeightFromUint64(parent.Number.RefLow64()).Cmp(want) != 0 || codec.BlockHash(parent) != h.ParentHash { //wbft:low64 HH-21
-		return Invalid, stepErr("H11", "ErrUnknownAncestor", ErrUnknownAncestor)
+	if err := lightParentError(h, parent); err != nil {
+		return Invalid, err
 	}
 	if parent.Time+in.Config.ConfigAt(h.Number).BlockPeriodSeconds > h.Time {
 		return Invalid, stepErr("H12", "ErrInvalidTimestamp", ErrInvalidTimestamp)
@@ -163,4 +163,15 @@ func VerifyLight(in LightInputs, h, parent *types.Header) (LightResult, error) {
 		return Invalid, fmt.Errorf("EpochInfo presence does not match the epoch schedule")
 	}
 	return Valid, nil
+}
+
+// A known parent mismatch remains invalid even when its validator set is
+// unavailable. A matching parent still needs the trusted epoch information.
+func lightParentError(h, parent *types.Header) error {
+	// H11 compares the parent's index with the full Number - 1.
+	want, _ := h.Number.Sub(types.HeightFromUint64(1))
+	if types.HeightFromUint64(parent.Number.RefLow64()).Cmp(want) != 0 || codec.BlockHash(parent) != h.ParentHash { //wbft:low64 HH-21
+		return stepErr("H11", "ErrUnknownAncestor", ErrUnknownAncestor)
+	}
+	return nil
 }

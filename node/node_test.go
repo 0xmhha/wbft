@@ -343,9 +343,10 @@ func TestRPC(t *testing.T) {
 		t.Fatalf("nodeInfo %v", info)
 	}
 	// The mode, the BLS key (48 bytes), the build and the improvements with
-	// their source: the core's restart-safety rules, then the app's.
+	// their source: the local core defaults, then the app's.
 	imps, _ := json.Marshal(info["improvements"])
 	want := `[{"name":"one_round0_proposal","source":"profile"},{"name":"bad_block_release_mark","source":"profile"},` +
+		`{"name":"parent_epoch_lookup","source":"profile"},` +
 		`{"name":"app_rule","source":"app"}]`
 	if info["mode"] != "embedded" || len(info["blsPublicKey"].(string)) != 2+96 || info["build"] != "cgo" ||
 		info["version"] == "" || string(imps) != want {
@@ -498,7 +499,7 @@ func TestNativeAuthorityMode(t *testing.T) {
 
 // TestRejections records the two sources of rejections and serves them
 // through wbft_rejections: a proposal that fails the proposal checks (path
-// preprepare; an unknown parent fails V0b) and an import failure the application reports (its path,
+// preprepare; an unknown parent fails V0a) and an import failure the application reports (its path,
 // step and class). The IMPORT_FAIL event carries the step as failed_step
 // and reaches the event stream.
 func TestRejections(t *testing.T) {
@@ -532,7 +533,7 @@ func TestRejections(t *testing.T) {
 		t.Fatal(err)
 	}
 	r := out.Result
-	if len(r) != 2 || r[0]["number"] != "500" || r[0]["path"] != "preprepare" || r[0]["step"] != "V0b" || r[0]["errorClass"] != "ErrUnknownAncestor" ||
+	if len(r) != 2 || r[0]["number"] != "500" || r[0]["path"] != "preprepare" || r[0]["step"] != "V0a" || r[0]["errorClass"] != "ErrUnknownAncestor" ||
 		r[1]["number"] != "501" || r[1]["path"] != "imported" || r[1]["step"] != "H5" || r[1]["errorClass"] != "ErrInvalidMixDigest" {
 		t.Fatalf("wbft_rejections %+v", r)
 	}

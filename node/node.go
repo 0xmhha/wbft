@@ -790,13 +790,14 @@ func (n *Node) mode() string {
 }
 
 // improvements lists the enabled improvements with their source: the core's
-// restart-safety rules (the default of every profile) and the execution
-// layer's.
+// restart-safety rules, checked parent-chain epoch lookup (the defaults of
+// every profile), and the execution layer's.
 func (n *Node) improvements() []rpc.Improvement {
 	out := []rpc.Improvement{}
 	for _, name := range consensus.RestartSafety.Names() {
 		out = append(out, rpc.Improvement{Name: name, Source: "profile"})
 	}
+	out = append(out, rpc.Improvement{Name: "parent_epoch_lookup", Source: "profile"})
 	n.mu.Lock()
 	app := n.info.AppImprovements
 	cfg := n.chainCfg
