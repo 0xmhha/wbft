@@ -137,6 +137,15 @@ type commitResultRLP struct {
 	Err  string
 }
 
+// boundCommitResultRLP is emitted only for explicitly enabled import behavior.
+// Unbound legacy records retain their original two-field bytes.
+type boundCommitResultRLP struct {
+	Hash  types.Hash
+	Err   string
+	Seq   *big.Int
+	Round *big.Int
+}
+
 // Encode writes one core input as stored in WAL "input" and journal "step"
 // records: an RLP list whose shape depends on the kind (Kind).
 func Encode(in consensus.Input) ([]byte, error) {
@@ -181,6 +190,9 @@ func Encode(in consensus.Input) ([]byte, error) {
 		c := commitResultRLP{Hash: v.Hash}
 		if v.Err != nil {
 			c.Err = v.Err.Error()
+		}
+		if v.View != nil {
+			return rlp.Encode(&boundCommitResultRLP{Hash: c.Hash, Err: c.Err, Seq: v.View.Sequence.Big(), Round: v.View.Round.Big()})
 		}
 		return rlp.Encode(&c)
 	case consensus.BroadcastFailed:
@@ -310,6 +322,25 @@ func Decode(kind string, body []byte, msgs func(jseq uint64) ([]byte, error)) (c
 		}
 		return out, nil
 	case KindCommitResult:
+		var fields []rlp.RawValue
+		if err := rlp.DecodeStrict(body, &fields); err != nil {
+			return fail(err)
+		}
+		if len(fields) == 4 {
+			var c boundCommitResultRLP
+			if err := rlp.DecodeStrict(body, &c); err != nil {
+				return fail(err)
+			}
+			view, err := viewOf(c.Seq, c.Round)
+			if err != nil {
+				return fail(err)
+			}
+			out := consensus.CommitResult{Hash: c.Hash, View: &view}
+			if c.Err != "" {
+				out.Err = &errCommit{c.Err}
+			}
+			return out, nil
+		}
 		var c commitResultRLP
 		if err := rlp.DecodeStrict(body, &c); err != nil {
 			return fail(err)

@@ -294,6 +294,14 @@ func (st *step) decide() bool {
 		st.broadcastRoundChange(s.cur.view.Round.AddUint64(1))
 		return false
 	}
+	if s.opt.Improvements.Has(WatchCommittedImport) || s.opt.Improvements.Has(AdvanceOnCommitFailure) {
+		hash := blockHash(blk)
+		s.cur.importHash = &hash
+		s.cur.importResultSeen = false
+	}
+	if s.opt.Improvements.Has(WatchCommittedImport) {
+		st.startRoundTimer()
+	}
 	st.emit(Commit{Block: blk, Round: s.cur.view.Round})
 	return true
 }

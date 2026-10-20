@@ -58,6 +58,10 @@ type Config struct {
 	// module (wbft-stablenet's --log.vmodule patterns of single files);
 	// they are recorded with the settings in force (LOG_CONFIG unmapped).
 	LogUnmapped []string
+	// Improvements explicitly enables named local consensus behaviors in
+	// addition to restart safety. Empty preserves the existing defaults.
+	// Unknown or repeated names refuse construction.
+	Improvements []string
 }
 
 // LogDefaults are the log settings of a node whose Config.Log is nil: every
