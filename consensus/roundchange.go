@@ -166,8 +166,8 @@ func (st *step) broadcastRoundChange(round types.Round) {
 	if c.preparedBlock != nil {
 		m.PreparedDigest = blockHash(c.preparedBlock)
 	}
-	if s.certificate != nil {
-		m.Prepares = sortByEncoding(messagesOf(s.certificate), codec.EncodeMessage)
+	if certificate := s.preparedCertificate(); certificate != nil {
+		m.Prepares = sortByEncoding(messagesOf(certificate), codec.EncodeMessage)
 	}
 	released := s.opt.Improvements.Has(BadBlockReleaseMark) && c.badBlockReleased && c.preparedBlock == nil
 	st.emitBroadcast(Broadcast{Msg: m, BadBlockReleased: released})
@@ -211,13 +211,22 @@ func (st *step) handleRoundChange(v *Verified) (bool, int) {
 		}
 		return true, rowRCFPlusOne
 	}
+	return st.proposeRoundChange()
+}
+
+// proposeRoundChange applies the proposer's existing quorum and justification
+// checks. A delayed builder request can use the same checks without inserting
+// another round-change message or applying the F+1 rule again.
+func (st *step) proposeRoundChange() (bool, int) {
+	s := st.s
+	r0 := s.cur.view.Round
 	if s.rcs.countAt(r0) >= s.quorum() && s.isProposer(s.opt.Self) && s.cur.preprepareSent.Cmp(r0) < 0 {
 		st.emitQuorum("ROUND_CHANGE", s.rcs.countAt(r0))
 		e := s.rcs.rounds[roundKey(r0)]
 		proposal := e.highestBlock
 		if proposal == nil {
 			if s.cur.pendingRequest == nil {
-				return false, rowRCNoProposal
+				return s.opt.Improvements.Has(ResumeRoundProposals), rowRCNoProposal
 			}
 			proposal = s.cur.pendingRequest
 		}

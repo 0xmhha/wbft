@@ -69,12 +69,15 @@ type State struct {
 
 // roundState is RoundState of A-05 section 3.1.
 type roundState struct {
-	view           types.View
-	preprepare     *Verified
-	prepares       map[types.Address]*Verified
-	commits        map[types.Address]*Verified
-	preparedRound  *types.Round
-	preparedBlock  *types.Block
+	view          types.View
+	preprepare    *Verified
+	prepares      map[types.Address]*Verified
+	commits       map[types.Address]*Verified
+	preparedRound *types.Round
+	preparedBlock *types.Block
+	// certificate belongs to this prepared pair when BindPreparedCertificate
+	// is enabled. The State-level copy preserves the reference path.
+	certificate    []*Verified
 	pendingRequest *types.Block
 	preprepareSent types.Round
 	// preprepareSentValid tells a sent round-0 PRE-PREPARE from the initial
@@ -242,6 +245,17 @@ func (st *step) onBroadcastFailed(v BroadcastFailed) {
 		s.cur.preprepareSent = types.Round{}
 		s.cur.preprepareSentValid = false
 	}
+}
+
+// preparedCertificate selects the certificate of the active local policy.
+func (s *State) preparedCertificate() []*Verified {
+	if s.opt.Improvements.Has(BindPreparedCertificate) {
+		if s.cur == nil || s.cur.preparedRound == nil || s.cur.preparedBlock == nil {
+			return nil
+		}
+		return s.cur.certificate
+	}
+	return s.certificate
 }
 
 // quorum is Q of the current validator set.

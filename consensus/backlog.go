@@ -184,7 +184,7 @@ func (st *step) addExtraSeal(v *Verified) (bool, int) {
 	}
 	if block == nil {
 		st.extraSealEvent(opIgnore, v, nil)
-		return true, rowExtraNoTarget
+		return !s.opt.Improvements.Has(DropUnboundExtraSeals), rowExtraNoTarget
 	}
 	var into map[types.Address]*Verified
 	switch v.Msg.Code {

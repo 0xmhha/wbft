@@ -89,8 +89,8 @@ func (s *State) Vars() *Vars {
 		h := blockHash(c.pendingRequest)
 		v.PendingRequest = &h
 	}
-	if s.certificate != nil {
-		v.Certificate = voteVars(s.certificate)
+	if certificate := s.preparedCertificate(); certificate != nil {
+		v.Certificate = voteVars(certificate)
 	}
 	for _, k := range s.rcs.sortedKeys() {
 		e := s.rcs.rounds[k]
