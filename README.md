@@ -346,6 +346,23 @@ architecture or when the two result files differ.
 scripts/cross-arch-vectors.sh <wbft-spec>/spec bin/wbft-vector-adapter vectors.txt
 ```
 
+## Configuration time units
+
+The chain configuration's `requestTimeoutSeconds`, `blockPeriodSeconds`,
+`maxRequestTimeoutSeconds` and `allowedFutureBlockTime` are in whole seconds.
+For example, `requestTimeoutSeconds: 2` sets a two-second base timeout.
+`types.NewConfig` and height transitions convert that base to the internal
+`types.Params.RequestTimeoutMs` value of `2000`; they do not interpret the
+JSON value as milliseconds. Use `2`, rather than `2000`, for this example.
+
+An absent or zero base request timeout does not set a value. A zero request
+timeout in a transition inherits the earlier value. A missing maximum inherits
+the earlier cap, while an explicit `maxRequestTimeoutSeconds: 0` removes it.
+The kvstore example configures a two-second base timeout. Simulation timing
+overrides below also take seconds and retain their own positive-value checks.
+These unit descriptions do not add conversion range checks or change existing
+timeout arithmetic, genesis files or stored chain configurations.
+
 ## Simulation and journal replay
 
 `conformance/sim` runs N nodes on a manual clock with the real runner,
