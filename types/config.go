@@ -34,6 +34,9 @@ func (p ProposerPolicy) IsSticky() bool { return p.ID == Sticky }
 // WBFT fields of a transition. For RequestTimeoutSeconds, BlockPeriodSeconds,
 // EpochLength and AllowedFutureBlockTime, 0 and absent mean the same; the two
 // pointer fields are nil when absent.
+// RequestTimeoutSeconds, BlockPeriodSeconds, AllowedFutureBlockTime and a
+// present MaxRequestTimeoutSeconds are measured in whole seconds. The base
+// request timeout is converted to milliseconds in Params.RequestTimeoutMs.
 type WBFTParams struct {
 	RequestTimeoutSeconds    uint64  `json:"requestTimeoutSeconds"`
 	BlockPeriodSeconds       uint64  `json:"blockPeriodSeconds"`
