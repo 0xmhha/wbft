@@ -1156,3 +1156,26 @@ do not change the header or network message encoding, reconstruct earlier
 configuration conversion, or establish every clock schedule or complete
 profile. The event schema adds the explicit wait-limit observation. Existing
 protected analysis servers are not upgraded by selecting a node setting.
+
+### Local round budgets and deadlines
+
+`require_initial_round_budget` checks each effective configuration at height
+zero and every distinct transition height before node or simulation startup.
+For ordinary positive duration products, the selected round-zero timeout must
+exceed the block period. An enabled initial-round cap participates in this
+comparison. Equal-height transitions are checked after their final application,
+with full heights and existing inheritance rules. Other arithmetic retains its
+prior path. This necessary condition does not reserve application or network
+processing time. Direct core callers invoke `CheckInitialRoundBudget` at their
+configuration boundary.
+
+`preserve_round_deadline` keeps an already-live round timer when accepting a
+proposal in that round. It still cancels retry and future-proposal timers; an
+absent round timer uses the existing reservation path. Entering another round
+continues to reserve a new timer. A proposal arriving near the original deadline
+therefore has less time to complete than under the reference reset behavior.
+
+Both options are independent and default off. They change local startup or
+timing behavior without changing header, message or WAL encodings. Existing
+reference functions and disabled configurations retain their behavior. These
+checks do not establish every schedule or a complete improved profile.
