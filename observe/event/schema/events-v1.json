@@ -681,7 +681,7 @@
         "kind": { "const": "HEALTH" },
         "what": {
           "enum": ["head_mismatch", "peer_inbound_overflow", "peer_inbound_disconnect", "privval_refusal", "sign_floor_skip",
-            "snapshot_missing_at_preprepare", "snapshot_missing_at_local_reproposal", "snapshot_missing_at_head", "consensus_halted", "disconnect", "same_block_transitions"]
+            "snapshot_missing_at_preprepare", "snapshot_missing_at_local_reproposal", "snapshot_missing_at_head", "consensus_halted", "disconnect", "same_block_transitions", "future_proposal_wait_exceeded"]
         },
         "peer": { "$ref": "#/$defs/address" },
         "code": { "$ref": "#/$defs/code" },
@@ -691,6 +691,9 @@
         "path": { "$ref": "#/$defs/headPath" },
         "app_head": { "$ref": "#/$defs/decimal" },
         "core_head": { "$ref": "#/$defs/decimal" },
+        "proposal_origin": { "enum": ["preprepare", "local_reproposal"] },
+        "wait_ns": { "$ref": "#/$defs/decimal" },
+        "limit_ns": { "$ref": "#/$defs/decimal" },
         "error": { "type": "string" },
         "reason": { "type": "string" }
       },

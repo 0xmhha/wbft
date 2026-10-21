@@ -54,6 +54,9 @@ type LightInputs struct {
 	PartB PartB
 	// Now, if set, applies the future-time rule H2 (CannotDecide).
 	Now func() time.Time
+	// UseFutureTimeAllowance explicitly selects the same inherited allowance
+	// policy as a full verifier. It does not supply a missing clock.
+	UseFutureTimeAllowance bool
 }
 
 // ErrLightMissing is the reason of a CannotDecide verdict.
@@ -84,8 +87,7 @@ func VerifyLight(in LightInputs, h, parent *types.Header) (LightResult, error) {
 		return CannotDecide, fmt.Errorf("%w: validator set: %v", ErrLightMissing, err)
 	}
 	if in.Now != nil {
-		adjusted := in.Now().Add(time.Duration(in.Config.Base().AllowedFutureBlockTime) * time.Second).Unix()
-		if h.Time > uint64(adjusted) {
+		if futureHeader(in.Config, h, in.Now(), in.UseFutureTimeAllowance) {
 			return CannotDecide, fmt.Errorf("%w: future header", ErrLightMissing)
 		}
 	}

@@ -28,7 +28,6 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
-	"time"
 
 	"github.com/0xmhha/wbft/chain/validator"
 	"github.com/0xmhha/wbft/codec"
@@ -151,9 +150,7 @@ func verifySteps(env *Env, h *types.Header, parents []*types.Header, v, vp *vali
 	// H2
 	//
 	// Spec: WBFT-HDR-081
-	afbt := env.Config.Base().AllowedFutureBlockTime
-	adjusted := env.Now().Add(time.Duration(afbt) * time.Second).Unix()
-	if h.Time > uint64(adjusted) {
+	if futureHeader(env.Config, h, env.Now(), env.UseFutureTimeAllowance) {
 		return stepErr("H2", "ErrFutureBlock", ErrFutureBlock)
 	}
 	// H3

@@ -167,6 +167,8 @@ func PrepareProposal(env *Env, skeleton *types.Header, in ProposalInputs) (*type
 // header is from the future (H2) it returns ErrFutureBlock with the time
 // until the header time, time.Until(time.Unix(int64(Time), 0)) of the
 // verifier's clock; that duration is negative for Time >= 2^63.
+// With UseFutureTimeAllowance, ordinary representable time products instead
+// retry at the header time minus the inherited allowance used by H2.
 //
 // Spec: WBFT-HDR-060, WBFT-HDR-061, WBFT-HDR-063
 func VerifyProposal(env *Env, b *types.Block) (future time.Duration, err error) {
@@ -196,7 +198,7 @@ func VerifyProposal(env *Env, b *types.Block) (future time.Duration, err error) 
 	// P6
 	if err := verifySteps(env, h, nil, v, vp, Options{CheckSeals: false, Mode: Proposal}, b.Body); err != nil {
 		if errors.Is(err, ErrFutureBlock) {
-			return time.Unix(int64(h.Time), 0).Sub(env.Now()), err
+			return futureProposalWait(env, h), err
 		}
 		return 0, err
 	}

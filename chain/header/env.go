@@ -35,6 +35,11 @@ type Env struct {
 	// Now is the verifier's clock (step H2 and the future-proposal wait).
 	// It must be set for VerifyHeader and VerifyProposal.
 	Now func() time.Time
+
+	// UseFutureTimeAllowance selects inherited transition allowances and the
+	// matching proposal retry target for ordinary representable time products.
+	// False retains the reference time checks and retry target.
+	UseFutureTimeAllowance bool
 }
 
 // PartB is the application hook for the execution-side steps. It runs one

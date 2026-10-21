@@ -290,7 +290,7 @@ func (st *step) proposeRoundChange() (bool, int) {
 			}
 			wait, err := validate(proposal)
 			if err != nil {
-				if errors.Is(err, header.ErrFutureBlock) {
+				if errors.Is(err, header.ErrFutureBlock) && st.allowFutureWait(proposal, wait, "local_reproposal") {
 					s.gen[RoundProposalTimer]++
 					s.roundProposalLive, s.roundProposalView, s.roundProposalHash = true, s.cur.view, hash
 					st.emit(ArmTimer{Kind: RoundProposalTimer, View: s.cur.view, Round: s.cur.view.Round, Gen: s.gen[RoundProposalTimer], Duration: wait, Digest: hash})

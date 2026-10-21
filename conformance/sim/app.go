@@ -125,7 +125,8 @@ func (p partB) VerifyPartB(step string, _ *types.Header, _ *types.Header, body t
 }
 
 func (a *app) env() *header.Env {
-	return &header.Env{Config: a.n.cfg, Chain: a.chain, BadBlock: a.IsBadBlock, PartB: partB{a}, Snapshots: a, Now: a.n.clock.Now}
+	return &header.Env{Config: a.n.cfg, Chain: a.chain, BadBlock: a.IsBadBlock, PartB: partB{a}, Snapshots: a, Now: a.n.clock.Now,
+		UseFutureTimeAllowance: a.n.spec.Options.Improvements.Has(consensus.UseFutureTimeAllowance)}
 }
 
 // Head implements runner.Chain.
@@ -352,7 +353,8 @@ func (a *app) importBlock(b *types.Block, path string) error {
 	if err != nil {
 		return err
 	}
-	key := verificationKey{Header: keccak.Sum256(enc, codec.BlockHash(a.chain.head.Header).Bytes()), Config: a.n.cfgHash}
+	key := verificationKey{Header: keccak.Sum256(enc, codec.BlockHash(a.chain.head.Header).Bytes()), Config: a.n.cfgHash,
+		FutureTimeAllowance: a.n.spec.Options.Improvements.Has(consensus.UseFutureTimeAllowance)}
 	if !s.verified[key] {
 		env := a.env()
 		env.PartB = nil

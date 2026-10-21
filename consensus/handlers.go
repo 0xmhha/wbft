@@ -134,6 +134,9 @@ func (st *step) handlePreprepare(v *Verified) (bool, int) {
 	future, err := st.env.ValidateProposal(m.Proposal)
 	if err != nil {
 		if errors.Is(err, header.ErrFutureBlock) {
+			if !st.allowFutureWait(m.Proposal, future, "preprepare") {
+				return false, rowPreprepareReject
+			}
 			st.armFutureTimer(v, future)
 			return false, rowPreprepareFuture
 		}

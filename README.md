@@ -1131,3 +1131,28 @@ local policy. This changes local timing,
 not header or network message encoding, and does not establish every schedule
 or complete-profile acceptance. Existing optional-behavior observations retain
 their scope rather than becoming reference conformance passes.
+
+### Local future proposal timing
+
+`use_future_time_allowance` and `limit_future_proposal_wait` are independent,
+default-off local settings. The first applies inherited nonzero transition
+allowances at the full height and retries a future proposal at its timestamp
+minus that allowance. Full and light header checks select this policy
+explicitly; a missing light-verifier clock remains missing. Ordinary
+seconds-to-nanoseconds timestamp and allowance products use the selected
+calculation. Other values retain the reference path for both the header check
+and retry target.
+
+The second rejects an ordinary positive future wait longer than the current
+view's positive round timeout. It uses the same initial-cap selection as the
+round timer and compares timeout lengths, without estimating elapsed time.
+Equal or shorter waits retain their received or local candidate provenance.
+Local candidate checks run only when `validate_round_proposals` is enabled.
+An excessive wait records `future_proposal_wait_exceeded` with its closed
+origin and exact decimal duration metadata; it does not arm a shortened wait.
+
+Disabled reference queries and arithmetic remain available. These settings
+do not change the header or network message encoding, reconstruct earlier
+configuration conversion, or establish every clock schedule or complete
+profile. The event schema adds the explicit wait-limit observation. Existing
+protected analysis servers are not upgraded by selecting a node setting.
