@@ -1196,3 +1196,18 @@ Both options are independent and default off. They change local startup or
 timing behavior without changing header, message or WAL encodings. Existing
 reference functions and disabled configurations retain their behavior. These
 checks do not establish every schedule or a complete improved profile.
+
+
+### Keeping peers during a local engine pause
+
+`keep_stopped_peers` is a default-off local setting. Consensus frames that
+arrive while the engine is paused receive `DROP_SILENT` without a transport
+disconnect request. They enter neither the receive queue nor the known cache.
+The existing synchronising drop path is retained. Normal engine restart
+restores the usual receive checks; dropped frames are not replayed on restart.
+
+The setting is reported through the existing improvement selection and recorded
+core option mask. It changes no header, message, WAL or journal encoding.
+Reference stopped-engine observations keep their existing conformance meaning.
+Normal signature and Stop/Start controls do not establish every remote lifecycle
+or complete-profile acceptance.

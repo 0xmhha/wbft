@@ -214,6 +214,9 @@ const (
 	// PreserveRoundDeadline keeps a live round timer when a proposal is
 	// accepted in that round, while cancelling other proposal timers.
 	PreserveRoundDeadline
+	// KeepStoppedPeers drops normal consensus frames during an engine pause
+	// without asking the transport to disconnect their peers.
+	KeepStoppedPeers
 )
 
 // RestartSafety is the set of the restart-safety rules of the core. Nodes
@@ -242,6 +245,7 @@ var improvementNames = [...]string{
 	LimitFutureProposalWait:   "limit_future_proposal_wait",
 	RequireInitialRoundBudget: "require_initial_round_budget",
 	PreserveRoundDeadline:     "preserve_round_deadline",
+	KeepStoppedPeers:          "keep_stopped_peers",
 }
 
 // ParseImprovement finds a known local behavior by its reported name.
