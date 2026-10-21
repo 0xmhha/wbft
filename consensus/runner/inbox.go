@@ -84,7 +84,8 @@ func (b *inbox) Offer(in transport.Inbound) bool {
 	r := b.r
 	if !r.running.Load() {
 		sync := r.d.Synchronising != nil && r.d.Synchronising()
-		if transport.StoppedEngineAction(sync) == transport.FrameDisconnect {
+		keepPeers := r.cfg.Core.Improvements.Has(consensus.KeepStoppedPeers)
+		if !keepPeers && transport.StoppedEngineAction(sync) == transport.FrameDisconnect {
 			r.prefilter(in, nil, event.Disconnect, "engine_stopped", true)
 			if r.d.Net != nil {
 				r.d.Net.Disconnect(in.Peer, transport.CloseEngineStopped)
