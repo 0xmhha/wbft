@@ -36,7 +36,8 @@ type chainView struct {
 	// (wbft_authority_cache_misses_total); nil counts nothing.
 	misses *metrics.Counter
 	// emit writes a record to the node's event stream; nil drops it.
-	emit func(event.Record)
+	emit                func(event.Record)
+	futureTimeAllowance bool
 }
 
 var _ runner.Chain = (*chainView)(nil)
@@ -45,7 +46,7 @@ var _ runner.Chain = (*chainView)(nil)
 // verification for the cache miss counter (preprepare, header_only), and
 // "" counts nothing (building, whose miss service.snapshot counts).
 func (c *chainView) env(context string) *header.Env {
-	return &header.Env{Config: c.cfg, Chain: c.a, BadBlock: c.a.IsBadBlock, PartB: c.a, Snapshots: c.snapshots(context), Now: c.now}
+	return &header.Env{Config: c.cfg, Chain: c.a, BadBlock: c.a.IsBadBlock, PartB: c.a, Snapshots: c.snapshots(context), Now: c.now, UseFutureTimeAllowance: c.futureTimeAllowance}
 }
 
 // snapshots is the snapshot cache as the header rules of one verification

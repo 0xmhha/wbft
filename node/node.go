@@ -303,7 +303,8 @@ func (n *Node) start(ctx context.Context) error {
 	n.mu.Lock()
 	n.chainCfg = cfg
 	n.rej = rej
-	n.view = &chainView{a: n.d.App, cfg: cfg, snaps: n.snaps, now: n.clock.Now, rej: rej, log: n.log, misses: n.cacheMisses, emit: n.emit}
+	n.view = &chainView{a: n.d.App, cfg: cfg, snaps: n.snaps, now: n.clock.Now, rej: rej, log: n.log, misses: n.cacheMisses, emit: n.emit,
+		futureTimeAllowance: n.coreImprovements.Has(consensus.UseFutureTimeAllowance)}
 	n.valMetrics.attach(n.d.App, n.view.ValidatorsAt, func(h types.Height) time.Duration {
 		return time.Duration(cfg.ConfigAt(h).BlockPeriodSeconds) * time.Second //nolint:gosec // seconds of a config
 	}, func(h types.Height) uint64 { return cfg.ConfigAt(h).EpochLength })

@@ -202,6 +202,12 @@ const (
 	// CapInitialRoundTimeout applies an ordinary positive timeout cap from
 	// the first round, while preserving reference arithmetic when disabled.
 	CapInitialRoundTimeout
+	// UseFutureTimeAllowance selects inherited header-time allowances and
+	// their matching proposal retry targets in the node's header verifier.
+	UseFutureTimeAllowance
+	// LimitFutureProposalWait rejects a positive future wait longer than the
+	// current view's positive round timeout instead of arming that wait.
+	LimitFutureProposalWait
 )
 
 // RestartSafety is the set of the restart-safety rules of the core. Nodes
@@ -226,6 +232,8 @@ var improvementNames = [...]string{
 	ClearCurrentExtraSeals:   "clear_current_extra_seals",
 	ValidateRoundProposals:   "validate_round_proposals",
 	CapInitialRoundTimeout:   "cap_initial_round_timeout",
+	UseFutureTimeAllowance:   "use_future_time_allowance",
+	LimitFutureProposalWait:  "limit_future_proposal_wait",
 }
 
 // ParseImprovement finds a known local behavior by its reported name.
