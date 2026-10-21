@@ -258,6 +258,27 @@ func (st *step) startRoundTimer() {
 	st.emit(ArmTimer{Kind: RoundTimer, View: s.cur.view, Round: s.cur.view.Round, Duration: d, Gen: s.gen[RoundTimer]})
 }
 
+// acceptProposalTimer preserves an existing round reservation only at the
+// acceptance boundary. Entering another round still reserves a new timeout.
+func (st *step) acceptProposalTimer() {
+	s := st.s
+	if !s.opt.Improvements.Has(PreserveRoundDeadline) || !s.roundLive {
+		st.startRoundTimer()
+		return
+	}
+	kinds := make([]TimerKind, 0, len(TimerKinds(s.opt.Improvements))-1)
+	for _, kind := range TimerKinds(s.opt.Improvements) {
+		if kind != RoundTimer {
+			kinds = append(kinds, kind)
+		}
+	}
+	st.emit(CancelTimers{Kinds: kinds})
+	s.retryLive = false
+	s.futureLive = false
+	s.future = nil
+	s.roundProposalLive = false
+}
+
 // armRetryTimer arms the retry timer for RT(h) with the current round.
 //
 // Spec: WBFT-TIMER-020

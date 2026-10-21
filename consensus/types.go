@@ -208,6 +208,12 @@ const (
 	// LimitFutureProposalWait rejects a positive future wait longer than the
 	// current view's positive round timeout instead of arming that wait.
 	LimitFutureProposalWait
+	// RequireInitialRoundBudget checks ordinary selected initial timeouts
+	// against the block period before node or simulation startup.
+	RequireInitialRoundBudget
+	// PreserveRoundDeadline keeps a live round timer when a proposal is
+	// accepted in that round, while cancelling other proposal timers.
+	PreserveRoundDeadline
 )
 
 // RestartSafety is the set of the restart-safety rules of the core. Nodes
@@ -217,23 +223,25 @@ var RestartSafety = ImprovementSet(0).With(OneRound0Proposal).With(BadBlockRelea
 // improvementNames are the names a node reports for its improvements
 // (NODE_START, wbft_nodeInfo).
 var improvementNames = [...]string{
-	OneRound0Proposal:        "one_round0_proposal",
-	BadBlockReleaseMark:      "bad_block_release_mark",
-	WatchCommittedImport:     "commit_watchdog",
-	AdvanceOnCommitFailure:   "advance_on_commit_failure",
-	ResetHeightState:         "reset_height_state",
-	ScanReadyBacklog:         "scan_ready_backlog",
-	CancelStaleRetries:       "cancel_stale_retries",
-	FollowHigherRoundChanges: "follow_higher_rounds",
-	BindPreparedCertificate:  "bind_prepared_certificate",
-	DropUnboundExtraSeals:    "drop_unbound_extra_seals",
-	ResumeRoundProposals:     "resume_round_proposals",
-	RefreshRoundCertificates: "refresh_round_certificates",
-	ClearCurrentExtraSeals:   "clear_current_extra_seals",
-	ValidateRoundProposals:   "validate_round_proposals",
-	CapInitialRoundTimeout:   "cap_initial_round_timeout",
-	UseFutureTimeAllowance:   "use_future_time_allowance",
-	LimitFutureProposalWait:  "limit_future_proposal_wait",
+	OneRound0Proposal:         "one_round0_proposal",
+	BadBlockReleaseMark:       "bad_block_release_mark",
+	WatchCommittedImport:      "commit_watchdog",
+	AdvanceOnCommitFailure:    "advance_on_commit_failure",
+	ResetHeightState:          "reset_height_state",
+	ScanReadyBacklog:          "scan_ready_backlog",
+	CancelStaleRetries:        "cancel_stale_retries",
+	FollowHigherRoundChanges:  "follow_higher_rounds",
+	BindPreparedCertificate:   "bind_prepared_certificate",
+	DropUnboundExtraSeals:     "drop_unbound_extra_seals",
+	ResumeRoundProposals:      "resume_round_proposals",
+	RefreshRoundCertificates:  "refresh_round_certificates",
+	ClearCurrentExtraSeals:    "clear_current_extra_seals",
+	ValidateRoundProposals:    "validate_round_proposals",
+	CapInitialRoundTimeout:    "cap_initial_round_timeout",
+	UseFutureTimeAllowance:    "use_future_time_allowance",
+	LimitFutureProposalWait:   "limit_future_proposal_wait",
+	RequireInitialRoundBudget: "require_initial_round_budget",
+	PreserveRoundDeadline:     "preserve_round_deadline",
 }
 
 // ParseImprovement finds a known local behavior by its reported name.

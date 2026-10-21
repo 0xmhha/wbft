@@ -558,6 +558,9 @@ func newSimulation(sc Scenario) (*simulation, error) {
 				nodeConfigJSON = candidate
 			}
 		}
+		if err := consensus.CheckInitialRoundBudget(nodeConfig, spec.Options.Improvements); err != nil {
+			return nil, fmt.Errorf("%w: node %d: %v", ErrScenario, i, err)
+		}
 		if !validWallTime(sc.WallOrigin.Add(spec.ClockSkew)) || !validWallTime(sc.WallOrigin.Add(spec.ClockSkew).Add(sc.Until.Duration)) {
 			return nil, fmt.Errorf("%w: node wall clock outside journal domain", ErrScenario)
 		}

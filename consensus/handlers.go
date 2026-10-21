@@ -109,8 +109,8 @@ func (st *step) sendPreprepare(p *types.Block, rcs, ps []*Verified) {
 }
 
 // handlePreprepare checks a PRE-PREPARE of the current view in the order of
-// WBFT-SM-037 and accepts it: restart the round timer, store it, move to
-// Preprepared and send PREPARE. A proposal from the future arms the future
+// WBFT-SM-037 and accepts it: apply the selected timer policy, store it,
+// move to Preprepared and send PREPARE. A proposal from the future arms the future
 // timer instead.
 //
 // Spec: WBFT-SM-037, WBFT-SM-038, WBFT-SM-039, WBFT-SM-062
@@ -143,7 +143,7 @@ func (st *step) handlePreprepare(v *Verified) (bool, int) {
 		return false, rowPreprepareReject
 	}
 	if s.state == AcceptRequest {
-		st.startRoundTimer()
+		st.acceptProposalTimer()
 		s.cur.preprepare = v
 		st.emit(Event{Record: event.Record{
 			Kind: event.PreprepareAccept,

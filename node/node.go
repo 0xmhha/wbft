@@ -290,6 +290,9 @@ func (n *Node) start(ctx context.Context) error {
 	if err := checkChainConfig(cfg); err != nil {
 		return err
 	}
+	if err := consensus.CheckInitialRoundBudget(cfg, n.coreImprovements); err != nil {
+		return refuse("%v", err)
+	}
 	if err := types.CheckConsensusRules(info.ChainConfigJSON); err != nil {
 		return refuse("%v", err)
 	}
