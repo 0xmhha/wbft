@@ -162,3 +162,73 @@ func TestReceiveCacheNextHeightNormalAuthorityAndReplay(t *testing.T) {
 		t.Fatal("completed release was re-admitted after replay", entries, bytes)
 	}
 }
+
+func TestReceiveCacheFrozenOriginThroughWorkerAndCore(t *testing.T) {
+	k := newKeys(t, 4)
+	n := newTNode(t, k, 1)
+	n.noJournal = true
+	n.receiveCache = &transport.ReceiveLedgerOptions{Pending: 16, PerPeer: 4, KeyWithCode: true}
+	n.boot()
+	t.Cleanup(func() { _ = n.r.Close(); _ = n.log.Close() })
+	b := block(t, 10, 1, k.addrs[0], codec.BlockHash(n.chain.head))
+	n.deliver(0, codec.CodePreprepare, k.preprepare(t, 0, view(10, 0), b))
+	raw := k.vote(t, 0, codec.CodePrepare, view(10, 0), b)
+	original := transport.ReceiveOrigin{WriterRun: "original-capture-run", CaptureID: 7}
+	in := transportInbound(k, 0, codec.CodePrepare, raw, n.clock.now)
+	in.Capture = 7
+	in.Origin = original
+	if !n.r.Receiver().(transport.CaptureOriginReceiver).UsesCaptureOrigin() || !n.r.Receiver().Offer(in) || !n.r.inbox.checkOne(true) {
+		t.Fatal("normal original input not checked")
+	}
+	message, capture, stream, origin, ok := n.r.inbox.takeWithOrigin()
+	if !ok || origin != original || capture != original.CaptureID {
+		t.Fatal("worker changed capture provenance", origin, capture)
+	}
+	q := queued{in: message, via: viaPeer, capture: capture, stream: stream, origin: origin}
+	ticket, received, duplicate := n.r.beginReceiveCheck(q)
+	if duplicate || ticket.Origin() != original || received.Origin != original {
+		t.Fatal("dispatch rebound capture provenance", ticket.Origin(), received.Origin)
+	}
+	n.r.receiveCache.Cancel(ticket)
+	n.r.handle(q)
+	current := n.r.receiveContext.Load()
+	if current == nil || !n.r.receiveCache.Known(current.scope, in.Code, raw) {
+		t.Fatal("original provenance changed successful core ACCEPT")
+	}
+}
+
+func TestReceiveCacheDeferredUsesFrozenOriginOnly(t *testing.T) {
+	for _, available := range []bool{false, true} {
+		t.Run(map[bool]string{false: "unavailable", true: "original"}[available], func(t *testing.T) {
+			k := newKeys(t, 5)
+			oldSet := nextHeightSet(t, k, []int{0, 1, 2, 3})
+			n := newNextHeightNode(t, k, oldSet, types.HeightFromUint64(10), &NextHeightLimits{Entries: 12, Bytes: 1 << 20, PerPeer: 12, PerSource: 12}, false)
+			n.close()
+			n.receiveCache = &transport.ReceiveLedgerOptions{Pending: 16, PerPeer: 4, KeyWithCode: true}
+			n.boot()
+			t.Cleanup(n.close)
+			raw := k.sign(t, 4, &codec.Message{Code: codec.CodeRoundChange, View: view(11, 1)}, nil)
+			in := transportInbound(k, 1, codec.CodeRoundChange, raw, 1)
+			in.Capture = 7
+			if available {
+				in.Origin = transport.ReceiveOrigin{WriterRun: "original-deferred-source", CaptureID: 7}
+			}
+			if !n.r.Receiver().Offer(in) {
+				t.Fatal("normal future input not retained")
+			}
+			n.r.nextHeight.mu.Lock()
+			var record deferredRecord
+			for _, entry := range n.r.nextHeight.entries {
+				record = entry.record
+			}
+			n.r.nextHeight.mu.Unlock()
+			if available {
+				if record.CaptureRun != in.Origin.WriterRun || record.Capture != 7 {
+					t.Fatal("future origin changed", record.CaptureRun, record.Capture)
+				}
+			} else if record.CaptureRun != "" || record.Capture != 0 {
+				t.Fatal("missing origin inferred", record.CaptureRun, record.Capture)
+			}
+		})
+	}
+}

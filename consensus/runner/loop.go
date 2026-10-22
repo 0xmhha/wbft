@@ -142,8 +142,8 @@ func (r *Runner) next() (queued, bool) {
 		}
 	}
 	if hasPeer {
-		if m, capture, stream, ok := r.inbox.take(); ok {
-			return queued{in: m, via: viaPeer, capture: capture, stream: stream}, true
+		if m, capture, stream, origin, ok := r.inbox.takeWithOrigin(); ok {
+			return queued{in: m, via: viaPeer, capture: capture, stream: stream, origin: origin}, true
 		}
 	}
 	return queued{}, false

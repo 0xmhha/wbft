@@ -58,8 +58,8 @@ func (r *Runner) beginReceiveCheck(q queued) (transport.ReceiveTicket, transport
 	if current == nil {
 		return transport.ReceiveTicket{}, transport.Inbound{}, false
 	}
-	in := transport.Inbound{Peer: m.Peer, Code: uint64(m.Code), Payload: m.Payload, RecvMono: m.RecvMono, Capture: q.capture, Stream: q.stream}
-	origin := transport.ReceiveOrigin{}
+	in := transport.Inbound{Peer: m.Peer, Code: uint64(m.Code), Payload: m.Payload, RecvMono: m.RecvMono, Capture: q.capture, Stream: q.stream, Origin: q.origin}
+	origin := q.origin
 	if q.deferred != nil {
 		origin = transport.ReceiveOrigin{WriterRun: q.deferred.record.CaptureRun, CaptureID: q.deferred.record.Capture}
 		in.Capture = origin.CaptureID

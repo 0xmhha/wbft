@@ -76,6 +76,9 @@ func (b *inbox) UsesStreamIdentity() bool {
 	return r.receiveCache != nil && r.d.Transport != nil && r.d.Transport.CompletedWritesEnabled()
 }
 
+// UsesCaptureOrigin requests provenance only for the accepted-input policy.
+func (b *inbox) UsesCaptureOrigin() bool { return b.r.receiveCache != nil }
+
 func (b *inbox) peer(a types.Address) *peerIn {
 	p := b.peers[a]
 	if p == nil {
@@ -109,7 +112,11 @@ func (b *inbox) Offer(in transport.Inbound) bool {
 			seq, err := codec.SignedSequenceBytes(codec.Code(in.Code), in.Payload)
 			if err == nil && bytes.Equal(seq, snap.View.Sequence.AddUint64(1).Bytes()) {
 				run := ""
-				if jw, ok := r.d.Journal.(interface{ CaptureRun() string }); ok {
+				if r.receiveCache != nil {
+					if in.Origin.CaptureID == in.Capture && in.Capture != 0 {
+						run = in.Origin.WriterRun
+					}
+				} else if jw, ok := r.d.Journal.(interface{ CaptureRun() string }); ok {
 					run = jw.CaptureRun()
 				}
 				return r.nextHeight.offer(in, run)
@@ -400,7 +407,7 @@ func (b *inbox) hasReady() bool {
 }
 
 // take returns the next checked message, one per peer in turn.
-func (b *inbox) take() (consensus.Message, uint64, *transport.WriteSession, bool) {
+func (b *inbox) takeWithOrigin() (consensus.Message, uint64, *transport.WriteSession, transport.ReceiveOrigin, bool) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	n := len(b.order)
@@ -415,10 +422,10 @@ func (b *inbox) take() (consensus.Message, uint64, *transport.WriteSession, bool
 				continue
 			}
 			delete(b.slots, k)
-			return consensus.Message{Code: codec.Code(s.in.Code), Payload: s.in.Payload, Peer: s.in.Peer, RecvMono: s.in.RecvMono}, s.in.Capture, s.in.Stream, true
+			return consensus.Message{Code: codec.Code(s.in.Code), Payload: s.in.Payload, Peer: s.in.Peer, RecvMono: s.in.RecvMono}, s.in.Capture, s.in.Stream, s.in.Origin, true
 		}
 	}
-	return consensus.Message{}, 0, nil, false
+	return consensus.Message{}, 0, nil, transport.ReceiveOrigin{}, false
 }
 
 // InboundBytes returns the payload bytes waiting in the per-peer receive

@@ -192,6 +192,7 @@ var (
 // queued is one input with where it came from.
 type queued struct {
 	stream   *transport.WriteSession // optional original functional stream, never WAL input
+	origin   transport.ReceiveOrigin // frozen observer provenance; never functional authority
 	deferred *deferredEntry
 	capture  uint64
 	in       consensus.Input

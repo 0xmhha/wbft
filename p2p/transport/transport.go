@@ -39,6 +39,7 @@ type Inbound struct {
 	// Stream is optional functional provenance. It is frozen by an adapter
 	// for a StreamReceiver, never serialized or inferred from a recorder.
 	Stream   *WriteSession `json:"-"`
+	Origin   ReceiveOrigin `json:"-"`
 	Capture  uint64        // optional journal provenance, never a consensus input field
 	Peer     types.Address
 	Code     uint64
@@ -51,6 +52,13 @@ type Inbound struct {
 type StreamReceiver interface {
 	Receiver
 	UsesStreamIdentity() bool
+}
+
+// CaptureOriginReceiver requests the original observer's capture provenance.
+// Legacy receivers keep their original input shape and make no source claim.
+type CaptureOriginReceiver interface {
+	Receiver
+	UsesCaptureOrigin() bool
 }
 
 // PeerInfo describes an attached peer.
