@@ -98,7 +98,8 @@ func TestCoreStepObserverActualAcceptedSource(t *testing.T) {
 	n := newTNode(t, k, 1)
 	n.noJournal = true
 	observed := new(coreObservations)
-	writer, err := journal.Open(journal.Options{FS: n.jfs, Dir: "/core-source", Synchronous: true}, journal.Identity{Run: "diagnostic-core-source"})
+	config := []byte(`{"anzeon":{"wbft":{"requestTimeoutSeconds":2,"blockPeriodSeconds":1,"epochLength":1099511627776,"proposerPolicy":0}}}`)
+	writer, err := journal.Open(journal.Options{FS: n.jfs, Dir: "/core-source", Synchronous: true}, journal.Identity{Run: "diagnostic-core-source", Self: n.opts.Self, Core: journal.CoreOptions{ChainConfig: config, Self: n.opts.Self, Improvements: uint64(n.opts.Improvements), BacklogLimit: uint64(n.opts.BacklogLimit)}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -236,6 +237,111 @@ func TestCoreStepObserverActualAcceptedSource(t *testing.T) {
 	}
 	if stored != len(observed.steps) {
 		t.Fatal("actual core source records missing", stored, len(observed.steps))
+	}
+	var firstEngine []journal.Record
+	steps := uint64(0)
+	for _, record := range records {
+		if s, ok := record.Body.(*journal.CoreStepRec); ok {
+			if s.EngineRun != 1 {
+				continue
+			}
+			steps++
+		}
+		firstEngine = append(firstEngine, record)
+	}
+	limits := journal.CoreSourceLimits{Records: 10000, Runs: 4, Steps: 1000, Environments: 1000, Outputs: 10000, Bytes: 64 << 20}
+	check, err := journal.CheckCoreStepSources(firstEngine, limits)
+	if err != nil || check.Status != "consistent" || check.Runs != 1 || check.Steps != steps || check.Accepted == 0 || check.PhysicalStatus != "unavailable" || check.ScheduleStatus != "unavailable" {
+		t.Fatal("durable actual core transcript did not reconstruct independently", check, err)
+	}
+	check, err = journal.CheckCoreStepSources(records, limits)
+	if err != nil || check.Status != "unavailable" || check.Reason != "restored_prefix_not_reconstructed" {
+		t.Fatal("restored prefix was promoted to a complete transcript", check, err)
+	}
+	// These inspections alter only copied offline metadata, never live inputs,
+	// packets, signatures, runner state or execution commands.
+	for _, test := range []struct {
+		name    string
+		rewrite func(journal.Record) (journal.Record, bool)
+		status  string
+	}{
+		{"missing_start", func(r journal.Record) (journal.Record, bool) {
+			s, ok := r.Body.(*journal.CoreStepRec)
+			return r, !ok || s.Step != 1
+		}, "unavailable"},
+		{"missing_head", func(r journal.Record) (journal.Record, bool) {
+			if s, ok := r.Body.(*journal.CoreStepRec); ok {
+				c := *s
+				c.Head = nil
+				r.Body = &c
+			}
+			return r, true
+		}, "unavailable"},
+		{"different_declared_self", func(r journal.Record) (journal.Record, bool) {
+			if s, ok := r.Body.(*journal.CoreStepRec); ok {
+				c := *s
+				c.CoreSelf[0] ^= 1
+				r.Body = &c
+			}
+			return r, true
+		}, "inconsistent"},
+		{"different_recorded_context", func(r journal.Record) (journal.Record, bool) {
+			if s, ok := r.Body.(*journal.CoreStepRec); ok && s.Step == 1 {
+				c := *s
+				c.After.State = "Committed"
+				r.Body = &c
+			}
+			return r, true
+		}, "inconsistent"},
+		{"extra_environment_answer", func(r journal.Record) (journal.Record, bool) {
+			if s, ok := r.Body.(*journal.CoreStepRec); ok && len(s.Environment) > 0 {
+				c := *s
+				c.Environment = append(append([]journal.CoreEnvObservation(nil), s.Environment...), s.Environment[0])
+				r.Body = &c
+			}
+			return r, true
+		}, "inconsistent"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var copy []journal.Record
+			for _, r := range firstEngine {
+				if changed, keep := test.rewrite(r); keep {
+					copy = append(copy, changed)
+				}
+			}
+			check, err := journal.CheckCoreStepSources(copy, limits)
+			if check.Status != test.status || (err != nil) != (test.status == "inconsistent") || check.PhysicalStatus != "unavailable" || check.ScheduleStatus != "unavailable" {
+				t.Fatal(check, err)
+			}
+		})
+	}
+	for _, test := range []struct {
+		name   string
+		limits journal.CoreSourceLimits
+		reason string
+	}{
+		{"records", journal.CoreSourceLimits{Records: 1, Runs: 4, Steps: 1000, Environments: 1000, Outputs: 10000, Bytes: 64 << 20}, "record_limit"},
+		{"steps", journal.CoreSourceLimits{Records: 10000, Runs: 4, Steps: 1, Environments: 1000, Outputs: 10000, Bytes: 64 << 20}, "step_limit"},
+		{"bytes", journal.CoreSourceLimits{Records: 10000, Runs: 4, Steps: 1000, Environments: 1000, Outputs: 10000, Bytes: 1}, "source_byte_limit"},
+		{"required", journal.CoreSourceLimits{}, "inspection_limits_required"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			check, err := journal.CheckCoreStepSources(firstEngine, test.limits)
+			if err != nil || check.Status != "unavailable" || check.Reason != test.reason {
+				t.Fatal(check, err)
+			}
+		})
+	}
+	var repeated []journal.Record
+	for _, r := range firstEngine {
+		repeated = append(repeated, r)
+		if s, ok := r.Body.(*journal.CoreStepRec); ok && s.Step == 1 {
+			repeated = append(repeated, r)
+		}
+	}
+	check, err = journal.CheckCoreStepSources(repeated, limits)
+	if err == nil || check.Status != "inconsistent" || check.Reason != "core_step_repeated_or_exhausted" {
+		t.Fatal("duplicate retained step was treated as missing evidence", check, err)
 	}
 }
 
