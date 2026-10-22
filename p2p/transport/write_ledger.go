@@ -50,7 +50,7 @@ type writeReservation struct {
 }
 
 // WriteTicket is one ledger-owned request. Its zero value owns nothing. A
-// callback closes over this ticket; no recorder identity is used or serialized.
+// callback closes over this ticket; recorder metadata never grants ownership.
 type WriteTicket struct{ reservation *writeReservation }
 
 // WriteLedger retains recent entries only after a successful actual local
@@ -61,6 +61,8 @@ type WriteTicket struct{ reservation *writeReservation }
 type WriteLedger struct {
 	mu                         sync.Mutex
 	observation, traceSequence uint64
+	traceOwner                 *AttemptOwner
+	traceRun                   string
 	traceExhausted             bool
 	opt                        WriteLedgerOptions
 	closed                     bool
@@ -78,6 +80,12 @@ func NewWriteLedger(opt WriteLedgerOptions) (*WriteLedger, error) {
 	l := &WriteLedger{opt: opt, pending: make(map[pendingWriteKey]*writeReservation), counts: make(map[types.Address]uint64), recent: newLRU[types.Address, *lru[writeKey, struct{}]](InmemoryPeers)}
 	if opt.Trace != nil {
 		l.observation = nextObservationID()
+		if source, ok := opt.Trace.(interface {
+			AttemptOwner() *AttemptOwner
+			CaptureRun() string
+		}); ok {
+			l.traceOwner, l.traceRun = source.AttemptOwner(), source.CaptureRun()
+		}
 		l.mu.Lock()
 		event := l.transition(WriteStart)
 		event.PendingLimit, event.PerPeerLimit, event.KeyWithCode = opt.Pending, opt.PerPeer, opt.KeyWithCode

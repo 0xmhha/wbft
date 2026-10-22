@@ -66,7 +66,11 @@ func (d *Dedup) gossipCompleted(vs *validator.Set, code uint64, payload []byte, 
 			plan.Pending = append(plan.Pending, target.Addr)
 		case WriteReserved:
 			plan.Targets = append(plan.Targets, target.Addr)
-			result := d.writeSender.SendWrite(target, code, payload, SendAttempt{}, func(receipt WriteReceipt) {
+			attempt := SendAttempt{}
+			if source, ok := d.writeSender.(WriteAttemptFactory); ok {
+				attempt = source.WriteAttempt(ticket, cause)
+			}
+			result := d.writeSender.SendWrite(target, code, payload, attempt, func(receipt WriteReceipt) {
 				if d.completedWrites.Complete(ticket, receipt) && d.opt.WriteCompleted != nil {
 					d.opt.WriteCompleted(code)
 				}

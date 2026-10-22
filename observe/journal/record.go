@@ -141,8 +141,9 @@ type SendAttempt struct{ Sequence, Cache, Operation uint64 }
 
 type MsgRec struct {
 	// Session is the original adapter loop owner; nil makes no stream claim.
-	Session *SessionRef
-	Attempt *SendAttempt
+	Session      *SessionRef
+	WriteAttempt *WriteAttemptSource
+	Attempt      *SendAttempt
 	// IO is absent in old recordings and when the transport reports no interval.
 	IO *IOInterval
 	// Capture identifies this received frame within its writer run. It is
@@ -341,27 +342,28 @@ type peerRLPNoClose struct {
 }
 
 type msgRLP struct {
-	Format   uint64
-	JSeq     uint64
-	Dir      string
-	PeerIdx  uint64
-	Mono     uint64
-	WallNs   uint64
-	Code     uint64
-	WireCode uint64
-	Payload  []byte
-	DedupKey types.Hash
-	Offer    string
-	Cause    string
-	RelayOf  uint64
-	Write    string
-	Size     uint64
-	Engine   string
-	Dedup    uint64 // rlpDedup
-	Capture  uint64
-	IO       []uint64        `rlp:"optional"`
-	Attempt  []uint64        `rlp:"optional"`
-	Session  []sessionRefRLP `rlp:"optional"`
+	Format       uint64
+	JSeq         uint64
+	Dir          string
+	PeerIdx      uint64
+	Mono         uint64
+	WallNs       uint64
+	Code         uint64
+	WireCode     uint64
+	Payload      []byte
+	DedupKey     types.Hash
+	Offer        string
+	Cause        string
+	RelayOf      uint64
+	Write        string
+	Size         uint64
+	Engine       string
+	Dedup        uint64 // rlpDedup
+	Capture      uint64
+	IO           []uint64          `rlp:"optional"`
+	Attempt      []uint64          `rlp:"optional"`
+	Session      []sessionRefRLP   `rlp:"optional"`
+	WriteAttempt []writeAttemptRLP `rlp:"optional"`
 }
 
 type msgRLPNoCapture struct {
@@ -561,6 +563,13 @@ func encodeBody(r Record, jseq uint64) ([]byte, error) {
 		if err != nil {
 			return nil, err
 		}
+		if b.WriteAttempt != nil && (b.Attempt != nil || b.Dir != Out) {
+			return nil, fmt.Errorf("journal: conflicting write reservation domain")
+		}
+		writeAttempt, err := encodeWriteAttempt(b.WriteAttempt)
+		if err != nil {
+			return nil, err
+		}
 		session, err := encodeSessionRef(b.Session)
 		if err != nil {
 			return nil, err
@@ -568,7 +577,7 @@ func encodeBody(r Record, jseq uint64) ([]byte, error) {
 		return rlp.Encode(&msgRLP{Format: Format, JSeq: jseq, Dir: b.Dir, PeerIdx: uint64(b.PeerIdx), Mono: uint64(int64(b.Mono)),
 			WallNs: uint64(b.WallNs), Code: b.Code, WireCode: b.WireCode, Payload: bytesOrEmpty(b.Payload), DedupKey: b.DedupKey,
 			Offer: b.Offer, Cause: string(b.Cause), RelayOf: b.RelayOf, Write: b.Write, Size: b.Size, Engine: b.Engine,
-			Dedup: rlpDedup(b.Dedup), Capture: b.Capture, IO: io, Attempt: attempt, Session: session})
+			Dedup: rlpDedup(b.Dedup), Capture: b.Capture, IO: io, Attempt: attempt, Session: session, WriteAttempt: writeAttempt})
 	case *OutcomeRec:
 		return rlp.Encode(&outcomeRLP{Format: Format, JSeq: jseq, Of: b.Of, Code: b.Code, Peer: b.Peer, DedupKey: b.DedupKey,
 			Outcome: string(b.Outcome), Check: b.Check, Row: uint64(b.Row + 1), Reason: b.Reason, ErrorClass: b.ErrorClass,
@@ -708,11 +717,18 @@ func decodeBody(k Kind, body []byte) (Record, error) {
 		if err != nil {
 			return fail(err)
 		}
+		if len(w.WriteAttempt) != 0 && (len(w.Attempt) != 0 || w.Dir != Out) {
+			return fail(fmt.Errorf("journal: conflicting write reservation domain"))
+		}
+		writeAttempt, err := decodeWriteAttempt(w.WriteAttempt)
+		if err != nil {
+			return fail(err)
+		}
 		session, err := decodeSessionRef(w.Session)
 		if err != nil {
 			return fail(err)
 		}
-		return Record{Kind: k, JSeq: w.JSeq, Body: &MsgRec{Session: session, Attempt: attempt, IO: io, Dir: w.Dir, PeerIdx: uint32(w.PeerIdx), Mono: time.Duration(int64(w.Mono)),
+		return Record{Kind: k, JSeq: w.JSeq, Body: &MsgRec{Session: session, WriteAttempt: writeAttempt, Attempt: attempt, IO: io, Dir: w.Dir, PeerIdx: uint32(w.PeerIdx), Mono: time.Duration(int64(w.Mono)),
 			WallNs: int64(w.WallNs), Code: w.Code, WireCode: w.WireCode, Payload: w.Payload, DedupKey: w.DedupKey, Offer: w.Offer,
 			Cause: event.SendCause(w.Cause), RelayOf: w.RelayOf, Write: w.Write, Size: w.Size, Engine: w.Engine,
 			Dedup: dedupOf(w.Dedup), Capture: w.Capture}}, nil
@@ -834,6 +850,9 @@ func size(r Record) int64 {
 		}
 		if b.Attempt != nil {
 			n += 48
+		}
+		if b.WriteAttempt != nil {
+			n += 64 + int64(len(b.WriteAttempt.WriterRun))
 		}
 		if b.Session != nil {
 			n += 48 + int64(len(b.Session.Run))

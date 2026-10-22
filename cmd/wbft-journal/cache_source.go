@@ -50,7 +50,7 @@ func (w *r01Writer) indexCache(rec journal.Record, pos wal.Position) {
 		w.cacheErr = fmt.Errorf("session observations are unavailable in R01 exports")
 		return
 	}
-	if m, ok := rec.Body.(*journal.MsgRec); ok && m.Session != nil {
+	if m, ok := rec.Body.(*journal.MsgRec); ok && (m.Session != nil || m.WriteAttempt != nil) {
 		w.cacheErr = fmt.Errorf("session frame sources are unavailable in R01 exports")
 		return
 	}

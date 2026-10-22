@@ -200,7 +200,11 @@ func (f *frameRecorder) WroteAttempt(peer types.Address, code uint64, payload []
 	}
 	if attempt.OwnedBy(f.owner) {
 		m.Cause = attempt.Cause
-		m.Attempt = &journal.SendAttempt{Sequence: attempt.Sequence, Cache: attempt.Cache, Operation: attempt.Operation}
+		if source, ok := attempt.WriteSource(); ok {
+			m.WriteAttempt = &journal.WriteAttemptSource{Sequence: attempt.Sequence, WriterRun: source.WriterRun, Ledger: source.Ledger, Request: source.Request}
+		} else {
+			m.Attempt = &journal.SendAttempt{Sequence: attempt.Sequence, Cache: attempt.Cache, Operation: attempt.Operation}
+		}
 	}
 	// An exact-attempt callback never consults the legacy peer/key map.
 	f.jw.Put(journal.Record{Body: m})
