@@ -31,3 +31,9 @@ core-source records support independent comparisons on retained inputs; socket
 I/O timing stays absent. Unsupported functional replay, physical reconstruction
 and complete scheduling proof remain unavailable. Restored WAL prefixes need
 their own source reconstruction before they can satisfy those broader claims.
+
+Scheduler mutations are observed through a separate optional timer source
+observer after its mutex is released. Records retain the original arm owner
+and mutex sequence even when clock callbacks arrive concurrently. This enables
+diagnostic timer records without enabling the functional journal; timer records
+alone do not establish complete queue, application or recovered-prefix replay.

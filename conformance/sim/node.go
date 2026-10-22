@@ -197,7 +197,7 @@ func (n *node) start() {
 	}
 	if p := n.spec.AcceptedCache; p != nil {
 		id.Mode = "diagnostic"
-		id.Core.TimerTrace = 0 // no functional scheduler observer is installed
+		id.Core.TimerTrace = journal.TimerTraceVersion // separate diagnostic observer
 		id.Core.CachePolicy = &journal.CachePolicyOptions{Profile: journal.AcceptedCompletedCacheProfile, Limits: p.Limits}
 	}
 	jw, err := journal.Open(journal.Options{FS: n.fs, Dir: journalDir, KeepHeights: 100000, MaxBytes: 8 << 30,
@@ -250,6 +250,7 @@ func (n *node) start() {
 	var receiveOptions *transport.ReceiveLedgerOptions
 	var functionalJournal journal.Writer = jw
 	var coreSources runner.CoreStepObserver
+	var timerSources runner.TimerSourceObserver
 	if p := n.spec.AcceptedCache; p != nil {
 		write := p.Limits.WriteOptions()
 		write.Trace = n.sources
@@ -257,7 +258,7 @@ func (n *node) start() {
 		receive := p.Limits.ReceiveOptions()
 		receive.Trace = n.sources
 		receiveOptions = &receive
-		functionalJournal, coreSources = nil, n.sources
+		functionalJournal, coreSources, timerSources = nil, n.sources, n.sources
 	}
 	dedup, err := transport.NewDedup(net, dedupOptions)
 	if err != nil {
@@ -271,7 +272,7 @@ func (n *node) start() {
 	processing, workers := n.processingModel()
 	r, err := runner.New(runner.Config{Core: opts, ReplayWAL: n.spec.ReplayWAL, Manual: true, Workers: workers, NextHeight: n.spec.NextHeight, ReceiveCache: receiveOptions},
 		runner.Deps{Chain: n.app, App: application, Transport: dedup, Net: net, Signer: recSigner{signer, n}, WAL: log,
-			Clock: n.clock, Events: countingSink{n.ev, n.s}, Journal: functionalJournal, CoreSteps: coreSources, Rand: n.rng.IntN, Faults: fh, Logger: n.s.logger(logcat.ConsensusRound), ModuleLogger: n.s.moduleLogger(), ManualProcessing: processing})
+			Clock: n.clock, Events: countingSink{n.ev, n.s}, Journal: functionalJournal, CoreSteps: coreSources, TimerSources: timerSources, Rand: n.rng.IntN, Faults: fh, Logger: n.s.logger(logcat.ConsensusRound), ModuleLogger: n.s.moduleLogger(), ManualProcessing: processing})
 	if err != nil {
 		fail(err)
 		return

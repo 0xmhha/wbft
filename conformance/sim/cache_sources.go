@@ -81,6 +81,13 @@ func (f *cacheSources) ObserveReceiveTransition(t transport.ReceiveTransition) {
 func (f *cacheSources) ObserveCoreStep(s runner.CoreStepObservation) {
 	f.writer.Put(journal.Record{Body: &s})
 }
+func (f *cacheSources) ObserveTimerSource(t journal.TimerRec) {
+	if t.Sequence == 0 || t.EngineRun == 0 || len(t.Input) == 0 && t.Action != "clear" && t.Action != "cancel" {
+		f.writer.Put(journal.Record{Body: &journal.GapRec{Dropped: 1, ByKind: []journal.KindCount{{Kind: uint64(journal.KindTimer), Count: 1}}, FirstMono: t.Mono, LastMono: t.Mono}})
+		return
+	}
+	f.writer.Put(journal.Record{Body: &t})
+}
 func cacheSessionRef(s *transport.WriteSession) *journal.SessionRef {
 	if s == nil || s.ObservationRun() == "" || s.ObservationID() == 0 {
 		return nil

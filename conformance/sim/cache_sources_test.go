@@ -44,6 +44,7 @@ func TestAcceptedCacheDiagnosticNormalSourceChain(t *testing.T) {
 		t.Fatal(result.Violations)
 	}
 	var external, writes, recent uint64
+	timers := 0
 	for _, n := range s.nodes {
 		if n.head() < 4 || n.r != nil {
 			t.Fatal("normal diagnostic run did not stop at its accepted head")
@@ -55,7 +56,7 @@ func TestAcceptedCacheDiagnosticNormalSourceChain(t *testing.T) {
 		for _, record := range records {
 			switch r := record.Body.(type) {
 			case *journal.SegmentRec:
-				if r.Mode != "diagnostic" || r.Core.TimerTrace != 0 || r.Core.CachePolicy == nil || !errors.Is(r.Core.ValidateRuntimeProfiles(), journal.ErrCachePolicyReplay) {
+				if r.Mode != "diagnostic" || r.Core.TimerTrace != journal.TimerTraceVersion || r.Core.CachePolicy == nil || !errors.Is(r.Core.ValidateRuntimeProfiles(), journal.ErrCachePolicyReplay) {
 					t.Fatal("diagnostic sources enabled unsupported functional replay")
 				}
 			case *journal.StepRec:
@@ -64,6 +65,8 @@ func TestAcceptedCacheDiagnosticNormalSourceChain(t *testing.T) {
 				if r.IO != nil {
 					t.Fatal("simulated service fabricated measured socket I/O")
 				}
+			case *journal.TimerRec:
+				timers++
 			}
 		}
 		limits := cacheSourceLimits()
@@ -83,10 +86,10 @@ func TestAcceptedCacheDiagnosticNormalSourceChain(t *testing.T) {
 		writes += writeCheck.Writes
 		recent += accepted.Registrations
 	}
-	if external == 0 || writes == 0 || recent == 0 {
-		t.Fatal("empty source comparison", external, writes, recent)
+	if external == 0 || writes == 0 || recent == 0 || timers == 0 {
+		t.Fatal("empty source comparison", external, writes, recent, timers)
 	}
-	t.Log("normal source comparisons; physical/schedule unavailable", "external", external, "writes", writes, "accepted recent", recent)
+	t.Log("normal source comparisons; physical/schedule unavailable", "external", external, "writes", writes, "accepted recent", recent, "timers", timers)
 }
 
 func TestAcceptedCacheNormalMixedAndRestart(t *testing.T) {

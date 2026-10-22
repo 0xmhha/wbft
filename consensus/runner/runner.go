@@ -157,6 +157,9 @@ type Deps struct {
 	// CoreSteps observes detached actual live core execution for diagnostics.
 	// It is independent of Journal and does not enable unsupported replay.
 	CoreSteps CoreStepObserver
+	// TimerSources observes detached scheduler operations after its mutex is
+	// released. Nil preserves the original journal and timer behavior.
+	TimerSources TimerSourceObserver
 	// Synchronising reports whether the application is synchronising the
 	// chain; consensus messages that arrive while the engine is stopped are
 	// then dropped instead of closing the connection.
@@ -367,6 +370,9 @@ func New(cfg Config, d Deps) (*Runner, error) {
 			logcat.ConsensusMsg: d.ModuleLogger(logcat.ConsensusMsg)}
 	}
 	r.timers.clock = r.d.Clock
+	if d.TimerSources != nil {
+		r.timers.observe = d.TimerSources.ObserveTimerSource
+	}
 	if enabled, ok := d.Journal.(interface{ TimerTraceEnabled() bool }); ok && enabled.TimerTraceEnabled() {
 		r.timers.trace = func(rec *journal.TimerRec) {
 			if len(rec.Input) == 0 && rec.Action != "clear" && rec.Action != "cancel" {

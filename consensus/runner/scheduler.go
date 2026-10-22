@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"github.com/0xmhha/wbft/consensus/inputlog"
 	"github.com/0xmhha/wbft/observe/journal"
+	"slices"
 	"sync"
 	"time"
 
@@ -15,16 +16,18 @@ import (
 // fired drops it, and an expiry already queued stays queued (the core
 // decides what a late expiry does, by its generation).
 type scheduler struct {
-	clock      Clock
-	wake       func()
-	mu         sync.Mutex // runner.timers.mu
-	live       [4]*timerEntry
-	fired      []consensus.Timeout
-	queued     []*timerEntry
-	owner      timerOwner
-	sequence   uint64
-	localTimer bool
-	trace      func(*journal.TimerRec)
+	clock           Clock
+	wake            func()
+	mu              sync.Mutex // runner.timers.mu
+	live            [4]*timerEntry
+	fired           []consensus.Timeout
+	queued          []*timerEntry
+	owner           timerOwner
+	sequence        uint64
+	localTimer      bool
+	trace           func(*journal.TimerRec)
+	observe         func(journal.TimerRec)
+	sourceExhausted bool
 }
 
 type timerOwner struct {
@@ -46,10 +49,11 @@ type timerEntry struct {
 // armed it), so the time spent in the step before arming counts.
 func (s *scheduler) arm(a consensus.ArmTimer, from time.Duration) {
 	e := &timerEntry{arm: a, from: from}
-	if s.trace != nil {
+	if s.trace != nil || s.observe != nil {
 		e.input, _ = inputlog.Encode(consensus.Timeout{Kind: a.Kind, View: a.View, Round: a.Round, Gen: a.Gen, Msg: a.Msg})
 	}
 	s.mu.Lock()
+	var replaced *journal.TimerRec
 	e.owner = s.owner
 	if a.Kind == consensus.RoundProposalTimer {
 		s.localTimer = true
@@ -59,11 +63,12 @@ func (s *scheduler) arm(a consensus.ArmTimer, from time.Duration) {
 		if old.t != nil {
 			old.t.Stop()
 		}
-		s.record("replace", s.owner, old)
+		replaced = s.record("replace", s.owner, old)
 	}
 	s.live[a.Kind] = e
-	s.record("arm", s.owner, e)
+	armed := s.record("arm", s.owner, e)
 	s.mu.Unlock()
+	s.publish(replaced, armed)
 	t := s.clock.AfterFunc(max(a.Duration-(s.clock.Mono()-from), 0), func() { s.fire(e) })
 	s.mu.Lock()
 	e.t = t
@@ -83,8 +88,9 @@ func (s *scheduler) fire(e *timerEntry) {
 	a := e.arm
 	s.fired = append(s.fired, consensus.Timeout{Kind: a.Kind, View: a.View, Round: a.Round, Gen: a.Gen, Msg: a.Msg})
 	s.queued = append(s.queued, e)
-	s.record("queued", e.owner, e)
+	record := s.record("queued", e.owner, e)
 	s.mu.Unlock()
+	s.publish(record)
 	if s.wake != nil {
 		s.wake()
 	}
@@ -93,7 +99,11 @@ func (s *scheduler) fire(e *timerEntry) {
 // cancel cancels the armed timers of the given kinds and returns them.
 func (s *scheduler) cancel(kinds []consensus.TimerKind) []consensus.ArmTimer {
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	var observations []*journal.TimerRec
+	defer func() {
+		s.mu.Unlock()
+		s.publish(observations...)
+	}()
 	var out []consensus.ArmTimer
 	var cancelled []*timerEntry
 	for _, k := range kinds {
@@ -108,9 +118,13 @@ func (s *scheduler) cancel(kinds []consensus.TimerKind) []consensus.ArmTimer {
 		}
 	}
 	for _, e := range cancelled {
-		s.record("cancelled", s.owner, e)
+		if rec := s.record("cancelled", s.owner, e); rec != nil {
+			observations = append(observations, rec)
+		}
 	}
-	s.record("cancel", s.owner, nil, kinds...)
+	if rec := s.record("cancel", s.owner, nil, kinds...); rec != nil {
+		observations = append(observations, rec)
+	}
 	return out
 }
 
@@ -122,14 +136,18 @@ func (s *scheduler) pending() bool {
 
 func (s *scheduler) pop() (consensus.Timeout, bool) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	var observation *journal.TimerRec
+	defer func() {
+		s.mu.Unlock()
+		s.publish(observation)
+	}()
 	if len(s.fired) == 0 {
 		return consensus.Timeout{}, false
 	}
 	t := s.fired[0]
 	s.fired = s.fired[1:]
 	if len(s.queued) > 0 {
-		s.record("pop", s.owner, s.queued[0])
+		observation = s.record("pop", s.owner, s.queued[0])
 		s.queued = s.queued[1:]
 	}
 	return t, true
@@ -147,8 +165,9 @@ func (s *scheduler) clear() {
 	s.mu.Lock()
 	s.fired = nil
 	s.queued = nil
-	s.record("clear", s.owner, nil)
+	record := s.record("clear", s.owner, nil)
 	s.mu.Unlock()
+	s.publish(record)
 }
 
 // TimerQueue uses the runner's timer reservation and expiry implementation.
@@ -181,9 +200,12 @@ func (s *scheduler) setOwner(engine, step, output uint64, source string) {
 
 // record is called with mu held, after the mutation. It measures operation
 // order rather than attributing a callback to the currently executing step.
-func (s *scheduler) record(action string, owner timerOwner, e *timerEntry, kinds ...consensus.TimerKind) {
-	if s.trace == nil {
-		return
+func (s *scheduler) record(action string, owner timerOwner, e *timerEntry, kinds ...consensus.TimerKind) *journal.TimerRec {
+	if s.trace == nil && s.observe == nil {
+		return nil
+	}
+	if s.observe != nil && s.sequence == ^uint64(0) {
+		s.sourceExhausted = true
 	}
 	s.sequence++
 	wall := s.clock.Now()
@@ -200,7 +222,18 @@ func (s *scheduler) record(action string, owner timerOwner, e *timerEntry, kinds
 		rec.Deadline = e.from + e.arm.Duration
 		rec.Input = e.input
 	}
-	s.trace(rec)
+	if s.trace != nil {
+		s.trace(rec)
+	}
+	if s.observe == nil {
+		return nil
+	}
+	detached := *rec
+	if s.sourceExhausted {
+		detached.Sequence = 0
+	}
+	detached.Input, detached.Kinds = bytes.Clone(rec.Input), slices.Clone(rec.Kinds)
+	return &detached
 }
 
 // PopRecorded reproduces an observed dequeue order among already-queued
