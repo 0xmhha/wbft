@@ -143,6 +143,10 @@ type segStats struct {
 // starts in a new segment; damaged segments of an earlier run are moved
 // aside as package wal does.
 func Open(opt Options, id Identity) (*FileWriter, error) {
+	if id.Core.CachePolicy != nil {
+		options := *id.Core.CachePolicy
+		id.Core.CachePolicy = &options
+	}
 	if opt.Duplicates != DupAll {
 		return nil, ErrUnsupported
 	}

@@ -130,7 +130,7 @@ func NewAnswerPool(j JournalReader) (*AnswerPool, error) {
 		lastSeq = rec.JSeq
 		switch b := rec.Body.(type) {
 		case *journal.SegmentRec:
-			if err := b.Core.NextHeight.Validate(); err != nil {
+			if err := b.Core.ValidateRuntimeProfiles(); err != nil {
 				return nil, err
 			}
 			if len(b.Core.ChainConfig) > MaxApplicationAnswerBytes {

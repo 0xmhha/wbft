@@ -106,6 +106,27 @@
         "impl": { "const": "wbft" },
         "mode": { "enum": ["embedded", "standalone"] },
         "profile": { "enum": ["compat", "improved"] },
+        "transport_cache": {
+          "description": "Local accepted-input/completed-write cache policy. Pending entry limits do not prove resource or remote-delivery bounds.",
+          "type": "object",
+          "properties": {
+            "profile": { "const": "accepted_completed_v1" },
+            "active": { "type": "boolean" },
+            "limits": {
+              "type": "object",
+              "properties": {
+                "receive_pending": { "type": "string", "pattern": "^[1-9][0-9]*$" },
+                "receive_per_peer": { "type": "string", "pattern": "^[1-9][0-9]*$" },
+                "write_pending": { "type": "string", "pattern": "^[1-9][0-9]*$" },
+                "write_per_peer": { "type": "string", "pattern": "^[1-9][0-9]*$" }
+              },
+              "required": ["receive_pending", "receive_per_peer", "write_pending", "write_per_peer"],
+              "additionalProperties": false
+            }
+          },
+          "required": ["profile", "active", "limits"],
+          "additionalProperties": false
+        },
         "processing_model": {
           "description": "Declared deterministic simulation service costs; operations execute atomically after reservation service, not at reconstructed internal milestones.",
           "type": "object",
