@@ -171,6 +171,7 @@ func (r *Runner) writeRunStart(from types.Height, head *types.Header, snap *cons
 // stopEngine discards the core state, the armed timers and the queued
 // inputs.
 func (r *Runner) stopEngine(reason string) {
+	r.updateReceiveContext(nil)
 	if r.nextHeight != nil {
 		r.nextHeight.clear()
 	}

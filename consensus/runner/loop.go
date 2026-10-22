@@ -182,6 +182,13 @@ type stepCtx struct {
 // handle processes one input: WAL record, core step, outputs, end-of-height
 // record, journal record and snapshot.
 func (r *Runner) handle(q queued) {
+	ticket, received, duplicate := r.beginReceiveCheck(q)
+	if duplicate {
+		return
+	}
+	if r.receiveCache != nil {
+		defer r.receiveCache.Cancel(ticket)
+	}
 	if q.deferred != nil {
 		defer func() { p := r.nextHeight; p.mu.Lock(); p.removeLocked(q.deferred); p.mu.Unlock() }()
 	}
@@ -224,6 +231,10 @@ func (r *Runner) handle(q queued) {
 	r.env.begin(true)
 	outs := r.core.Step(r.env, q.in)
 	answers := r.env.end()
+	if r.receiveCache != nil {
+		r.completeReceiveCheck(ticket, received, outs)
+		r.updateReceiveContext(r.core.Snapshot())
+	}
 	sc := &stepCtx{q: q, step: step, outs: outs, env: answers, seqIn: before.View.Sequence}
 	r.execute(sc)
 	if r.Halted() != nil {

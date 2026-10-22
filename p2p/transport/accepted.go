@@ -1,0 +1,29 @@
+package transport
+
+import (
+	"github.com/0xmhha/wbft/codec"
+	"github.com/0xmhha/wbft/types"
+)
+
+// CanRecordAccepted reports support for the staged post-core receive API.
+// Legacy cache observers and per-peer read-loop callbacks cannot represent a
+// later core completion. They require an explicit compatible policy profile.
+func (d *Dedup) CanRecordAccepted() bool {
+	return d.cacheObserver == nil && d.opt.Inbound == nil
+}
+
+// RecordAccepted registers a fully accepted input for outbound suppression.
+// It never invokes the legacy read-loop callback or emits a legacy cache
+// operation for a later core completion. The accepted-input receiver keeps
+// its independently scoped known cache rather than consulting this legacy one.
+func (d *Dedup) RecordAccepted(peer types.Address, code uint64, payload []byte) bool {
+	if !d.CanRecordAccepted() || CheckOutbound(code, payload) != nil {
+		return false
+	}
+	key := codec.DedupKey(payload)
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.peerCache(peer).Add(key, struct{}{})
+	d.known.Add(key, struct{}{})
+	return true
+}

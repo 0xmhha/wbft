@@ -328,7 +328,8 @@ type tnode struct {
 	log    *wal.Log
 	opts   consensus.Options
 	// noJournal boots the runner without a message journal.
-	noJournal bool
+	noJournal    bool
+	receiveCache *transport.ReceiveLedgerOptions
 	// timerTrace enables measured scheduler records in the test journal.
 	timerTrace bool
 	// refused is the codes of the signatures privval refused (Deps.Refused).
@@ -389,7 +390,7 @@ func (n *tnode) boot() {
 	if n.noJournal {
 		d.Journal = nil
 	}
-	r, err := New(Config{Core: n.opts, ReplayWAL: true, Manual: true}, d)
+	r, err := New(Config{Core: n.opts, ReplayWAL: true, Manual: true, ReceiveCache: n.receiveCache}, d)
 	if err != nil {
 		t.Fatal(err)
 	}

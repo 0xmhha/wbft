@@ -118,8 +118,15 @@ func (b *inbox) Offer(in transport.Inbound) bool {
 		return false
 	}
 	b.mu.Unlock()
-	// The key enters the known cache only for a message that was queued.
-	if r.d.Transport != nil && r.d.Transport.SeenInbound(in.Peer, in.Code, in.Payload) {
+	// The accepted-input policy consults completed checks without adding an
+	// unverified key. The original receiver keeps its historical semantics.
+	duplicate := false
+	if r.receiveCache != nil {
+		duplicate = r.receiveAlreadyKnown(in)
+	} else if r.d.Transport != nil {
+		duplicate = r.d.Transport.SeenInbound(in.Peer, in.Code, in.Payload)
+	}
+	if duplicate {
 		r.prefilter(in, nil, event.DropSilent, "duplicate", true)
 		return true
 	}

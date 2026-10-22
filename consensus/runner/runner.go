@@ -100,6 +100,11 @@ type EventSink interface {
 
 // Config configures a Runner.
 type Config struct {
+	// ReceiveCache registers a received key only after a successful direct
+	// core ACCEPT. Nil preserves legacy precheck caching. This staged runtime
+	// API requires explicit limits and currently refuses message journals
+	// until a compatible cache-policy profile is available.
+	ReceiveCache *transport.ReceiveLedgerOptions `json:",omitempty"`
 	// Core configures the consensus core. Core.Self must be the signer's
 	// address, or zero for a node that never signs.
 	Core consensus.Options
@@ -246,9 +251,11 @@ type Runner struct {
 	// application ahead; only the head check goroutine touches it.
 	headSuspect *types.Header
 
-	timers     scheduler
-	inbox      inbox
-	nextHeight *nextHeightPool
+	timers         scheduler
+	inbox          inbox
+	nextHeight     *nextHeightPool
+	receiveCache   *transport.ReceiveLedger
+	receiveContext atomic.Pointer[receiveContext]
 
 	commitMu            sync.Mutex // runner.commit.mu
 	commitQ             []commitJob
@@ -279,6 +286,22 @@ type commitJob struct {
 
 // New returns a stopped runner.
 func New(cfg Config, d Deps) (*Runner, error) {
+	var receiveCache *transport.ReceiveLedger
+	if opt := cfg.ReceiveCache; opt != nil {
+		if d.Journal != nil {
+			return nil, fmt.Errorf("runner: receive cache journal profile is not available")
+		}
+		if d.Transport != nil && !d.Transport.CanRecordAccepted() {
+			return nil, fmt.Errorf("runner: receive cache requires a compatible transport observer profile")
+		}
+		copyOptions := *opt
+		cfg.ReceiveCache = &copyOptions
+		var err error
+		receiveCache, err = transport.NewReceiveLedger(copyOptions)
+		if err != nil {
+			return nil, err
+		}
+	}
 	if l := cfg.NextHeight; l != nil {
 		if !cfg.ReplayWAL || d.WAL == nil || d.ManualProcessing != nil || l.Entries == 0 || l.Bytes == 0 || l.PerPeer == 0 || l.PerSource == 0 {
 			return nil, fmt.Errorf("runner: NextHeight requires WAL replay, positive limits and atomic processing")
@@ -323,6 +346,7 @@ func New(cfg Config, d Deps) (*Runner, error) {
 		lg = slog.New(slog.DiscardHandler)
 	}
 	r := &Runner{cfg: cfg, d: d, log: lg, notify: make(chan struct{}, 1), floorSkip: map[string]bool{}}
+	r.receiveCache = receiveCache
 	if d.ModuleLogger != nil {
 		r.modLogs = map[logcat.Module]*slog.Logger{logcat.ConsensusRound: d.ModuleLogger(logcat.ConsensusRound),
 			logcat.ConsensusMsg: d.ModuleLogger(logcat.ConsensusMsg)}
@@ -521,6 +545,9 @@ func (r *Runner) Close() error {
 		}
 		r.loopDone.Wait()
 		r.stopLoop = nil
+	}
+	if r.receiveCache != nil {
+		r.receiveCache.Close()
 	}
 	return nil
 }
