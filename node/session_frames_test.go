@@ -30,7 +30,8 @@ func (p *queuedSourceProbe) SendWrite(_ transport.WritePeer, _ uint64, _ []byte,
 
 func TestSessionFrameRecorderOriginalReservationAndQueueRefusal(t *testing.T) {
 	fs := fsys.NewMem()
-	w, err := journal.Open(journal.Options{FS: fs, Dir: "/session-node", Synchronous: true}, journal.Identity{Run: "original-node-recorder"})
+	policy := transport.CachePolicyLimits{ReceivePending: 8, ReceivePerPeer: 4, WritePending: 8, WritePerPeer: 4}
+	w, err := journal.Open(journal.Options{FS: fs, Dir: "/session-node", Synchronous: true}, journal.Identity{Run: "original-node-recorder", Core: journal.CoreOptions{CachePolicy: &journal.CachePolicyOptions{Profile: journal.AcceptedCompletedCacheProfile, Limits: policy}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -81,11 +82,12 @@ func TestSessionFrameRecorderOriginalReservationAndQueueRefusal(t *testing.T) {
 	// not actual network completion. SDK tests supply the real I/O evidence.
 	original := bytes.Clone(raw)
 	rec.ReceivedSession(target, uint64(m.Code), len(raw), raw, transport.OfferQueued, 1, nil)
-	raw[0] ^= 1 // Only the caller's local buffer changes, after the callback.
 	rec.attemptSequence.Store(^uint64(0))
-	if wrapped.WriteAttempt(transport.WriteTicket{}, event.CauseRetry) != (transport.SendAttempt{}) {
+	dedup.Gossip(vs, uint64(m.Code), raw, event.CauseRetry)
+	if probe.attempt != (transport.SendAttempt{}) || rec.attemptSequence.Load() != ^uint64(0) {
 		t.Fatal("exhausted counter reused an observation")
 	}
+	raw[0] ^= 1 // Only the caller's local buffer changes, after the callback.
 	dedup.CloseCompletedWrites()
 	target.Session.Close()
 	rec.EndedSession(target, transport.SessionRemoved)
@@ -118,5 +120,9 @@ func TestSessionFrameRecorderOriginalReservationAndQueueRefusal(t *testing.T) {
 	}
 	if !prepared || !refused || inbound != 1 {
 		t.Fatal("actual reservation or local queue transition missing", prepared, refused, inbound)
+	}
+	check, err := journal.CheckWriteIOSources(records, journal.WriteIOCheckLimits{Records: 1000, Ledgers: 4, Reordered: 16, Sessions: 8, Requests: 16, Frames: 16})
+	if err != nil || check.Status != "consistent" || check.Writes != 0 || check.Reservations != 2 || check.PhysicalStatus != "unavailable" {
+		t.Fatal("queue-only source was mistaken for physical writes", check, err)
 	}
 }
