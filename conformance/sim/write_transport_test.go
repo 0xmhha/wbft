@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"reflect"
 	"testing"
 	"time"
 
@@ -247,5 +248,85 @@ func TestWriteQueueProfileValidationAndOwnership(t *testing.T) {
 	var legacy transport.Transport = &adapter{}
 	if _, ok := legacy.(transport.WriteSender); ok {
 		t.Fatal("default adapter gained completion capability")
+	}
+}
+
+type writeStreamSink struct {
+	inputs          []transport.Inbound
+	streams, origin bool
+}
+
+func (r *writeStreamSink) Offer(in transport.Inbound) bool {
+	in.Payload = bytes.Clone(in.Payload)
+	r.inputs = append(r.inputs, in)
+	return true
+}
+func (r *writeStreamSink) UsesStreamIdentity() bool { return r.streams }
+func (r *writeStreamSink) UsesCaptureOrigin() bool  { return r.origin }
+
+// This verifies the normal adapter's frozen provenance, independently of the
+// core's acceptance decision. The sink does not execute a consensus input.
+func TestWriteQueueOriginalReceiveStreamAndMixedUnknown(t *testing.T) {
+	s := writeQueueNodes(t)
+	a, b := s.nodes[0], s.nodes[1]
+	sink := &writeStreamSink{streams: true, origin: true}
+	b.writes.SetReceiver(sink)
+	r := a.writes.route(b)
+	if r.remote == nil || r.remote.remote != r || r.target.Session == r.remote.target.Session {
+		t.Fatal("two original endpoint owners are not paired")
+	}
+	receiverStream := r.remote.target.Session
+	raw, code := normalWriteFrame(t, a), uint64(codec.CodeRoundChange)
+	if a.writes.SendWrite(r.target, code, raw, transport.SendAttempt{}, func(transport.WriteReceipt) {}) != transport.Queued {
+		t.Fatal("queue admission")
+	}
+	s.l.runAt(10 * time.Millisecond)
+	if len(sink.inputs) != 1 {
+		t.Fatal("normal original frame missing", sink.inputs)
+	}
+	in := sink.inputs[0]
+	if in.Stream != receiverStream || in.Peer != a.v.address || in.Code != code || !bytes.Equal(in.Payload, raw) || in.Origin.WriterRun != b.runID() || in.Origin.CaptureID == 0 || in.Origin.CaptureID != in.Capture {
+		t.Fatal("original receiver stream/capture source changed", in)
+	}
+	a.writes.closePeer(b)
+	fresh := a.writes.route(b)
+	if receiverStream.Active() || fresh.remote.target.Session == receiverStream || r.target.Session.Active() {
+		t.Fatal("normal reconnect revived either endpoint")
+	}
+	// The legacy path supplies no original stream even while a current pair
+	// exists at this address. It must not borrow that current session.
+	b.receive(a.v.address, code, raw)
+	if len(sink.inputs) != 2 || sink.inputs[1].Stream != nil {
+		t.Fatal("legacy delivery was assigned a current session")
+	}
+	legacy := &writeStreamSink{}
+	b.writes.SetReceiver(legacy)
+	b.receiveFromStream(a.v.address, code, raw, fresh.remote.target.Session)
+	if len(legacy.inputs) != 1 || legacy.inputs[0].Stream != nil || legacy.inputs[0].Origin != (transport.ReceiveOrigin{}) {
+		t.Fatal("unrequested provenance changed legacy inbound shape")
+	}
+	// Exhaustion is observation metadata only; normal bytes still reach the
+	// sink, with capture provenance explicitly unavailable and never reused.
+	b.writes.SetReceiver(sink)
+	b.capture = ^uint64(0)
+	for range 2 {
+		b.receiveFromStream(a.v.address, code, raw, fresh.remote.target.Session)
+		last := sink.inputs[len(sink.inputs)-1]
+		if last.Capture != 0 || last.Origin != (transport.ReceiveOrigin{}) || last.Stream != fresh.remote.target.Session {
+			t.Fatal("exhausted original capture was reused or changed stream")
+		}
+	}
+}
+
+func TestWriteQueueSeededArtifactsRepeat(t *testing.T) {
+	sc := writeQueueScenario(t, false)
+	sc.DefaultLink.Delay = []time.Duration{0, time.Millisecond, 7 * time.Millisecond}
+	first, err := Run(context.Background(), sc, Output{})
+	if err != nil || len(first.Violations) != 0 {
+		t.Fatal("first normal simulation", err, first)
+	}
+	second, err := Run(context.Background(), sc, Output{})
+	if err != nil || !reflect.DeepEqual(first, second) {
+		t.Fatal("same seeded normal write service changed artifacts", err)
 	}
 }

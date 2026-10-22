@@ -47,23 +47,29 @@ func cloneWriteQueue(p *WriteQueueProfile, sc Scenario) (*WriteQueueProfile, err
 }
 
 type writeRoute struct {
-	inc int
-	q   *writequeue.Queue
+	inc    int
+	q      *writequeue.Queue
+	target transport.WritePeer
+	remote *writeRoute
 }
 
 // Only this explicit adapter implements WriteSender; default adapter method
 // sets and the legacy simulator's immediate-write bytes remain unchanged.
 type writeAdapter struct {
 	*adapter
-	routes  map[*node]*writeRoute
-	blocked map[*node]time.Duration
-	closed  bool
+	routes   map[*node]*writeRoute
+	blocked  map[*node]time.Duration
+	closed   bool
+	receiver transport.Receiver
 }
 
 var _ transport.WriteSender = (*writeAdapter)(nil)
 
 func (t *writeAdapter) route(dst *node) *writeRoute {
 	if t.closed || !t.live() || dst == nil || !dst.alive || dst == t.n || t.blocked[dst] > t.n.s.l.c.Mono() {
+		return nil
+	}
+	if dst.writes != nil && (dst.writes.closed || dst.writes.blocked[t.n] > t.n.s.l.c.Mono()) {
 		return nil
 	}
 	if r := t.routes[dst]; r != nil {
@@ -79,18 +85,31 @@ func (t *writeAdapter) route(dst *node) *writeRoute {
 		if !t.live() || !dst.alive || dst.inc != inc {
 			return
 		}
-		sent, run := s.l.c.Mono(), t.n.runID()
+		remote := original.remote
 		s.deliverAfter(t.n.v.address, dst.v.address, func() {
 			if t.live() && dst.alive && dst.inc == inc && dst.r != nil && t.routes[dst] == original && len(original.q.WritePeers()) != 0 {
-				s.selectDelivery(dst, t.n.v.address, code, payload, sent, run)
+				var stream *transport.WriteSession
+				if remote != nil {
+					if dst.writes == nil || dst.writes.routes[t.n] != remote || !remote.target.Session.Active() {
+						return
+					}
+					stream = remote.target.Session
+				}
+				// Scenario validation excludes delivery selectors for this model.
+				dst.receiveFromStream(t.n.v.address, code, payload, stream)
 			}
 		})
 	})
 	if err != nil {
 		panic(err) // scenario validation established constructor preconditions
 	}
-	original = &writeRoute{inc: inc, q: q}
+	original = &writeRoute{inc: inc, q: q, target: q.WritePeers()[0]}
 	t.routes[dst] = original
+	if dst.writes != nil {
+		if remote := dst.writes.route(t.n); remote != nil {
+			original.remote, remote.remote = remote, original
+		}
+	}
 	return original
 }
 
@@ -138,10 +157,24 @@ func (t *writeAdapter) Send(peers []types.Address, code uint64, payload []byte) 
 
 func (t *writeAdapter) closePeer(dst *node) {
 	if r := t.routes[dst]; r != nil {
-		r.q.Close()
 		delete(t.routes, dst)
+		remote := r.remote
+		r.remote = nil
+		if remote != nil {
+			remote.remote = nil
+			if dst.writes != nil && dst.writes.routes[t.n] == remote {
+				delete(dst.writes.routes, t.n)
+			}
+		}
+		// Remove both original routes before callbacks may reconnect.
+		r.q.Close()
+		if remote != nil {
+			remote.q.Close()
+		}
 	}
 }
+
+func (t *writeAdapter) SetReceiver(r transport.Receiver) { t.receiver = r }
 
 func (t *writeAdapter) Peers() []transport.PeerInfo {
 	var out []transport.PeerInfo

@@ -254,6 +254,9 @@ func (n *node) start() {
 		return
 	}
 	n.r, n.signer = r, signer
+	if n.writes != nil {
+		n.writes.SetReceiver(r.Receiver())
+	}
 	fields := map[string]any{"impl": "wbft", "mode": "standalone", "profile": n.spec.Profile, "sign_floor": floor, "wal_recovery": map[string]any{"records": recov.Records, "torn_bytes": recov.TornBytes, "corrupted": len(recov.Corrupted)}}
 	if p := n.spec.WriteQueue; p != nil {
 		fields["write_queue_model"] = map[string]any{"profile": "simulated_v1", "waiting_entries": p.Waiting, "write_time_ns": strconv.FormatInt(int64(p.WriteTime), 10), "link_delay": "scenario", "completion": "simulated_local_write", "cache_policy": "legacy"}

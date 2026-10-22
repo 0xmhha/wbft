@@ -121,17 +121,37 @@ func (t *adapter) sendOne(dst *node, code uint64, payload []byte) {
 // receive hands a message to the node's runner, as the transport's read
 // loop does after the frame stage.
 func (n *node) receive(from types.Address, code uint64, payload []byte) (uint64, string) {
+	return n.receiveFromStream(from, code, payload, nil)
+}
+
+// receiveFromStream retains an original receiver-side stream only for a sink
+// requesting functional provenance. A legacy/mixed sender supplies nil rather
+// than borrowing a current route by address.
+func (n *node) receiveFromStream(from types.Address, code uint64, payload []byte, stream *transport.WriteSession) (uint64, string) {
 	s := n.s
 	offer := "queued"
 	var capture uint64
 	if n.jw != nil {
-		n.capture++
-		capture = n.capture
+		if n.writes == nil || n.capture != ^uint64(0) {
+			n.capture++
+			capture = n.capture
+		}
 	}
 	data, deliver, act, _ := transport.DecodeFrame(code, payload)
 	switch act {
 	case transport.FrameDeliver:
-		if !n.r.Receiver().Offer(transport.Inbound{Peer: from, Code: deliver, Payload: data, RecvMono: s.l.c.Mono(), Capture: capture}) {
+		sink := n.r.Receiver()
+		if n.writes != nil && n.writes.receiver != nil {
+			sink = n.writes.receiver
+		}
+		in := transport.Inbound{Peer: from, Code: deliver, Payload: data, RecvMono: s.l.c.Mono(), Capture: capture}
+		if requested, ok := sink.(transport.StreamReceiver); ok && requested.UsesStreamIdentity() {
+			in.Stream = stream
+		}
+		if requested, ok := sink.(transport.CaptureOriginReceiver); ok && requested.UsesCaptureOrigin() && n.writes != nil && capture != 0 {
+			in.Origin = transport.ReceiveOrigin{WriterRun: n.runID(), CaptureID: capture}
+		}
+		if !sink.Offer(in) {
 			offer = "queue_full"
 		}
 	case transport.FrameDisconnect:
