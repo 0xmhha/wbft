@@ -127,6 +127,20 @@
           "required": ["profile", "active", "limits"],
           "additionalProperties": false
         },
+        "write_queue_model": {
+          "description": "Opt-in normal FIFO simulation service. Queue admission, simulated local completion and scenario link arrival are distinct; cache registration retains the legacy policy.",
+          "type": "object",
+          "properties": {
+            "profile": { "const": "simulated_v1" },
+            "waiting_entries": { "type": "integer", "minimum": 1, "maximum": 65536 },
+            "write_time_ns": { "type": "string", "pattern": "^(0|[1-9][0-9]*)$" },
+            "link_delay": { "const": "scenario" },
+            "completion": { "const": "simulated_local_write" },
+            "cache_policy": { "const": "legacy" }
+          },
+          "required": ["profile", "waiting_entries", "write_time_ns", "link_delay", "completion", "cache_policy"],
+          "additionalProperties": false
+        },
         "processing_model": {
           "description": "Declared deterministic simulation service costs; operations execute atomically after reservation service, not at reconstructed internal milestones.",
           "type": "object",

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"math/big"
 	"math/rand/v2"
+	"strconv"
 
 	"github.com/0xmhha/wbft/codec"
 	"github.com/0xmhha/wbft/consensus"
@@ -60,6 +61,7 @@ type node struct {
 	log    *wal.Log
 	jw     *journal.FileWriter
 	tr     *adapter
+	writes *writeAdapter
 	ev     *event.Writer
 
 	eventFiles       map[string]*bytes.Buffer
@@ -228,7 +230,13 @@ func (n *node) start() {
 		}
 	}
 	n.tr = newAdapter(n)
-	dedup, err := transport.NewDedup(n.tr, transport.DedupOptions{Self: n.v.address})
+	var net transport.Transport = n.tr
+	n.writes = nil
+	if n.spec.WriteQueue != nil {
+		n.writes = &writeAdapter{adapter: n.tr, routes: map[*node]*writeRoute{}}
+		net = n.writes
+	}
+	dedup, err := transport.NewDedup(net, transport.DedupOptions{Self: n.v.address})
 	if err != nil {
 		fail(err)
 		return
@@ -239,7 +247,7 @@ func (n *node) start() {
 	}
 	processing, workers := n.processingModel()
 	r, err := runner.New(runner.Config{Core: opts, ReplayWAL: n.spec.ReplayWAL, Manual: true, Workers: workers, NextHeight: n.spec.NextHeight},
-		runner.Deps{Chain: n.app, App: application, Transport: dedup, Net: n.tr, Signer: recSigner{signer, n}, WAL: log,
+		runner.Deps{Chain: n.app, App: application, Transport: dedup, Net: net, Signer: recSigner{signer, n}, WAL: log,
 			Clock: n.clock, Events: countingSink{n.ev, n.s}, Journal: jw, Rand: n.rng.IntN, Faults: fh, Logger: n.s.logger(logcat.ConsensusRound), ModuleLogger: n.s.moduleLogger(), ManualProcessing: processing})
 	if err != nil {
 		fail(err)
@@ -247,6 +255,9 @@ func (n *node) start() {
 	}
 	n.r, n.signer = r, signer
 	fields := map[string]any{"impl": "wbft", "mode": "standalone", "profile": n.spec.Profile, "sign_floor": floor, "wal_recovery": map[string]any{"records": recov.Records, "torn_bytes": recov.TornBytes, "corrupted": len(recov.Corrupted)}}
+	if p := n.spec.WriteQueue; p != nil {
+		fields["write_queue_model"] = map[string]any{"profile": "simulated_v1", "waiting_entries": p.Waiting, "write_time_ns": strconv.FormatInt(int64(p.WriteTime), 10), "link_delay": "scenario", "completion": "simulated_local_write", "cache_policy": "legacy"}
+	}
 	if processing != nil {
 		fields["processing_model"] = processingDeclaration(n.spec.Processing)
 	}
@@ -394,6 +405,7 @@ func (n *node) stop() {
 	if n.log != nil {
 		_ = n.log.Close()
 	}
+	n.closeWriteQueues()
 	if n.jw != nil {
 		_ = n.jw.Close()
 	}

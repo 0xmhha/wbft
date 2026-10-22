@@ -46,6 +46,9 @@ type NodeSpec struct {
 	// Processing declares an optional pre-dispatch receive/core service model.
 	// Nil and all-zero samples preserve the original zero-cost manual loop.
 	Processing *ProcessingProfile
+	// WriteQueue opts into normal FIFO local-write service before link delivery.
+	// Nil preserves the original transport. It does not enable a cache policy.
+	WriteQueue *WriteQueueProfile `json:",omitempty"`
 	// BuildQueuePolicy opts into a declared serial application worker. Empty
 	// preserves the independent-request model used by existing scenarios.
 	BuildQueuePolicy string
@@ -575,6 +578,10 @@ func newSimulation(sc Scenario) (*simulation, error) {
 			return nil, err
 		}
 		spec.Processing = processing
+		spec.WriteQueue, err = cloneWriteQueue(spec.WriteQueue, sc)
+		if err != nil {
+			return nil, err
+		}
 		spec.NextHeight, err = cloneNextHeight(spec.NextHeight, spec.ReplayWAL, processing)
 		if err != nil {
 			return nil, err
