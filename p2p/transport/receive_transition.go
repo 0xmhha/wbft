@@ -44,6 +44,8 @@ type ReceiveTransition struct {
 	Origin                              ReceiveOrigin
 	CheckedOrigin                       ReceiveOrigin
 	Source                              ReceiveAcceptSource
+	Context                             ValidationContext
+	ContextKnown                        bool
 	Decision                            ReceiveDecision
 	Owned, Matched, ScopeActive, Closed bool
 	Known, Recent, Released             bool
@@ -103,6 +105,7 @@ func (l *ReceiveLedger) receiveTicketIdentity(t *ReceiveTransition, ticket Recei
 	if r := ticket.reservation; r != nil && r.owner == l {
 		t.Request = r.observation
 		t.Scope = r.scope.ObservationID()
+		t.Context, t.ContextKnown = r.scope.Context()
 		t.ScopeActive = r.scope.Active()
 		t.Origin = r.origin
 		t.Input = WriteIdentity{Peer: r.peer, Session: r.stream, Code: r.code, Key: r.key.key.payload, PayloadSHA256: r.payload}

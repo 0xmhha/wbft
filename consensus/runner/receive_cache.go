@@ -33,7 +33,7 @@ func (r *Runner) updateReceiveContext(snap *consensus.Snapshot) *receiveContext 
 		r.receiveContext.Store(nil)
 		return nil
 	}
-	next := &receiveContext{snapshot: snap, scope: transport.NewValidationScope()}
+	next := &receiveContext{snapshot: snap, scope: r.newReceiveScope(snap)}
 	r.receiveContext.Store(next)
 	return next
 }

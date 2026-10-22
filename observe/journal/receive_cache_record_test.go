@@ -146,7 +146,7 @@ func TestReceiveCacheRecordStrictMetadata(t *testing.T) {
 	}
 	// These are detached metadata codec inputs, never changed transport frames.
 	for _, change := range []func(*receiveCacheRLP){
-		func(w *receiveCacheRLP) { w.Format++ }, func(w *receiveCacheRLP) { w.Flags |= 1 << 8 },
+		func(w *receiveCacheRLP) { w.Format++ }, func(w *receiveCacheRLP) { w.Flags |= 1 << 9 },
 		func(w *receiveCacheRLP) { w.Action = 256 + uint64(transport.ReceiveLedgerStart) }, func(w *receiveCacheRLP) { w.Ledger = 0 },
 		func(w *receiveCacheRLP) { w.Scope = 1 }, func(w *receiveCacheRLP) { w.Request = 1 },
 		func(w *receiveCacheRLP) { w.Origin = transport.ReceiveOrigin{WriterRun: "partial"} },
@@ -198,5 +198,73 @@ func TestReceiveCacheMetadataRespectsQueueBudget(t *testing.T) {
 	}
 	if dropped != 1 {
 		t.Fatal("missing receive-cache gap", dropped)
+	}
+}
+
+func TestReceiveCacheRecordFrozenContextUsesExactDecimals(t *testing.T) {
+	fs := fsys.NewMem()
+	writer, err := Open(Options{FS: fs, Dir: "/context", Synchronous: true}, ident())
+	if err != nil {
+		t.Fatal(err)
+	}
+	observer := &journalReceiveTransitions{writer: writer, start: time.Now()}
+	ledger, err := transport.NewReceiveLedger(transport.ReceiveLedgerOptions{Pending: 16, PerPeer: 4, KeyWithCode: true, Trace: observer})
+	if err != nil {
+		t.Fatal(err)
+	}
+	context := transport.ValidationContext{Sequence: "18446744073709551617", Round: "9007199254740993", PriorRound: "9007199254740992", State: "Preprepared"}
+	scope := transport.NewValidationScopeWithContext(context)
+	normal := deferredNormalMessage(t)
+	in := transport.Inbound{Peer: normal.Peer, Code: uint64(normal.Code), Payload: normal.Payload}
+	ticket, d := ledger.Prepare(scope, in, transport.ReceiveOrigin{})
+	if d != transport.ReceiveReserved {
+		t.Fatal(d)
+	}
+	scope.Close()
+	ledger.Cancel(ticket)
+	ledger.Close()
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	records, err := ReadAll(fs, "/context")
+	if err != nil {
+		t.Fatal(err)
+	}
+	matched := 0
+	for _, record := range records {
+		r, ok := record.Body.(*ReceiveCacheRec)
+		if !ok || r.Transition.Action != transport.ReceiveCheckPrepare {
+			continue
+		}
+		if !r.Transition.ContextKnown || r.Transition.Context != context {
+			t.Fatal("exact checking context lost", r.Transition.Context)
+		}
+		raw, err := encodeBody(record, record.JSeq)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var wire receiveCacheRLP
+		if err := rlp.DecodeStrict(raw, &wire); err != nil {
+			t.Fatal(err)
+		}
+		for _, change := range []func(*receiveCacheRLP){
+			func(w *receiveCacheRLP) { w.Context.Sequence = "01" }, func(w *receiveCacheRLP) { w.Context.Round = "-1" },
+			func(w *receiveCacheRLP) { w.Context.State = "unknown" }, func(w *receiveCacheRLP) { w.Context.ValidatorsPresent = 2 },
+			func(w *receiveCacheRLP) { w.Flags &= ^uint64(256) }, func(w *receiveCacheRLP) { w.Flags |= 1 << 9 },
+		} {
+			invalid := wire
+			change(&invalid)
+			body, err := rlp.Encode(&invalid)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := decodeBody(KindReceiveCache, body); err == nil {
+				t.Fatal("invalid context metadata accepted")
+			}
+		}
+		matched++
+	}
+	if matched != 1 {
+		t.Fatal("context preparation observation missing", matched)
 	}
 }

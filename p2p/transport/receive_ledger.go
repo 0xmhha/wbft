@@ -11,7 +11,11 @@ import (
 // ValidationScope is one immutable authority/checking context owned by the
 // receiver. It has an independent lifetime from a peer stream or recorder.
 // The receiver closes it when that validation context is replaced.
-type ValidationScope struct{ lifetime *WriteSession }
+type ValidationScope struct {
+	lifetime   *WriteSession
+	metadata   ValidationContext
+	hasContext bool
+}
 
 func NewValidationScope() *ValidationScope {
 	return &ValidationScope{lifetime: NewWriteSession()}
@@ -154,6 +158,7 @@ func (l *ReceiveLedger) Prepare(scope *ValidationScope, in Inbound, origin Recei
 	}
 	if l.opt.Trace != nil {
 		event.Scope = scope.ObservationID()
+		event.Context, event.ContextKnown = scope.Context()
 		event.Input = l.receiveIdentity(in, key)
 		event.Origin = origin
 	}
@@ -268,6 +273,7 @@ func (l *ReceiveLedger) Known(scope *ValidationScope, code uint64, payload []byt
 	event := l.transitionReceive(ReceiveKnownInspect)
 	if l.opt.Trace != nil {
 		event.Scope = scope.ObservationID()
+		event.Context, event.ContextKnown = scope.Context()
 		event.Input = receiveLookupIdentity(types.Address{}, code, key, payload)
 	}
 	event.ScopeActive = active
@@ -295,6 +301,7 @@ func (l *ReceiveLedger) Recent(scope *ValidationScope, peer types.Address, code 
 	event := l.transitionReceive(ReceiveRecentInspect)
 	if l.opt.Trace != nil {
 		event.Scope = scope.ObservationID()
+		event.Context, event.ContextKnown = scope.Context()
 		event.Input = receiveLookupIdentity(peer, code, key, payload)
 	}
 	event.ScopeActive = active

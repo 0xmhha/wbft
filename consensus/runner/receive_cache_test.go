@@ -102,6 +102,9 @@ func TestReceiveCacheActualCoreAcceptanceAndNormalRestart(t *testing.T) {
 				if transition.Decision != transport.ReceiveRegistered || !transition.Owned || !transition.Matched || !transition.Released || !transition.Recent || !transition.ScopeActive || transition.Input != transition.Checked {
 					t.Fatal("actual ACCEPT transition incomplete", transition)
 				}
+				if !transition.ContextKnown || transition.Context.Sequence != "10" || transition.Context.Round != "0" || !transition.Context.ValidatorsPresent || transition.Context.Validators == (types.Hash{}) {
+					t.Fatal("actual acceptance lost immutable checking context", transition.Context)
+				}
 				source := transition.Source
 				acceptedSource = source
 				if source.EngineRun != n.r.EngineRun() || source.Step == 0 || source.Output == 0 || source.Via != "direct" {
@@ -174,6 +177,9 @@ func TestReceiveCacheActualCoreAcceptanceAndNormalRestart(t *testing.T) {
 			matches := 0
 			for _, record := range records {
 				if r, ok := record.Body.(*journal.ReceiveCacheRec); ok && r.Transition.Action == transport.ReceiveCheckAccept && r.Transition.Input.PayloadSHA256 == types.Hash(sha256.Sum256(raw)) && r.Transition.Decision == transport.ReceiveRegistered && r.Transition.Source == acceptedSource {
+					if !r.Transition.ContextKnown || r.Transition.Context.Sequence != "10" {
+						t.Fatal("actual context lost on journal read")
+					}
 					if r.Transition.Source.EngineRun == 0 || r.Transition.Source.Step == 0 || r.Transition.Source.Output == 0 {
 						t.Fatal("actual ACCEPT source lost on journal read")
 					}

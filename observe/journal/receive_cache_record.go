@@ -18,11 +18,47 @@ type ReceiveCacheRec struct {
 	WallNs     int64
 }
 
+type validationContextRLP struct {
+	Sequence, Round, State, PriorRound        string
+	Validators, PriorValidators               types.Hash
+	ValidatorsPresent, PriorValidatorsPresent uint64
+}
+
+func receiveContextWire(context transport.ValidationContext) validationContextRLP {
+	return validationContextRLP{Sequence: context.Sequence, Round: context.Round, State: context.State, PriorRound: context.PriorRound, Validators: context.Validators, PriorValidators: context.PriorValidators, ValidatorsPresent: boolUint(context.ValidatorsPresent), PriorValidatorsPresent: boolUint(context.PriorValidatorsPresent)}
+}
+func receiveContextValue(context validationContextRLP) transport.ValidationContext {
+	return transport.ValidationContext{Sequence: context.Sequence, Round: context.Round, State: context.State, PriorRound: context.PriorRound, Validators: context.Validators, PriorValidators: context.PriorValidators, ValidatorsPresent: context.ValidatorsPresent == 1, PriorValidatorsPresent: context.PriorValidatorsPresent == 1}
+}
+func canonicalContextNumber(text string) bool {
+	if text == "" || len(text) > 1 && text[0] == '0' {
+		return false
+	}
+	for _, c := range text {
+		if c < '0' || c > '9' {
+			return false
+		}
+	}
+	return true
+}
+func validValidationContext(context transport.ValidationContext) bool {
+	if !canonicalContextNumber(context.Sequence) || !canonicalContextNumber(context.Round) || !canonicalContextNumber(context.PriorRound) {
+		return false
+	}
+	switch context.State {
+	case "AcceptRequest", "Preprepared", "Prepared", "Committed":
+	default:
+		return false
+	}
+	return (context.ValidatorsPresent || context.Validators == (types.Hash{})) && (context.PriorValidatorsPresent || context.PriorValidators == (types.Hash{}))
+}
+
 type receiveCacheRLP struct {
 	Format, JSeq, Ledger, Sequence, Action, Request, Scope uint64
 	Input, Checked                                         transport.WriteIdentity
 	Origin, CheckedOrigin                                  transport.ReceiveOrigin
 	Source                                                 transport.ReceiveAcceptSource
+	Context                                                validationContextRLP
 	Decision, Flags, PendingBefore, PendingAfter           uint64
 	Pruned                                                 []uint64
 	PendingLimit, PerPeerLimit, Mono, WallNs               uint64
@@ -40,6 +76,13 @@ func receiveInputPresent(in transport.WriteIdentity) bool {
 
 func validReceiveTransition(t transport.ReceiveTransition) bool {
 	if t.Ledger == 0 || t.Sequence == 0 || t.Action < transport.ReceiveLedgerStart || t.Action > transport.ReceiveLedgerClose || !validReceiveOrigin(t.Origin) || !validReceiveOrigin(t.CheckedOrigin) {
+		return false
+	}
+	if t.ContextKnown {
+		if t.Scope == 0 || !validValidationContext(t.Context) {
+			return false
+		}
+	} else if t.Context != (transport.ValidationContext{}) {
 		return false
 	}
 	zero := transport.WriteIdentity{}
@@ -165,7 +208,7 @@ func validReceiveTransition(t transport.ReceiveTransition) bool {
 
 func receiveFlags(t transport.ReceiveTransition) uint64 {
 	var flags uint64
-	for index, value := range []bool{t.Owned, t.Matched, t.ScopeActive, t.Closed, t.Known, t.Recent, t.Released, t.KeyWithCode} {
+	for index, value := range []bool{t.Owned, t.Matched, t.ScopeActive, t.Closed, t.Known, t.Recent, t.Released, t.KeyWithCode, t.ContextKnown} {
 		if value {
 			flags |= 1 << index
 		}
@@ -177,17 +220,17 @@ func encodeReceiveCacheRec(r *ReceiveCacheRec, jseq uint64) ([]byte, error) {
 	if r.Mono < 0 || !validReceiveTransition(t) {
 		return nil, fmt.Errorf("journal: invalid accepted-receive cache observation")
 	}
-	return rlp.Encode(&receiveCacheRLP{Format: Format, JSeq: jseq, Ledger: t.Ledger, Sequence: t.Sequence, Action: uint64(t.Action), Request: t.Request, Scope: t.Scope, Input: t.Input, Checked: t.Checked, Origin: t.Origin, CheckedOrigin: t.CheckedOrigin, Source: t.Source, Decision: uint64(t.Decision), Flags: receiveFlags(t), PendingBefore: t.PendingBefore, PendingAfter: t.PendingAfter, Pruned: t.Pruned, PendingLimit: t.PendingLimit, PerPeerLimit: t.PerPeerLimit, Mono: uint64(r.Mono), WallNs: uint64(r.WallNs)})
+	return rlp.Encode(&receiveCacheRLP{Format: Format, JSeq: jseq, Ledger: t.Ledger, Sequence: t.Sequence, Action: uint64(t.Action), Request: t.Request, Scope: t.Scope, Input: t.Input, Checked: t.Checked, Origin: t.Origin, CheckedOrigin: t.CheckedOrigin, Source: t.Source, Context: receiveContextWire(t.Context), Decision: uint64(t.Decision), Flags: receiveFlags(t), PendingBefore: t.PendingBefore, PendingAfter: t.PendingAfter, Pruned: t.Pruned, PendingLimit: t.PendingLimit, PerPeerLimit: t.PerPeerLimit, Mono: uint64(r.Mono), WallNs: uint64(r.WallNs)})
 }
 func decodeReceiveCacheRec(body []byte) (Record, error) {
 	var w receiveCacheRLP
 	if err := rlp.DecodeStrict(body, &w); err != nil {
 		return Record{}, fmt.Errorf("%w: accepted-receive cache: %v", ErrRecord, err)
 	}
-	if w.Format != Format || w.Action > 255 || w.Decision > 255 || w.Flags > 255 {
+	if w.Format != Format || w.Action > 255 || w.Decision > 255 || w.Flags > 511 || w.Context.ValidatorsPresent > 1 || w.Context.PriorValidatorsPresent > 1 {
 		return Record{}, fmt.Errorf("%w: invalid accepted-receive cache encoding", ErrRecord)
 	}
-	t := transport.ReceiveTransition{Ledger: w.Ledger, Sequence: w.Sequence, Action: transport.ReceiveAction(w.Action), Request: w.Request, Scope: w.Scope, Input: w.Input, Checked: w.Checked, Origin: w.Origin, CheckedOrigin: w.CheckedOrigin, Source: w.Source, Decision: transport.ReceiveDecision(w.Decision), Owned: w.Flags&1 != 0, Matched: w.Flags&2 != 0, ScopeActive: w.Flags&4 != 0, Closed: w.Flags&8 != 0, Known: w.Flags&16 != 0, Recent: w.Flags&32 != 0, Released: w.Flags&64 != 0, KeyWithCode: w.Flags&128 != 0, PendingBefore: w.PendingBefore, PendingAfter: w.PendingAfter, Pruned: w.Pruned, PendingLimit: w.PendingLimit, PerPeerLimit: w.PerPeerLimit}
+	t := transport.ReceiveTransition{Ledger: w.Ledger, Sequence: w.Sequence, Action: transport.ReceiveAction(w.Action), Request: w.Request, Scope: w.Scope, Input: w.Input, Checked: w.Checked, Origin: w.Origin, CheckedOrigin: w.CheckedOrigin, Source: w.Source, Context: receiveContextValue(w.Context), ContextKnown: w.Flags&256 != 0, Decision: transport.ReceiveDecision(w.Decision), Owned: w.Flags&1 != 0, Matched: w.Flags&2 != 0, ScopeActive: w.Flags&4 != 0, Closed: w.Flags&8 != 0, Known: w.Flags&16 != 0, Recent: w.Flags&32 != 0, Released: w.Flags&64 != 0, KeyWithCode: w.Flags&128 != 0, PendingBefore: w.PendingBefore, PendingAfter: w.PendingAfter, Pruned: w.Pruned, PendingLimit: w.PendingLimit, PerPeerLimit: w.PerPeerLimit}
 	r := &ReceiveCacheRec{Transition: t, Mono: time.Duration(w.Mono), WallNs: int64(w.WallNs)}
 	if r.Mono < 0 || !validReceiveTransition(t) {
 		return Record{}, fmt.Errorf("%w: invalid accepted-receive cache observation", ErrRecord)
