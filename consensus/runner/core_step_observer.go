@@ -2,46 +2,19 @@ package runner
 
 import (
 	"bytes"
+	"github.com/0xmhha/wbft/codec"
 
 	"github.com/0xmhha/wbft/consensus"
 	"github.com/0xmhha/wbft/consensus/inputlog"
 	"github.com/0xmhha/wbft/observe/event"
+	"github.com/0xmhha/wbft/observe/journal"
 	"github.com/0xmhha/wbft/p2p/transport"
-	"github.com/0xmhha/wbft/types"
 )
 
-// CoreEnvObservation keeps an actual environment answer, including ordered
-// validator-key nil presence that the older Env RLP alone cannot distinguish.
-// Bytes are newly encoded; no application or validator-set pointer escapes.
-type CoreEnvObservation struct {
-	Bytes               []byte
-	ValidatorKeyPresent []bool
-}
-
-// CoreStepObservation is a detached diagnostic value for one actual live Step.
-// It does not activate the functional journal, replay a cache or authenticate
-// the recording writer/configuration. A replayed prefix is marked explicitly;
-// restored WAL steps are never fabricated as new live observations.
-type CoreStepObservation struct {
-	EngineRun, Step         uint64
-	ReplayedPrefix          bool
-	Via, InputKind          string
-	Input, Outputs          []byte
-	OutDigest               types.Hash
-	Environment             []CoreEnvObservation
-	Origin                  transport.ReceiveOrigin
-	StreamRun               string
-	Stream                  uint64
-	Before, After           transport.ValidationContext
-	BeforeKnown, AfterKnown bool
-	Entry, Observed         CoreStepMoment
-	Unavailable             string
-}
-
-type CoreStepMoment struct {
-	Mono   int64
-	WallNs int64
-}
+// Source values use the separate durable diagnostic schema, never StepRec.
+type CoreEnvObservation = journal.CoreEnvObservation
+type CoreStepObservation = journal.CoreStepRec
+type CoreStepMoment = journal.CoreStepMoment
 
 // CoreStepObserver must return promptly. It runs on the consensus loop after
 // execution and may retain/alter its detached value without changing the core,
@@ -73,6 +46,14 @@ func (r *Runner) observeCoreStep(sc *stepCtx, kind string, body []byte, before, 
 		return
 	}
 	o := CoreStepObservation{EngineRun: r.engineRun, Step: sc.step, ReplayedPrefix: r.replay.Replayed, Via: sc.q.via, InputKind: kind, Input: bytes.Clone(body), Entry: coreStepMoment(r.stepAt)}
+	o.CoreSelf, o.Improvements, o.BacklogLimit = r.cfg.Core.Self, uint64(r.cfg.Core.Improvements), int64(r.cfg.Core.BacklogLimit)
+	if r.env != nil && r.env.head != nil {
+		var err error
+		o.Head, err = codec.EncodeHeader(r.env.head)
+		if err != nil {
+			o.Unavailable = "head_encoding"
+		}
+	}
 	o.Before, o.BeforeKnown = receiveContextMetadata(before)
 	o.After, o.AfterKnown = receiveContextMetadata(after)
 	o.Origin = sc.q.origin
@@ -81,6 +62,10 @@ func (r *Runner) observeCoreStep(sc *stepCtx, kind string, body []byte, before, 
 		d := sc.q.deferred.record
 		o.Origin = transport.ReceiveOrigin{WriterRun: d.CaptureRun, CaptureID: d.Capture}
 		stream = d.stream
+	}
+	// A partially observed capture number cannot claim a writer namespace.
+	if o.Origin.WriterRun == "" || o.Origin.CaptureID == 0 {
+		o.Origin = transport.ReceiveOrigin{}
 	}
 	o.StreamRun, o.Stream = stream.ObservationRun(), stream.ObservationID()
 	var err error

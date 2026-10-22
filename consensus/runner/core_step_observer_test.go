@@ -21,6 +21,7 @@ type coreObservations struct {
 	steps         []CoreStepObservation
 	inspect       func()
 	alterDetached bool
+	writer        journal.Writer
 }
 
 func (o *coreObservations) ObserveCoreStep(s CoreStepObservation) {
@@ -28,13 +29,19 @@ func (o *coreObservations) ObserveCoreStep(s CoreStepObservation) {
 		o.inspect()
 	}
 	copy := s
+	copy.Head = bytes.Clone(s.Head)
 	copy.Input = bytes.Clone(s.Input)
 	copy.Outputs = bytes.Clone(s.Outputs)
-	copy.Environment = make([]CoreEnvObservation, len(s.Environment))
+	if len(s.Environment) > 0 {
+		copy.Environment = make([]CoreEnvObservation, len(s.Environment))
+	}
 	for i, e := range s.Environment {
 		copy.Environment[i] = CoreEnvObservation{Bytes: bytes.Clone(e.Bytes), ValidatorKeyPresent: append([]bool(nil), e.ValidatorKeyPresent...)}
 	}
 	o.steps = append(o.steps, copy)
+	if o.writer != nil {
+		o.writer.Put(journal.Record{Body: &copy})
+	}
 	if o.alterDetached {
 		// Only observer-owned serialized copies change, never network frames,
 		// signatures, live state or the functional journal's buffers.
@@ -43,6 +50,9 @@ func (o *coreObservations) ObserveCoreStep(s CoreStepObservation) {
 		}
 		if len(s.Outputs) > 0 {
 			s.Outputs[0] ^= 1
+		}
+		if len(s.Head) > 0 {
+			s.Head[0] ^= 1
 		}
 		for _, e := range s.Environment {
 			if len(e.Bytes) > 0 {
@@ -88,6 +98,11 @@ func TestCoreStepObserverActualAcceptedSource(t *testing.T) {
 	n := newTNode(t, k, 1)
 	n.noJournal = true
 	observed := new(coreObservations)
+	writer, err := journal.Open(journal.Options{FS: n.jfs, Dir: "/core-source", Synchronous: true}, journal.Identity{Run: "diagnostic-core-source"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	observed.writer = writer
 	n.coreSteps = observed
 	observed.inspect = func() { _ = n.r.Vars() }
 	receive := new(runnerReceiveTransitions)
@@ -125,6 +140,10 @@ func TestCoreStepObserverActualAcceptedSource(t *testing.T) {
 	for i, s := range observed.steps {
 		if s.Unavailable != "" || s.Step != uint64(i+1) || s.EngineRun != 1 || s.ReplayedPrefix {
 			t.Fatal("actual source discontinuity", s.Step, s.Unavailable)
+		}
+		head, err := codec.DecodeHeader(s.Head)
+		if err != nil || codec.BlockHash(head) != codec.BlockHash(n.chain.head) || s.CoreSelf != n.opts.Self || s.Improvements != uint64(n.opts.Improvements) || s.BacklogLimit != int64(n.opts.BacklogLimit) {
+			t.Fatal("actual core head/options were substituted", err)
 		}
 		input, err := inputlog.Decode(s.InputKind, s.Input, nil)
 		if err != nil {
@@ -198,6 +217,25 @@ func TestCoreStepObserverActualAcceptedSource(t *testing.T) {
 	}
 	if err := n.log.Close(); err != nil {
 		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	records, err := journal.ReadAll(n.jfs, "/core-source")
+	if err != nil {
+		t.Fatal(err)
+	}
+	stored := 0
+	for _, record := range records {
+		if source, ok := record.Body.(*journal.CoreStepRec); ok {
+			if record.Kind != journal.KindCoreStep || stored >= len(observed.steps) || !reflect.DeepEqual(*source, observed.steps[stored]) {
+				t.Fatal("actual core source changed during durable round trip", stored)
+			}
+			stored++
+		}
+	}
+	if stored != len(observed.steps) {
+		t.Fatal("actual core source records missing", stored, len(observed.steps))
 	}
 }
 

@@ -295,6 +295,8 @@ func monoOf(r Record) time.Duration {
 		return b.Mono
 	case *SessionRec:
 		return b.Mono
+	case *CoreStepRec:
+		return time.Duration(b.Observed.Mono)
 	case *SyncRec:
 		return b.Mono
 	}
@@ -387,6 +389,11 @@ func (w *FileWriter) write(r Record) {
 		} else {
 			delete(w.attached, b.PeerIdx)
 		}
+	case *CoreStepRec:
+		if w.stats.first == 0 {
+			w.stats.first = b.Observed.WallNs
+		}
+		w.stats.last = b.Observed.WallNs
 	case *StepRec:
 		if w.stats.first == 0 {
 			w.stats.first = b.WallNs

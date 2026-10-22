@@ -46,6 +46,10 @@ func (w *r01Writer) indexCache(rec journal.Record, pos wal.Position) {
 		w.cacheErr = fmt.Errorf("accepted-receive cache observations are unavailable in R01 exports")
 		return
 	}
+	if _, ok := rec.Body.(*journal.CoreStepRec); ok {
+		w.cacheErr = fmt.Errorf("core step sources are unavailable in R01 exports")
+		return
+	}
 	if _, ok := rec.Body.(*journal.SessionRec); ok {
 		w.cacheErr = fmt.Errorf("session observations are unavailable in R01 exports")
 		return

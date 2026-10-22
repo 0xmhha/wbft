@@ -1,6 +1,7 @@
 package node
 
 import (
+	"github.com/0xmhha/wbft/consensus/runner"
 	"github.com/0xmhha/wbft/observe/event"
 	"github.com/0xmhha/wbft/observe/journal"
 	"github.com/0xmhha/wbft/p2p/transport"
@@ -97,4 +98,10 @@ func (t recordedWriteTransport) WriteAttempt(ticket transport.WriteTicket, cause
 			return transport.NewWriteSendAttempt(t.rec.owner, previous+1, ticket, cause)
 		}
 	}
+}
+
+var _ runner.CoreStepObserver = (*sessionFrameRecorder)(nil)
+
+func (f *sessionFrameRecorder) ObserveCoreStep(source runner.CoreStepObservation) {
+	f.jw.Put(journal.Record{Body: &source})
 }

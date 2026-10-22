@@ -32,6 +32,7 @@ const (
 	KindWriteCache   Kind = 11 // actual accepted/completed write-ledger observations
 	KindReceiveCache Kind = 12 // actual accepted-input checking-ledger observations
 	KindSession      Kind = 13 // original stream observations and functional endings
+	KindCoreStep     Kind = 14 // detached actual live core execution sources
 )
 
 func (k Kind) String() string {
@@ -62,13 +63,15 @@ func (k Kind) String() string {
 		return "receive_cache"
 	case KindSession:
 		return "session"
+	case KindCoreStep:
+		return "core_step_source"
 	}
 	return fmt.Sprintf("kind(%d)", uint8(k))
 }
 
 // Record is one journal record. Body is one of *SegmentRec, *PeerRec,
 // *MsgRec, *OutcomeRec, *SuppressedRec, *StepRec, *GapRec, *TimerRec, *CacheRec,
-// *WriteCacheRec, *ReceiveCacheRec, *SessionRec, or *SyncRec. JSeq is assigned
+// *WriteCacheRec, *ReceiveCacheRec, *SessionRec, *CoreStepRec, or *SyncRec. JSeq is assigned
 // by the writer: it increases by one per written record within a run.
 type Record struct {
 	Kind Kind
@@ -617,6 +620,8 @@ func encodeBody(r Record, jseq uint64) ([]byte, error) {
 		return encodeReceiveCacheRec(b, jseq)
 	case *SessionRec:
 		return encodeSessionRec(b, jseq)
+	case *CoreStepRec:
+		return encodeCoreStepRec(b, jseq)
 	case *SyncRec:
 		return encodeSyncRec(b, jseq)
 	case *GapRec:
@@ -792,6 +797,8 @@ func decodeBody(k Kind, body []byte) (Record, error) {
 		return decodeReceiveCacheRec(body)
 	case KindSession:
 		return decodeSessionRec(body)
+	case KindCoreStep:
+		return decodeCoreStepRec(body)
 	case KindSync:
 		return decodeSyncRec(body)
 	case KindGap:
@@ -834,6 +841,8 @@ func kindOf(body any) (Kind, bool) {
 		return KindReceiveCache, true
 	case *SessionRec:
 		return KindSession, true
+	case *CoreStepRec:
+		return KindCoreStep, true
 	case *SyncRec:
 		return KindSync, true
 	}
@@ -866,6 +875,13 @@ func size(r Record) int64 {
 		return 512 + int64(len(b.Transition.Pruned))*8 + int64(len(b.Transition.Input.SessionRun)+len(b.Transition.Receipt.SessionRun))
 	case *ReceiveCacheRec:
 		return 640 + int64(len(b.Transition.Pruned))*8 + int64(len(b.Transition.Origin.WriterRun)+len(b.Transition.CheckedOrigin.WriterRun)+len(b.Transition.Source.Via)+len(b.Transition.Context.Sequence)+len(b.Transition.Context.Round)+len(b.Transition.Context.State)+len(b.Transition.Context.PriorRound)+len(b.Transition.Input.SessionRun)+len(b.Transition.Checked.SessionRun))
+	case *CoreStepRec:
+		n := int64(1024 + len(b.Head) + len(b.Input) + len(b.Outputs) + len(b.Origin.WriterRun) + len(b.StreamRun) + len(b.InputKind) + len(b.Via) + len(b.Unavailable))
+		n += int64(len(b.Before.Sequence) + len(b.Before.Round) + len(b.Before.State) + len(b.Before.PriorRound) + len(b.After.Sequence) + len(b.After.Round) + len(b.After.State) + len(b.After.PriorRound))
+		for _, e := range b.Environment {
+			n += int64(len(e.Bytes) + 8*len(e.ValidatorKeyPresent) + 32)
+		}
+		return n
 	case *SessionRec:
 		n := int64(160 + len(b.Event))
 		if b.Session != nil {

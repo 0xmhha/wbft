@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/0xmhha/wbft/codec"
+	"github.com/0xmhha/wbft/consensus"
+	"github.com/0xmhha/wbft/consensus/inputlog"
 	"github.com/0xmhha/wbft/crypto/ecdsa"
 	"github.com/0xmhha/wbft/crypto/keccak"
 	"github.com/0xmhha/wbft/internal/fsys"
@@ -139,7 +141,7 @@ func TestReceiveCacheRecordR01ProjectionUnavailableWithoutProfile(t *testing.T) 
 
 func TestSessionSourceR01ProjectionUnavailableWithoutProfile(t *testing.T) {
 	for _, legacy := range []uint64{0, journal.CacheTraceVersion} {
-		for _, domain := range []string{"lifetime", "frame", "write_attempt"} {
+		for _, domain := range []string{"lifetime", "frame", "write_attempt", "core_step"} {
 			t.Run(fmt.Sprintf("%s/%d", domain, legacy), func(t *testing.T) {
 				fs := fsys.NewMem()
 				writer, err := journal.Open(journal.Options{FS: fs, Dir: "/session-source", Synchronous: true}, journal.Identity{Run: "current-writer", Core: journal.CoreOptions{CacheTrace: legacy}})
@@ -150,6 +152,20 @@ func TestSessionSourceR01ProjectionUnavailableWithoutProfile(t *testing.T) {
 				switch domain {
 				case "lifetime":
 					writer.Put(journal.Record{Body: &journal.SessionRec{Session: ref, Event: journal.SessionObserved, Active: true}})
+				case "core_step":
+					input, e := inputlog.Encode(consensus.Start{})
+					if e != nil {
+						t.Fatal(e)
+					}
+					outputs, e := inputlog.EncodeOutputs(nil)
+					if e != nil {
+						t.Fatal(e)
+					}
+					digest, e := inputlog.OutDigest(nil)
+					if e != nil {
+						t.Fatal(e)
+					}
+					writer.Put(journal.Record{Body: &journal.CoreStepRec{EngineRun: 1, Step: 1, Via: "engine", InputKind: inputlog.KindStart, Input: input, Outputs: outputs, OutDigest: digest}})
 				case "write_attempt":
 					writer.Put(journal.Record{Body: &journal.MsgRec{Dir: journal.Out, WriteAttempt: &journal.WriteAttemptSource{Sequence: 1, WriterRun: "original-writer", Ledger: 1, Request: 2}}})
 				default:
@@ -158,7 +174,11 @@ func TestSessionSourceR01ProjectionUnavailableWithoutProfile(t *testing.T) {
 				if err := writer.Close(); err != nil {
 					t.Fatal(err)
 				}
-				if _, err := exportR01(fs, "/session-source", "/session-out", "", ""); err == nil || !strings.Contains(err.Error(), "session") {
+				expected := "session"
+				if domain == "core_step" {
+					expected = "core step sources"
+				}
+				if _, err := exportR01(fs, "/session-source", "/session-out", "", ""); err == nil || !strings.Contains(err.Error(), expected) {
 					t.Fatal("session sources projected with legacy semantics", err)
 				}
 				if entries, err := fs.ReadDir("/session-out"); err == nil {
