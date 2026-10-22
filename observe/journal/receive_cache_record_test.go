@@ -85,6 +85,10 @@ func TestReceiveCacheRecordActualCheckingLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	check, err := CheckReceiveCacheTransitions(records, ReceiveCacheCheckLimits{Records: 10000, Ledgers: 16, Reordered: 128})
+	if err != nil || check.Status != "consistent" || check.PhysicalStatus != "unavailable" {
+		t.Fatal("actual checking trace reconstruction", check, err)
+	}
 	count := uint64(0)
 	accepted := 0
 	withSource := 0

@@ -88,3 +88,26 @@ errors exit 2. Transition consistency exits 0 with `status: consistent`.
 trace to independent physical stream/write records or direct core ACCEPT
 sources, and does not establish remote delivery or functional runtime replay.
 The node's journal restriction and replay capability refusal remain in place.
+
+
+# Accepted-receive cache transition checks
+
+`wbft-journal check-receive-cache --dir DIR --max-records 100000 --max-ledgers 32 --max-reordered 256`
+rebuilds scoped known entries, peer recent entries and independent pending
+checks. Unverified pending copies do not authenticate each other. The checker
+uses its own ordered-slice LRUs and compares immutable context metadata for
+each original writer/scope. Missing capture or context metadata stays missing.
+The supplied limits bound offline inspection; they are not node operating,
+payload or heap budgets. Unrelated payload records are discarded after decode.
+
+Both cache commands use exit 0 for transition consistency, 69 for unavailable
+evidence or inspection limits, 1 for retained contradictions, and 2 for usage
+or I/O errors. Receive gaps and missing operation numbers are unavailable.
+A different view, state or authority digest for the same frozen scope is a
+contradiction. Decimal views and counters are preserved without floating point.
+
+`physical_status` remains `unavailable`. This command does not authenticate
+context hashes against original authority history, check the actual core
+step/output and signatures, or resolve captures against physical frame bytes.
+Its result is not a functional runtime replay or a completed cache-policy
+acceptance. The node journal restriction remains in place.
