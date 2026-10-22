@@ -69,6 +69,9 @@ type NodeSpec struct {
 	Profile string
 	// ReplayWAL replays the write-ahead log when the node starts.
 	ReplayWAL bool
+	// NextHeight declares the bounded next-sequence receive lane. Nil preserves
+	// the original receiver; enabled lanes require WAL replay and atomic work.
+	NextHeight *runner.NextHeightLimits `json:",omitempty"`
 	// ClockSkew moves the node's wall clock.
 	ClockSkew time.Duration
 	// TakeoverGuard sets the sign floor at start when the sign state is
@@ -530,7 +533,7 @@ func newSimulation(sc Scenario) (*simulation, error) {
 	}
 	s.decBlock[0] = g
 	for i := len(sc.Validators); i < len(sc.Nodes); i++ {
-		if sc.Nodes[i].Timing != nil {
+		if sc.Nodes[i].Timing != nil || sc.Nodes[i].NextHeight != nil {
 			return nil, fmt.Errorf("%w: timing override for unknown node", ErrScenario)
 		}
 	}
@@ -572,6 +575,10 @@ func newSimulation(sc Scenario) (*simulation, error) {
 			return nil, err
 		}
 		spec.Processing = processing
+		spec.NextHeight, err = cloneNextHeight(spec.NextHeight, spec.ReplayWAL, processing)
+		if err != nil {
+			return nil, err
+		}
 		if spec.BuildQueuePolicy == BuildQueueSealing {
 			effective := spec
 			if len(effective.BuildDelay) == 0 {

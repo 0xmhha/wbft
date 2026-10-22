@@ -437,6 +437,11 @@ replay: missing or pruned captures leave the inline input usable, without
 substituting a matching frame from a later run. Receipt times belong to the
 original writer's clock. Timed and scheduled replay require a verified source
 in the same writer run; cross-run clock comparison remains unavailable.
+`sim.NodeSpec.NextHeight` declares the same explicit limits and persists the
+receive profile in every incarnation. Nil preserves existing execution bytes
+and random draws. Enabled lanes require WAL replay and atomic receive/core
+processing; positive pre-dispatch service samples remain unsupported. JSON
+receive limits use decimal strings to retain the full unsigned integer domain.
 
 The `pre_dispatch_service/1` policy reserves an input, occupies its worker for
 the sampled time, then executes the existing operation atomically. Core state,

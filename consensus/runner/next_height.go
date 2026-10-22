@@ -24,10 +24,10 @@ import (
 // process heap, CPU or WAL disk bound. One additional receive worker performs
 // outer authentication, independently of the current-height workers.
 type NextHeightLimits struct {
-	Entries   uint64
-	Bytes     uint64
-	PerPeer   uint64
-	PerSource uint64
+	Entries   uint64 `json:"entries,string"`
+	Bytes     uint64 `json:"bytes,string"`
+	PerPeer   uint64 `json:"per_peer,string"`
+	PerSource uint64 `json:"per_source,string"`
 }
 
 const (

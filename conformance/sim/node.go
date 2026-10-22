@@ -189,6 +189,9 @@ func (n *node) start() {
 		GenesisHash: codec.BlockHash(n.s.genesis.Header), Mode: "standalone",
 		Core: journal.CoreOptions{TimerTrace: journal.TimerTraceVersion, ChainConfig: n.cfgJSON, Self: n.v.address, Improvements: uint64(opts.Improvements),
 			BacklogLimit: uint64(opts.BacklogLimit), Profile: n.spec.Profile}}
+	if l := n.spec.NextHeight; l != nil {
+		id.Core.NextHeight = &journal.DeferredOptions{Profile: journal.DeferredInputProfile, Entries: l.Entries, Bytes: l.Bytes, PerPeer: l.PerPeer, PerSource: l.PerSource}
+	}
 	jw, err := journal.Open(journal.Options{FS: n.fs, Dir: journalDir, KeepHeights: 100000, MaxBytes: 8 << 30,
 		SegmentBytes: 1 << 20, Synchronous: true}, id)
 	if err != nil {
@@ -235,7 +238,7 @@ func (n *node) start() {
 		application = sealingApplication{n.app}
 	}
 	processing, workers := n.processingModel()
-	r, err := runner.New(runner.Config{Core: opts, ReplayWAL: n.spec.ReplayWAL, Manual: true, Workers: workers},
+	r, err := runner.New(runner.Config{Core: opts, ReplayWAL: n.spec.ReplayWAL, Manual: true, Workers: workers, NextHeight: n.spec.NextHeight},
 		runner.Deps{Chain: n.app, App: application, Transport: dedup, Net: n.tr, Signer: recSigner{signer, n}, WAL: log,
 			Clock: n.clock, Events: countingSink{n.ev, n.s}, Journal: jw, Rand: n.rng.IntN, Faults: fh, Logger: n.s.logger(logcat.ConsensusRound), ModuleLogger: n.s.moduleLogger(), ManualProcessing: processing})
 	if err != nil {
