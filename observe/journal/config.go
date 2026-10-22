@@ -13,6 +13,9 @@ const CheckedProposerPolicyProfile = "checked_v1"
 // Configuration derives the recorded configuration without rewriting its JSON.
 // Unknown policy profiles cannot silently select the current node behavior.
 func (o CoreOptions) Configuration() (*types.Config, error) {
+	if err := o.NextHeight.Validate(); err != nil {
+		return nil, err
+	}
 	cfg, err := types.ParseChainConfig(o.ChainConfig)
 	if err != nil {
 		return nil, err

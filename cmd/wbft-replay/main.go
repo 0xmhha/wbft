@@ -262,6 +262,9 @@ func serve(in io.Reader, out io.Writer) error {
 				m := map[string]any{"type": "step", "id": req.ID, "writer_run": s.WriterRun, "engine_run": s.EngineRun, "step": s.Step,
 					"input": s.RecordedInputKind, "omitted": s.Omitted, "out_digest": "0x" + hex.EncodeToString(s.OutDigest[:]),
 					"match": s.Match, "outputs": len(s.Outputs), "context_answers": s.ContextAnswers, "answer_sources": s.AnswerSources, "approximate": s.Approximate, "warmup": s.Warmup}
+				if s.DeferredOrigin != nil {
+					m["deferred_origin"] = s.DeferredOrigin
+				}
 				if s.Scheduled != nil {
 					m["scheduled_input"] = s.Scheduled
 					m["suppression_reason"] = s.SuppressionReason

@@ -563,7 +563,16 @@ func (r *Runner) journalStep(sc *stepCtx, kind string, body []byte, after *conse
 			envs = append(envs, b)
 		}
 	}
-	if m, ok := sc.q.in.(consensus.Message); ok && sc.q.capture != 0 {
+	if sc.q.deferred != nil {
+		d := sc.q.deferred.record
+		var err error
+		body, err = inputlog.EncodeDeferredMessage(d.message(), inputlog.CaptureOrigin{Run: d.CaptureRun, Capture: d.Capture})
+		if err != nil {
+			r.log.Warn("journal deferred encoding failed", "err", err)
+			return
+		}
+		kind = inputlog.KindDeferredMessage
+	} else if m, ok := sc.q.in.(consensus.Message); ok && sc.q.capture != 0 {
 		var err error
 		body, err = inputlog.EncodeCapturedMessage(m, sc.q.capture)
 		if err != nil {

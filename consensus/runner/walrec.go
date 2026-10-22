@@ -165,11 +165,12 @@ func decodeBoundary(body []byte) (boundaryRec, error) {
 
 // walStep is one recorded input with the records that followed it.
 type walStep struct {
-	kind  string
-	body  []byte
-	env   [][]byte
-	own   []ownRec
-	index int // position of the input record
+	deferred *deferredRecord
+	kind     string
+	body     []byte
+	env      [][]byte
+	own      []ownRec
+	index    int // position of the input record
 }
 
 // CommitRequest is a decided block the write-ahead log handed to the

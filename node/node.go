@@ -131,6 +131,13 @@ func New(cfg Config, d Deps) (*Node, error) {
 	if _, native := d.Authority.(source.Native); native && !cfg.Standalone {
 		return nil, fmt.Errorf("%w: a native authority source runs only in standalone mode", ErrConfig)
 	}
+	if cfg.NextHeight != nil {
+		l := *cfg.NextHeight
+		if l.Entries == 0 || l.Bytes == 0 || l.PerPeer == 0 || l.PerSource == 0 {
+			return nil, fmt.Errorf("%w: next-height receive limits must be positive", ErrConfig)
+		}
+		cfg.NextHeight = &l
+	}
 	improvements := consensus.RestartSafety
 	seenImprovements := map[string]bool{}
 	for _, name := range cfg.Improvements {
@@ -485,7 +492,7 @@ func (n *Node) start(ctx context.Context) error {
 	if jw != nil {
 		deps.Journal = jw
 	}
-	r, err := runner.New(runner.Config{Core: core, ReplayWAL: true}, deps)
+	r, err := runner.New(runner.Config{Core: core, ReplayWAL: true, NextHeight: n.cfg.NextHeight}, deps)
 	if err != nil {
 		return err
 	}
@@ -529,6 +536,9 @@ func (n *Node) openJournal(core consensus.Options, runID string) (*journal.FileW
 		ChainID: info.ChainID, GenesisHash: info.GenesisHash, Mode: n.mode(), WireOffset: n.wireOffset(),
 		Core: journal.CoreOptions{ProposerPolicyProfile: journal.CheckedProposerPolicyProfile, SyncTrace: journal.SyncTraceVersion, CacheTrace: journal.CacheTraceVersion, TimerTrace: journal.TimerTraceVersion, ChainConfig: info.ChainConfigJSON, Self: core.Self, Improvements: uint64(core.Improvements),
 			BacklogLimit: uint64(core.BacklogLimit)}}
+	if l := n.cfg.NextHeight; l != nil {
+		id.Core.NextHeight = &journal.DeferredOptions{Profile: journal.DeferredInputProfile, Entries: l.Entries, Bytes: l.Bytes, PerPeer: l.PerPeer, PerSource: l.PerSource}
+	}
 	jw, err := journal.Open(opt, id)
 	if err != nil {
 		return nil, fmt.Errorf("node: message journal: %w", err)

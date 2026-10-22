@@ -293,7 +293,7 @@ loop:
 			if err != nil {
 				return nil, err
 			}
-			cur = &walStep{kind: in.Kind, body: in.Body, index: i}
+			cur = &walStep{kind: in.Kind, body: in.Body, index: i, deferred: &d}
 		case walInput:
 			flush()
 			var in inputRec
@@ -420,7 +420,17 @@ func (r *Runner) runReplay(plan *replayPlan) (*consensus.State, []*journal.StepR
 			return core, recs, res
 		}
 		track(outs)
-		record(s.kind, s.body, viaWAL, outs, env.used, plan.head)
+		kind, body := s.kind, s.body
+		if s.deferred != nil {
+			d := s.deferred
+			body, err = inputlog.EncodeDeferredMessage(d.message(), inputlog.CaptureOrigin{Run: d.CaptureRun, Capture: d.Capture})
+			if err != nil {
+				res.err = err
+				return core, recs, res
+			}
+			kind = inputlog.KindDeferredMessage
+		}
+		record(kind, body, viaWAL, outs, env.used, plan.head)
 	}
 	return core, recs, res
 }
