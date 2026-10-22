@@ -12,7 +12,9 @@
 // heights, with a manifest (bundle.go). export --format r01 writes the R-01
 // frame dump that wbft-inspector reads into the directory OUT (export.go).
 //
-// Every command prints one JSON object. verify exits with 1 when it finds a
+// Every command prints one JSON object. check-write-cache exits with 69 when
+// transition evidence is unavailable and 1 when it contradicts itself. Its
+// success only establishes transition consistency. verify exits with 1 when it finds a
 // problem; every command exits with 2 on a usage or I/O error.
 package main
 
@@ -37,7 +39,7 @@ func main() {
 	os.Exit(run(os.Args[1:], fsys.OS{}, os.Stdout, os.Stderr))
 }
 
-const usage = "usage: wbft-journal stat|verify|prune|export --dir DIR [flags]"
+const usage = "usage: wbft-journal stat|verify|prune|export|check-write-cache --dir DIR [flags]"
 
 func run(args []string, fs fsys.FS, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
@@ -55,6 +57,9 @@ func run(args []string, fs fsys.FS, stdout, stderr io.Writer) int {
 	warmup := set.Uint64("warmup", journal.DefaultBundleWarmup, "export bundle: heights before --from to include")
 	from := set.String("from", "", "export: first height (decimal) of the records")
 	to := set.String("to", "", "export: last height (decimal) of the records")
+	maxRecords := set.Uint64("max-records", 0, "check-write-cache: required positive inspection record limit")
+	maxLedgers := set.Uint64("max-ledgers", 0, "check-write-cache: required positive retained ledger limit")
+	maxReordered := set.Uint64("max-reordered", 0, "check-write-cache: required positive per-ledger ordering buffer limit")
 	if err := set.Parse(args[1:]); err != nil {
 		return 2
 	}
@@ -75,6 +80,20 @@ func run(args []string, fs fsys.FS, stdout, stderr io.Writer) int {
 			code = 1
 		}
 		res = v
+	case "check-write-cache":
+		if *maxRecords == 0 || *maxLedgers == 0 || *maxReordered == 0 {
+			err = errors.New("check-write-cache: --max-records, --max-ledgers and --max-reordered must be positive")
+			break
+		}
+		var check journal.WriteCacheCheck
+		check, err = checkWriteCache(fs, *dir, journal.WriteCacheCheckLimits{Records: *maxRecords, Ledgers: *maxLedgers, Reordered: *maxReordered})
+		if errors.Is(err, journal.ErrWriteCacheHistory) {
+			code = 1
+			err = nil
+		} else if err == nil && check.Status == "unavailable" {
+			code = 69
+		}
+		res = check
 	case "prune":
 		res, err = prune(fs, *dir, *keep, *maxBytes, *head)
 	case "export":

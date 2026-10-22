@@ -79,6 +79,10 @@ func TestWriteCacheJournalActualLedgerLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	check, err := CheckWriteCacheTransitions(records, WriteCacheCheckLimits{Records: 10000, Ledgers: 16, Reordered: 128})
+	if err != nil || check.Status != "consistent" || check.PhysicalStatus != "unavailable" {
+		t.Fatal("actual trace reconstruction", check, err)
+	}
 	count := 0
 	for _, record := range records {
 		r, ok := record.Body.(*WriteCacheRec)
