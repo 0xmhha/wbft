@@ -154,6 +154,9 @@ type Deps struct {
 	Events EventSink
 	// Journal receives step and outcome records; nil keeps no journal.
 	Journal journal.Writer
+	// CoreSteps observes detached actual live core execution for diagnostics.
+	// It is independent of Journal and does not enable unsupported replay.
+	CoreSteps CoreStepObserver
 	// Synchronising reports whether the application is synchronising the
 	// chain; consensus messages that arrive while the engine is stopped are
 	// then dropped instead of closing the connection.

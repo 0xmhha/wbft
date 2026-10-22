@@ -246,6 +246,7 @@ func (r *Runner) handle(q queued) {
 		r.endHeight(after, gens)
 	}
 	r.journalStep(sc, kind, body, after)
+	r.observeCoreStep(sc, kind, body, before, after)
 }
 
 // endHeight writes the end-of-height record of the head the core left

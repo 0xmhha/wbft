@@ -105,6 +105,10 @@ func (r *Runner) startEngine(_ context.Context, head *types.Header) error {
 		// the last step of the previous run.
 		r.stepAt = event.Stamp{Wall: r.d.Clock.Now(), Mono: r.d.Clock.Mono(), Step: &step}
 		r.env.begin(false)
+		var before *consensus.Snapshot
+		if r.d.CoreSteps != nil {
+			before = r.core.Snapshot()
+		}
 		outs := r.core.Step(r.env, consensus.Start{})
 		answers := r.env.end()
 		r.running.Store(true)
@@ -117,6 +121,7 @@ func (r *Runner) startEngine(_ context.Context, head *types.Header) error {
 			return err
 		}
 		r.journalStep(sc, inputlog.KindStart, body, snap)
+		r.observeCoreStep(sc, inputlog.KindStart, body, before, snap)
 	} else {
 		r.running.Store(true)
 		if r.d.Journal != nil {
