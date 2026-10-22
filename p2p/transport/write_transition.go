@@ -41,6 +41,7 @@ type WriteIdentity struct {
 // missing identities, gaps and unavailable physical provenance as incomplete
 // evidence. This trace alone does not authenticate an adapter write or ACCEPT.
 type WriteTransition struct {
+	AcceptedSource              AcceptedInputSource
 	Ledger, Sequence            uint64
 	Action                      WriteAction
 	Request                     uint64

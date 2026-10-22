@@ -19,6 +19,7 @@ type WriteCacheRec struct {
 }
 
 type writeCacheRLP struct {
+	AcceptedSource                    transport.AcceptedInputSource
 	Format, JSeq                      uint64
 	Ledger, Sequence, Action, Request uint64
 	Input, Receipt                    transport.WriteIdentity
@@ -33,7 +34,23 @@ func validSessionObservation(identity transport.WriteIdentity) bool {
 	return identity.SessionRun == "" || identity.Session != 0
 }
 
+func validAcceptedInputSource(source transport.AcceptedInputSource) bool {
+	if source == (transport.AcceptedInputSource{}) {
+		return true
+	}
+	if source.Core == (transport.ReceiveAcceptSource{}) || !validAcceptSource(source.Core) || !validReceiveOrigin(source.Origin) {
+		return false
+	}
+	if source.LedgerRun != "" && source.Ledger == 0 {
+		return false
+	}
+	return source.Ledger != 0 || source.Scope == 0 && source.Request == 0
+}
+
 func validWriteTransition(t transport.WriteTransition) bool {
+	if !validAcceptedInputSource(t.AcceptedSource) || t.Action != transport.WriteAccept && t.AcceptedSource != (transport.AcceptedInputSource{}) {
+		return false
+	}
 	if !validSessionObservation(t.Input) || !validSessionObservation(t.Receipt) {
 		return false
 	}
@@ -154,7 +171,7 @@ func encodeWriteCacheRec(r *WriteCacheRec, jseq uint64) ([]byte, error) {
 	if r.Mono < 0 || !validWriteTransition(t) {
 		return nil, fmt.Errorf("journal: invalid completed-write cache observation")
 	}
-	return rlp.Encode(&writeCacheRLP{Format: Format, JSeq: jseq, Ledger: t.Ledger, Sequence: t.Sequence, Action: uint64(t.Action), Request: t.Request, Input: t.Input, Receipt: t.Receipt, Decision: uint64(t.Decision), Queue: uint64(t.Queue), Result: uint64(t.Result), Flags: writeFlags(t), PendingBefore: t.PendingBefore, PendingAfter: t.PendingAfter, Pruned: t.Pruned, PendingLimit: t.PendingLimit, PerPeerLimit: t.PerPeerLimit, Mono: uint64(r.Mono), WallNs: uint64(r.WallNs)})
+	return rlp.Encode(&writeCacheRLP{AcceptedSource: t.AcceptedSource, Format: Format, JSeq: jseq, Ledger: t.Ledger, Sequence: t.Sequence, Action: uint64(t.Action), Request: t.Request, Input: t.Input, Receipt: t.Receipt, Decision: uint64(t.Decision), Queue: uint64(t.Queue), Result: uint64(t.Result), Flags: writeFlags(t), PendingBefore: t.PendingBefore, PendingAfter: t.PendingAfter, Pruned: t.Pruned, PendingLimit: t.PendingLimit, PerPeerLimit: t.PerPeerLimit, Mono: uint64(r.Mono), WallNs: uint64(r.WallNs)})
 }
 
 func decodeWriteCacheRec(body []byte) (Record, error) {
@@ -165,7 +182,7 @@ func decodeWriteCacheRec(body []byte) (Record, error) {
 	if w.Format != Format || w.Action > 255 || w.Decision > 255 || w.Queue > 255 || w.Result > 255 || w.Flags > 255 {
 		return Record{}, fmt.Errorf("%w: invalid completed-write cache encoding", ErrRecord)
 	}
-	t := transport.WriteTransition{Ledger: w.Ledger, Sequence: w.Sequence, Action: transport.WriteAction(w.Action), Request: w.Request, Input: w.Input, Receipt: w.Receipt, Decision: transport.WriteDecision(w.Decision), Queue: transport.SendResult(w.Queue), Result: transport.LocalWriteResult(w.Result), Owned: w.Flags&1 != 0, Matched: w.Flags&2 != 0, Valid: w.Flags&4 != 0, Released: w.Flags&8 != 0, Registered: w.Flags&16 != 0, SessionActive: w.Flags&32 != 0, Closed: w.Flags&64 != 0, KeyWithCode: w.Flags&128 != 0, PendingBefore: w.PendingBefore, PendingAfter: w.PendingAfter, Pruned: w.Pruned, PendingLimit: w.PendingLimit, PerPeerLimit: w.PerPeerLimit}
+	t := transport.WriteTransition{AcceptedSource: w.AcceptedSource, Ledger: w.Ledger, Sequence: w.Sequence, Action: transport.WriteAction(w.Action), Request: w.Request, Input: w.Input, Receipt: w.Receipt, Decision: transport.WriteDecision(w.Decision), Queue: transport.SendResult(w.Queue), Result: transport.LocalWriteResult(w.Result), Owned: w.Flags&1 != 0, Matched: w.Flags&2 != 0, Valid: w.Flags&4 != 0, Released: w.Flags&8 != 0, Registered: w.Flags&16 != 0, SessionActive: w.Flags&32 != 0, Closed: w.Flags&64 != 0, KeyWithCode: w.Flags&128 != 0, PendingBefore: w.PendingBefore, PendingAfter: w.PendingAfter, Pruned: w.Pruned, PendingLimit: w.PendingLimit, PerPeerLimit: w.PerPeerLimit}
 	r := &WriteCacheRec{Transition: t, Mono: time.Duration(w.Mono), WallNs: int64(w.WallNs)}
 	if r.Mono < 0 || !validWriteTransition(t) {
 		return Record{}, fmt.Errorf("%w: invalid completed-write cache observation", ErrRecord)

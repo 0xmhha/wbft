@@ -7,6 +7,7 @@ import (
 
 	"github.com/0xmhha/wbft/codec/rlp"
 	"github.com/0xmhha/wbft/observe/event"
+	"github.com/0xmhha/wbft/p2p/transport"
 	"github.com/0xmhha/wbft/types"
 )
 
@@ -872,7 +873,11 @@ func size(r Record) int64 {
 	case *CacheRec:
 		return 320 + int64(len(b.Candidates)+len(b.Targets)+len(b.Suppressed))*20
 	case *WriteCacheRec:
-		return 512 + int64(len(b.Transition.Pruned))*8 + int64(len(b.Transition.Input.SessionRun)+len(b.Transition.Receipt.SessionRun))
+		n := int64(512) + int64(len(b.Transition.Pruned))*8 + int64(len(b.Transition.Input.SessionRun)+len(b.Transition.Receipt.SessionRun))
+		if s := b.Transition.AcceptedSource; s != (transport.AcceptedInputSource{}) {
+			n += 160 + int64(len(s.LedgerRun)+len(s.Origin.WriterRun)+len(s.Core.Via))
+		}
+		return n
 	case *ReceiveCacheRec:
 		return 640 + int64(len(b.Transition.Pruned))*8 + int64(len(b.Transition.Origin.WriterRun)+len(b.Transition.CheckedOrigin.WriterRun)+len(b.Transition.Source.Via)+len(b.Transition.Context.Sequence)+len(b.Transition.Context.Round)+len(b.Transition.Context.State)+len(b.Transition.Context.PriorRound)+len(b.Transition.Input.SessionRun)+len(b.Transition.Checked.SessionRun))
 	case *CoreStepRec:

@@ -87,11 +87,12 @@ func (r *Runner) completeReceiveCheck(ticket transport.ReceiveTicket, in transpo
 	for index, out := range outs {
 		o, ok := out.(consensus.Outcome)
 		if ok && o.Relayed && (o.Via == "direct" || o.Via == "self") && uint64(o.Code) == in.Code && o.Peer == in.Peer && o.DedupKey == key {
-			if r.receiveCache.AcceptWithSource(ticket, in, transport.ReceiveAcceptSource{EngineRun: r.engineRun, Step: r.step, Output: uint64(index + 1), Via: o.Via}) == transport.ReceiveRegistered && r.d.ReceiveCacheRecorded != nil {
+			source := transport.ReceiveAcceptSource{EngineRun: r.engineRun, Step: r.step, Output: uint64(index + 1), Via: o.Via}
+			if r.receiveCache.AcceptWithSource(ticket, in, source) == transport.ReceiveRegistered && r.d.ReceiveCacheRecorded != nil {
 				r.d.ReceiveCacheRecorded(in.Code)
 			}
 			if r.d.Transport != nil && in.Peer != r.cfg.Core.Self {
-				r.d.Transport.RecordAcceptedInput(in)
+				r.d.Transport.RecordAcceptedInputWithSource(in, ticket.AcceptedSource(source))
 			}
 			return
 		}

@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/0xmhha/wbft/codec"
 	"github.com/0xmhha/wbft/codec/rlp"
 	"github.com/0xmhha/wbft/consensus"
 	"github.com/0xmhha/wbft/internal/fsys"
@@ -16,6 +17,49 @@ type journalWriteTransitions struct {
 	writer   Writer
 	observed []transport.WriteTransition
 	start    time.Time
+}
+
+func TestWriteCacheAcceptedSourceStrictRoundTrip(t *testing.T) {
+	message := deferredNormalMessage(t)
+	source := transport.AcceptedInputSource{LedgerRun: "original-receive-ledger", Ledger: ^uint64(0), Scope: (1 << 53) + 1, Request: ^uint64(0), Origin: transport.ReceiveOrigin{WriterRun: "original-frame", CaptureID: ^uint64(0)}, Core: transport.ReceiveAcceptSource{EngineRun: 1, Step: 2, Output: 3, Via: "direct"}}
+	r := &WriteCacheRec{Transition: transport.WriteTransition{Ledger: 1, Sequence: 2, Action: transport.WriteAccept, Input: transport.WriteIdentity{Peer: message.Peer, Session: 7, SessionRun: "original-stream", Code: uint64(message.Code), Key: codec.DedupKey(message.Payload), PayloadSHA256: sha256.Sum256(message.Payload)}, AcceptedSource: source, Valid: true, SessionActive: true, Registered: true}}
+	raw, err := encodeBody(Record{Body: r}, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded, err := decodeBody(KindWriteCache, raw)
+	if err != nil || decoded.Body.(*WriteCacheRec).Transition.AcceptedSource != source {
+		t.Fatal("original accepted-input reference changed", err)
+	}
+	again, err := encodeBody(decoded, 3)
+	if err != nil || !bytes.Equal(raw, again) {
+		t.Fatal("accepted-input source bytes changed", err)
+	}
+	base := *r
+	base.Transition.AcceptedSource = transport.AcceptedInputSource{}
+	if size(Record{Body: r})-size(Record{Body: &base}) != 160+int64(len(source.LedgerRun)+len(source.Origin.WriterRun)+len(source.Core.Via)) {
+		t.Fatal("source omitted from queue byte accounting")
+	}
+	var wire writeCacheRLP
+	if err := rlp.DecodeStrict(raw, &wire); err != nil {
+		t.Fatal(err)
+	}
+	for _, change := range []func(*writeCacheRLP){
+		func(w *writeCacheRLP) { w.AcceptedSource.Ledger = 0 },
+		func(w *writeCacheRLP) { w.AcceptedSource.Origin.WriterRun = "" },
+		func(w *writeCacheRLP) { w.AcceptedSource.Core.Output = 0 },
+		func(w *writeCacheRLP) { w.AcceptedSource.Core.Via = "unknown" },
+	} {
+		w := wire
+		change(&w)
+		body, err := rlp.Encode(&w)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := decodeBody(KindWriteCache, body); err == nil {
+			t.Fatal("invalid source accepted")
+		}
+	}
 }
 
 func (o *journalWriteTransitions) ObserveWriteTransition(event transport.WriteTransition) {

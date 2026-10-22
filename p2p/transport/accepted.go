@@ -32,8 +32,12 @@ func (d *Dedup) RecordAccepted(peer types.Address, code uint64, payload []byte) 
 // Missing runtime ownership is unavailable, even if a matching address is now
 // attached. It does not recover a session from capture metadata or WAL replay.
 func (d *Dedup) RecordAcceptedInput(in Inbound) bool {
+	return d.RecordAcceptedInputWithSource(in, AcceptedInputSource{})
+}
+
+func (d *Dedup) RecordAcceptedInputWithSource(in Inbound, source AcceptedInputSource) bool {
 	if d.completedWrites != nil {
-		return d.completedWrites.RecordAccepted(WritePeer{Addr: in.Peer, Session: in.Stream}, in.Code, in.Payload)
+		return d.completedWrites.RecordAcceptedWithSource(WritePeer{Addr: in.Peer, Session: in.Stream}, in.Code, in.Payload, source)
 	}
 	return d.RecordAccepted(in.Peer, in.Code, in.Payload)
 }

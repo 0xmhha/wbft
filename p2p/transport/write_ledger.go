@@ -235,6 +235,10 @@ func (l *WriteLedger) Complete(ticket WriteTicket, receipt WriteReceipt) bool {
 // stream. An unavailable or closed stream never falls back to a current peer
 // address lookup. This shares the recent LRU with successful local writes.
 func (l *WriteLedger) RecordAccepted(target WritePeer, code uint64, payload []byte) bool {
+	return l.RecordAcceptedWithSource(target, code, payload, AcceptedInputSource{})
+}
+
+func (l *WriteLedger) RecordAcceptedWithSource(target WritePeer, code uint64, payload []byte, source AcceptedInputSource) bool {
 	valid := CheckOutbound(code, payload) == nil
 	if l.opt.Trace == nil && !valid {
 		return false
@@ -242,6 +246,9 @@ func (l *WriteLedger) RecordAccepted(target WritePeer, code uint64, payload []by
 	key := l.key(code, payload)
 	l.mu.Lock()
 	event := l.transition(WriteAccept)
+	if l.opt.Trace != nil {
+		event.AcceptedSource = source
+	}
 	if l.opt.Trace != nil {
 		event.Input = l.identity(target, code, key, sha256.Sum256(payload))
 	}
