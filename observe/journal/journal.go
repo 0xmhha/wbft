@@ -229,6 +229,10 @@ func (w *FileWriter) writeIndex(seg uint64) {
 	_ = fsys.WriteFileAtomic(w.fs, w.opt.Dir, name+indexSuffix, b, 0o600)
 }
 
+// CaptureRun returns the immutable writer-run identifier for capture metadata.
+// It does not acknowledge that a queued frame has been written or synced.
+func (w *FileWriter) CaptureRun() string { return w.id.Run }
+
 // SetEngineRun sets the engine run number written in later segment
 // records.
 func (w *FileWriter) SetEngineRun(n uint64) {

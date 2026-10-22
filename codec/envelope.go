@@ -22,6 +22,45 @@ type SignedEnvelope struct {
 // ErrEnvelopeSize reports a payload outside the transport's frame limit.
 var ErrEnvelopeSize = errors.New("codec: signed envelope exceeds frame limit")
 
+// SignedSequenceBytes borrows the unsigned sequence integer from the signed
+// portion of a frame. It checks only the enclosing RLP lengths and the integer
+// encoding, not the remaining fields or any signature. The result aliases
+// payload and must not be retained after payload is released. This preflight
+// permits classification before allocating a decoded proposal or certificate.
+func SignedSequenceBytes(code Code, payload []byte) ([]byte, error) {
+	if len(payload) > types.MaxIstanbulMsgSize {
+		return nil, ErrEnvelopeSize
+	}
+	depth := 0
+	switch code {
+	case CodePrepare, CodeCommit:
+		depth = 2
+	case CodePreprepare, CodeRoundChange:
+		depth = 3
+	default:
+		return nil, ErrUnknownCode
+	}
+	content := payload
+	for i := 0; i < depth; i++ {
+		list, rest, err := rlp.SplitList(content)
+		if err != nil {
+			return nil, err
+		}
+		if i == 0 && len(rest) != 0 {
+			return nil, gethrlp.ErrMoreThanOneValue
+		}
+		content = list
+	}
+	seq, _, err := rlp.SplitString(content)
+	if err != nil {
+		return nil, err
+	}
+	if len(seq) > 0 && seq[0] == 0 {
+		return nil, gethrlp.ErrCanonInt
+	}
+	return seq, nil
+}
+
 // DecodeSignedEnvelope decodes the signed outer portion of a consensus frame.
 // It uses the same signed-field decoders and signing-payload normalization as
 // DecodeMessage, but does not decode attached round changes, prepares or a

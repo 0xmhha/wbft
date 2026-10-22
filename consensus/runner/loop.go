@@ -30,6 +30,10 @@ type ctlReq struct {
 func (r *Runner) startGoroutines() {
 	r.ctl = make(chan ctlReq)
 	r.loopDone.Add(2 + r.cfg.Workers)
+	if r.nextHeight != nil {
+		r.loopDone.Add(1)
+		go r.nextHeightWorker()
+	}
 	go r.consensusLoop()
 	go r.commitLoop()
 	for i := 0; i < r.cfg.Workers; i++ {
@@ -79,6 +83,9 @@ func (r *Runner) Pump() bool {
 			return did
 		}
 		progressed := false
+		for r.checkNextHeight() {
+			progressed = true
+		}
 		for r.inbox.checkOne(true) {
 			progressed = true
 		}
@@ -116,6 +123,9 @@ func (r *Runner) next() (queued, bool) {
 		return q, true
 	}
 	r.appMu.Unlock()
+	if q, ok := r.takeNextHeight(); ok {
+		return q, true
+	}
 	hasTimer := r.timers.pending()
 	hasPeer := r.inbox.hasReady()
 	if hasTimer && hasPeer {
@@ -144,6 +154,12 @@ func (r *Runner) processOne() bool {
 	if !r.running.Load() || r.Halted() != nil || r.manualStepPending {
 		return false
 	}
+	if r.settleNextHeight() {
+		return true
+	}
+	if r.Halted() != nil {
+		return false
+	}
 	q, ok := r.next()
 	if !ok {
 		return false
@@ -166,6 +182,10 @@ type stepCtx struct {
 // handle processes one input: WAL record, core step, outputs, end-of-height
 // record, journal record and snapshot.
 func (r *Runner) handle(q queued) {
+	if q.deferred != nil {
+		defer func() { p := r.nextHeight; p.mu.Lock(); p.removeLocked(q.deferred); p.mu.Unlock() }()
+	}
+
 	r.step++
 	step := r.step
 	r.stepAt = event.Stamp{Wall: r.d.Clock.Now(), Mono: r.d.Clock.Mono(), Step: &step}
@@ -188,7 +208,13 @@ func (r *Runner) handle(q queued) {
 	}
 	kind := inputlog.Kind(q.in)
 	if r.d.WAL != nil {
-		if _, err := r.d.WAL.Append(encodeInput(kind, body)); err != nil {
+		var err error
+		if q.deferred != nil {
+			err = r.writeDeferred(walDeferredInput, q.deferred.record)
+		} else {
+			_, err = r.d.WAL.Append(encodeInput(kind, body))
+		}
+		if err != nil {
 			r.halt(err)
 			return
 		}
@@ -222,7 +248,7 @@ func (r *Runner) endHeight(snap *consensus.Snapshot, gens [4]uint64) {
 		if r.cfg.Core.Improvements.Has(consensus.ValidateRoundProposals) {
 			b.LocalTimer, b.LocalGen = true, gens[3]
 		}
-		rec, err := encodeBoundary(walEndHeight, b)
+		rec, err := r.encodeRunnerBoundary(walEndHeight, b)
 		if err != nil {
 			r.halt(err)
 			return

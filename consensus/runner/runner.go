@@ -122,6 +122,9 @@ type Config struct {
 	OverflowWindow time.Duration
 	// Workers is the number of receive-check workers (default GOMAXPROCS).
 	Workers int
+	// NextHeight is an opt-in next-sequence receive lane. It requires WAL
+	// replay and explicit positive limits; nil preserves the original path.
+	NextHeight *NextHeightLimits
 }
 
 // Deps are the runner's collaborators.
@@ -179,9 +182,10 @@ var (
 
 // queued is one input with where it came from.
 type queued struct {
-	capture uint64
-	in      consensus.Input
-	via     string
+	deferred *deferredEntry
+	capture  uint64
+	in       consensus.Input
+	via      string
 }
 
 // Values of the via of journal step records.
@@ -242,8 +246,9 @@ type Runner struct {
 	// application ahead; only the head check goroutine touches it.
 	headSuspect *types.Header
 
-	timers scheduler
-	inbox  inbox
+	timers     scheduler
+	inbox      inbox
+	nextHeight *nextHeightPool
 
 	commitMu            sync.Mutex // runner.commit.mu
 	commitQ             []commitJob
@@ -274,6 +279,15 @@ type commitJob struct {
 
 // New returns a stopped runner.
 func New(cfg Config, d Deps) (*Runner, error) {
+	if l := cfg.NextHeight; l != nil {
+		if !cfg.ReplayWAL || d.WAL == nil || d.ManualProcessing != nil || l.Entries == 0 || l.Bytes == 0 || l.PerPeer == 0 || l.PerSource == 0 {
+			return nil, fmt.Errorf("runner: NextHeight requires WAL replay, positive limits and atomic processing")
+		}
+		// Freeze caller-owned configuration before workers start.
+		copyLimits := *l
+		cfg.NextHeight = &copyLimits
+	}
+
 	if d.ManualProcessing != nil && (!cfg.Manual || d.ManualProcessing.Delay == nil || d.ManualProcessing.Schedule == nil || cfg.Workers < 1 || cfg.Workers > 256) {
 		return nil, fmt.Errorf("runner: manual processing requires manual mode, an explicit worker count and serialized scheduling")
 	}
@@ -325,6 +339,9 @@ func New(cfg Config, d Deps) (*Runner, error) {
 	}
 	r.timers.wake = r.wake
 	r.inbox.init(r)
+	if cfg.NextHeight != nil {
+		r.nextHeight = newNextHeightPool(*cfg.NextHeight)
+	}
 	r.commitCond = sync.NewCond(&r.commitMu)
 	r.snap.Store(&consensus.Snapshot{})
 	return r, nil
@@ -497,6 +514,11 @@ func (r *Runner) Close() error {
 		r.inbox.mu.Lock()
 		r.inbox.cond.Broadcast()
 		r.inbox.mu.Unlock()
+		if p := r.nextHeight; p != nil {
+			p.mu.Lock()
+			p.cond.Broadcast()
+			p.mu.Unlock()
+		}
 		r.loopDone.Wait()
 		r.stopLoop = nil
 	}

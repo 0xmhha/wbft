@@ -197,12 +197,12 @@ func InspectWAL(fs fsys.FS, dir string) (WALState, error) {
 		return st, err
 	}
 	for _, rec := range recs {
-		if rec.Format != walFormat {
+		if rec.Format != walFormat && rec.Format != nextHeightFormat {
 			continue
 		}
 		switch rec.Kind {
 		case walEndHeight:
-			b, err := decodeBoundary(rec.Body)
+			b, _, err := decodeRunnerBoundary(rec)
 			if err != nil {
 				return st, err
 			}

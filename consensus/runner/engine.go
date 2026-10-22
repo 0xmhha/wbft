@@ -3,6 +3,7 @@ package runner
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/0xmhha/wbft/chain/validator"
@@ -34,10 +35,23 @@ func (r *Runner) startEngine(_ context.Context, head *types.Header) error {
 	r.env = &liveEnv{r: r, head: head}
 	from := head.Number.AddUint64(1)
 
+	// Disabling replay must not silently discard an opt-in WAL profile.
+	if !r.cfg.ReplayWAL && r.d.WAL != nil {
+		fs, dir := r.d.WAL.FS()
+		records, _, _ := wal.ReadAll(fs, dir)
+		for _, rec := range records {
+			if rec.Format == nextHeightFormat {
+				return errNextHeightWAL
+			}
+		}
+	}
 	var plan *replayPlan
 	if r.cfg.ReplayWAL && r.d.WAL != nil {
 		p, err := r.planReplay(from)
 		if err != nil {
+			if r.nextHeight != nil || errors.Is(err, errNextHeightWAL) {
+				return err
+			}
 			r.replay.Stopped = err.Error()
 		} else {
 			plan = p
@@ -48,13 +62,16 @@ func (r *Runner) startEngine(_ context.Context, head *types.Header) error {
 	var replayTimers [4]*consensus.ArmTimer
 	if plan != nil && len(plan.steps) > 0 {
 		core, recs, res := r.runReplay(plan)
-		if res.err != nil && res.lastPartial {
+		if res.err != nil && res.lastPartial && r.nextHeight == nil {
 			// The last step was cut short by the crash: replay without it.
 			plan.steps = plan.steps[:len(plan.steps)-1]
 			core, recs, res = r.runReplay(plan)
 		}
 		r.replay.Records = res.fed
 		if res.err != nil {
+			if r.nextHeight != nil {
+				return res.err
+			}
 			r.replay.Stopped = res.err.Error()
 			r.log.Warn("wal replay stopped; starting a new core", "err", res.err)
 		} else {
@@ -65,6 +82,11 @@ func (r *Runner) startEngine(_ context.Context, head *types.Header) error {
 			r.lastOwn = res.lastOwn
 			replayTimers = res.timers
 			r.env.head = plan.head
+		}
+	}
+	if plan != nil {
+		if err := r.restoreNextHeight(plan.pending); err != nil {
+			return err
 		}
 	}
 	r.replay.Replayed = replayed
@@ -112,6 +134,12 @@ func (r *Runner) startEngine(_ context.Context, head *types.Header) error {
 		r.afterReplayTimers(replayTimers[:], snap)
 	}
 	r.lastHead.Store(r.env.head)
+	if p := r.nextHeight; p != nil {
+		p.mu.Lock()
+		p.active = true
+		p.mu.Unlock()
+		r.wake()
+	}
 	r.startHousekeeping()
 	return nil
 }
@@ -127,7 +155,7 @@ func (r *Runner) writeRunStart(from types.Height, head *types.Header, snap *cons
 	if r.d.WAL == nil {
 		return nil
 	}
-	rec, err := encodeBoundary(walRunStart, boundaryRec{From: from, Head: head, Validators: snap.Validators, Replayed: replayed, LocalTimer: r.cfg.Core.Improvements.Has(consensus.ValidateRoundProposals)})
+	rec, err := r.encodeRunnerBoundary(walRunStart, boundaryRec{From: from, Head: head, Validators: snap.Validators, Replayed: replayed, LocalTimer: r.cfg.Core.Improvements.Has(consensus.ValidateRoundProposals)})
 	if err != nil {
 		return err
 	}
@@ -143,6 +171,9 @@ func (r *Runner) writeRunStart(from types.Height, head *types.Header, snap *cons
 // stopEngine discards the core state, the armed timers and the queued
 // inputs.
 func (r *Runner) stopEngine(reason string) {
+	if r.nextHeight != nil {
+		r.nextHeight.clear()
+	}
 	if r.core != nil {
 		r.step++
 		step := r.step
@@ -173,10 +204,11 @@ func (r *Runner) stopEngine(reason string) {
 
 // replayPlan is the part of the log a replay feeds.
 type replayPlan struct {
-	head  *types.Header
-	vs    *validator.Set
-	gens  []uint64
-	steps []walStep
+	pending []deferredRecord
+	head    *types.Header
+	vs      *validator.Set
+	gens    []uint64
+	steps   []walStep
 }
 
 // planReplay finds the last boundary of height from (an end-of-height
@@ -196,12 +228,18 @@ func (r *Runner) planReplay(from types.Height) (*replayPlan, error) {
 	start := -1
 	var b boundaryRec
 	for i, rec := range recs {
-		if rec.Format != walFormat || (rec.Kind != walEndHeight && rec.Kind != walRunStart) {
+		if rec.Format == nextHeightFormat && r.nextHeight == nil {
+			return nil, errNextHeightWAL
+		}
+		if (rec.Format != walFormat && rec.Format != nextHeightFormat) || (rec.Kind != walEndHeight && rec.Kind != walRunStart) {
 			continue
 		}
-		x, err := decodeBoundary(rec.Body)
+		x, cp, err := decodeRunnerBoundary(rec)
 		if err != nil {
 			return nil, fmt.Errorf("wal boundary record: %w", err)
+		}
+		if cp != nil && cp.Limits != r.nextHeight.limits {
+			return nil, errors.New("runner: next-height checkpoint limits differ")
 		}
 		if x.From.Cmp(from) != 0 {
 			continue
@@ -210,8 +248,12 @@ func (r *Runner) planReplay(from types.Height) (*replayPlan, error) {
 			start, b = i, x
 		}
 	}
+	pending, err := r.pendingFromWAL(recs)
+	if err != nil {
+		return nil, err
+	}
 	if start < 0 {
-		return &replayPlan{}, nil
+		return &replayPlan{pending: pending}, nil
 	}
 	plan := &replayPlan{head: b.Head, vs: b.Validators, gens: b.timerGenerations()}
 	var cur *walStep
@@ -224,17 +266,34 @@ func (r *Runner) planReplay(from types.Height) (*replayPlan, error) {
 loop:
 	for i := start + 1; i < len(recs); i++ {
 		rec := recs[i]
-		if rec.Format != walFormat {
+		if rec.Format != walFormat && rec.Format != nextHeightFormat {
 			continue
 		}
 		switch rec.Kind {
 		case walRunStart:
-			x, err := decodeBoundary(rec.Body)
+			x, _, err := decodeRunnerBoundary(rec)
 			if err != nil || !x.Replayed || x.From.Cmp(from) != 0 {
 				break loop
 			}
 		case walEndHeight:
 			break loop
+		case walDeferredAdmit, walDeferredDrop, walDeferredInput:
+			if rec.Format != nextHeightFormat {
+				return nil, errors.New("runner: deferred record has the wrong format")
+			}
+			var d deferredRecord
+			if err := rlp.DecodeStrict(rec.Body, &d); err != nil {
+				return nil, err
+			}
+			if rec.Kind != walDeferredInput {
+				continue
+			}
+			flush()
+			in, err := deferredInput(d)
+			if err != nil {
+				return nil, err
+			}
+			cur = &walStep{kind: in.Kind, body: in.Body, index: i}
 		case walInput:
 			flush()
 			var in inputRec
@@ -265,6 +324,7 @@ loop:
 		}
 	}
 	flush()
+	plan.pending = pending
 	return plan, nil
 }
 
