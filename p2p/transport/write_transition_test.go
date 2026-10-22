@@ -246,3 +246,32 @@ func TestWriteTransitionsConcurrentNormalCompletions(t *testing.T) {
 		t.Fatal(completions)
 	}
 }
+
+func TestWriteTransitionsClosedRequestSetHasCanonicalOrder(t *testing.T) {
+	observer := new(writeTransitions)
+	ledger, err := NewWriteLedger(WriteLedgerOptions{Pending: 8, PerPeer: 4, KeyWithCode: true, Trace: observer})
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw := ledgerNormalMessage(t, 1)
+	var sessions []*WriteSession
+	for i := byte(1); i <= 4; i++ {
+		target := WritePeer{Addr: types.Address{i}, Session: NewWriteSession()}
+		if _, d := ledger.Prepare(target, uint64(codec.CodeRoundChange), raw); d != WriteReserved {
+			t.Fatal(d)
+		}
+		sessions = append(sessions, target.Session)
+	}
+	for _, session := range sessions {
+		session.Close()
+	}
+	if ledger.Pending() != 0 {
+		t.Fatal("normally closed requests retained")
+	}
+	events := observer.snapshot()
+	last := events[len(events)-1]
+	if last.Action != WritePrune || len(last.Pruned) != 4 || !slices.IsSorted(last.Pruned) {
+		t.Fatal("closed request set depends on map iteration", last.Pruned)
+	}
+	ledger.Close()
+}

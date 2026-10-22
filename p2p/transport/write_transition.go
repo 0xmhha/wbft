@@ -1,6 +1,9 @@
 package transport
 
-import "github.com/0xmhha/wbft/types"
+import (
+	"github.com/0xmhha/wbft/types"
+	"slices"
+)
 
 // WriteAction identifies an actual functional ledger call. These observations
 // are separate from legacy frame-cache operations and are not replay commands.
@@ -89,6 +92,7 @@ func (l *WriteLedger) observedUnlock(t *WriteTransition) {
 	l.publish(t)
 	l.mu.Unlock()
 	if l.opt.Trace != nil {
+		slices.Sort(t.Pruned)
 		l.opt.Trace.ObserveWriteTransition(*t)
 	}
 }

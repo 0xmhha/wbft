@@ -2,9 +2,12 @@ package runner
 
 import (
 	"context"
+	"crypto/sha256"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/0xmhha/wbft/codec"
 	"github.com/0xmhha/wbft/consensus"
@@ -15,6 +18,28 @@ import (
 	"github.com/0xmhha/wbft/types"
 )
 
+type runnerReceiveTransitions struct {
+	mu     sync.Mutex
+	events []transport.ReceiveTransition
+	writer journal.Writer
+	start  time.Time
+}
+
+func (o *runnerReceiveTransitions) ObserveReceiveTransition(event transport.ReceiveTransition) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.events = append(o.events, event)
+	if o.writer != nil {
+		now := time.Now()
+		o.writer.Put(journal.Record{Body: &journal.ReceiveCacheRec{Transition: event, Mono: now.Sub(o.start), WallNs: now.UnixNano()}})
+	}
+}
+func (o *runnerReceiveTransitions) snapshot() []transport.ReceiveTransition {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return append([]transport.ReceiveTransition(nil), o.events...)
+}
+
 func TestReceiveCacheActualCoreAcceptanceAndNormalRestart(t *testing.T) {
 	k := newKeys(t, 4)
 	var referenceVars, referenceRestart *consensus.Vars
@@ -23,8 +48,19 @@ func TestReceiveCacheActualCoreAcceptanceAndNormalRestart(t *testing.T) {
 	for _, enabled := range []bool{false, true} {
 		n := newTNode(t, k, 1)
 		n.noJournal = true
+		observed := &runnerReceiveTransitions{start: time.Now()}
 		if enabled {
-			n.receiveCache = &transport.ReceiveLedgerOptions{Pending: 16, PerPeer: 4, KeyWithCode: true}
+			// This separate diagnostic observer journal does not enable the runner's
+			// unsupported functional cache-journal profile or contain core step proof.
+			writer, err := journal.Open(journal.Options{FS: n.jfs, Dir: "/receive-observations", Synchronous: true}, journal.Identity{Run: "receive-observer"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = writer.Close() })
+			observed.writer = writer
+		}
+		if enabled {
+			n.receiveCache = &transport.ReceiveLedgerOptions{Pending: 16, PerPeer: 4, KeyWithCode: true, Trace: observed}
 		}
 		n.boot()
 		b := block(t, 10, 1, k.addrs[0], codec.BlockHash(n.chain.head))
@@ -54,6 +90,41 @@ func TestReceiveCacheActualCoreAcceptanceAndNormalRestart(t *testing.T) {
 			current := n.r.receiveContext.Load()
 			if !n.r.receiveCache.Known(current.scope, in.Code, raw) || !n.r.receiveCache.Recent(current.scope, in.Peer, in.Code, raw) || !n.r.d.Transport.SentOrReceived(in.Peer, raw) || n.r.receiveCache.Pending() != 0 {
 				t.Fatal("successful core ACCEPT did not register or release ownership")
+			}
+		}
+		var acceptedSource transport.ReceiveAcceptSource
+		if enabled {
+			matches := 0
+			for _, transition := range observed.snapshot() {
+				if transition.Action != transport.ReceiveCheckAccept || transition.Input.PayloadSHA256 != types.Hash(sha256.Sum256(raw)) {
+					continue
+				}
+				if transition.Decision != transport.ReceiveRegistered || !transition.Owned || !transition.Matched || !transition.Released || !transition.Recent || !transition.ScopeActive || transition.Input != transition.Checked {
+					t.Fatal("actual ACCEPT transition incomplete", transition)
+				}
+				source := transition.Source
+				acceptedSource = source
+				if source.EngineRun != n.r.EngineRun() || source.Step == 0 || source.Output == 0 || source.Via != "direct" {
+					t.Fatal("actual direct ACCEPT source unavailable", source)
+				}
+				n.events.mu.Lock()
+				found := 0
+				for index, record := range n.events.recs {
+					if record.Kind == event.MsgOutcome && record.Fields["dedup_key"] == hexHash(codec.DedupKey(raw)) && record.Fields["via"] == "direct" && record.Fields["outcome"] == event.Accept {
+						stamp := n.events.stamps[index]
+						if stamp.Step != nil && *stamp.Step == source.Step && record.Fields["engine_run"] == source.EngineRun {
+							found++
+						}
+					}
+				}
+				n.events.mu.Unlock()
+				if found != 1 {
+					t.Fatal("cache registration did not name its actual core ACCEPT step", found)
+				}
+				matches++
+			}
+			if matches != 1 {
+				t.Fatal("actual input cache transition missing", matches)
 			}
 		}
 		step := n.r.step
@@ -91,6 +162,27 @@ func TestReceiveCacheActualCoreAcceptanceAndNormalRestart(t *testing.T) {
 		}
 		if err := n.log.Close(); err != nil {
 			t.Fatal(err)
+		}
+		if enabled {
+			if err := observed.writer.Close(); err != nil {
+				t.Fatal(err)
+			}
+			records, err := journal.ReadAll(n.jfs, "/receive-observations")
+			if err != nil {
+				t.Fatal(err)
+			}
+			matches := 0
+			for _, record := range records {
+				if r, ok := record.Body.(*journal.ReceiveCacheRec); ok && r.Transition.Action == transport.ReceiveCheckAccept && r.Transition.Input.PayloadSHA256 == types.Hash(sha256.Sum256(raw)) && r.Transition.Decision == transport.ReceiveRegistered && r.Transition.Source == acceptedSource {
+					if r.Transition.Source.EngineRun == 0 || r.Transition.Source.Step == 0 || r.Transition.Source.Output == 0 {
+						t.Fatal("actual ACCEPT source lost on journal read")
+					}
+					matches++
+				}
+			}
+			if matches != 1 {
+				t.Fatal("actual core receive transition missing after journal close/open", matches)
+			}
 		}
 	}
 }

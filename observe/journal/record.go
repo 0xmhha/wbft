@@ -19,17 +19,18 @@ type Kind uint8
 
 // Record kinds.
 const (
-	KindSegment    Kind = 1  // first record of every segment: who wrote it
-	KindPeer       Kind = 2  // a peer's consensus stream was attached or closed
-	KindMsg        Kind = 3  // a consensus message received or sent
-	KindOutcome    Kind = 4  // what the node did with a received message
-	KindSuppressed Kind = 5  // a send suppressed by the recent cache
-	KindStep       Kind = 6  // one input of the core and the digest of its outputs
-	KindGap        Kind = 7  // records dropped while the queue was full
-	KindTimer      Kind = 8  // measured scheduler mutation and queue timing
-	KindCache      Kind = 9  // measured cache mutation and empty-instance declaration
-	KindSync       Kind = 10 // submitted and processed application sync controls
-	KindWriteCache Kind = 11 // actual accepted/completed write-ledger observations
+	KindSegment      Kind = 1  // first record of every segment: who wrote it
+	KindPeer         Kind = 2  // a peer's consensus stream was attached or closed
+	KindMsg          Kind = 3  // a consensus message received or sent
+	KindOutcome      Kind = 4  // what the node did with a received message
+	KindSuppressed   Kind = 5  // a send suppressed by the recent cache
+	KindStep         Kind = 6  // one input of the core and the digest of its outputs
+	KindGap          Kind = 7  // records dropped while the queue was full
+	KindTimer        Kind = 8  // measured scheduler mutation and queue timing
+	KindCache        Kind = 9  // measured cache mutation and empty-instance declaration
+	KindSync         Kind = 10 // submitted and processed application sync controls
+	KindWriteCache   Kind = 11 // actual accepted/completed write-ledger observations
+	KindReceiveCache Kind = 12 // actual accepted-input checking-ledger observations
 )
 
 func (k Kind) String() string {
@@ -56,13 +57,15 @@ func (k Kind) String() string {
 		return "sync"
 	case KindWriteCache:
 		return "write_cache"
+	case KindReceiveCache:
+		return "receive_cache"
 	}
 	return fmt.Sprintf("kind(%d)", uint8(k))
 }
 
 // Record is one journal record. Body is one of *SegmentRec, *PeerRec,
 // *MsgRec, *OutcomeRec, *SuppressedRec, *StepRec, *GapRec, *TimerRec, *CacheRec,
-// *WriteCacheRec, or *SyncRec. JSeq is assigned
+// *WriteCacheRec, *ReceiveCacheRec, or *SyncRec. JSeq is assigned
 // by the writer: it increases by one per written record within a run.
 type Record struct {
 	Kind Kind
@@ -591,6 +594,8 @@ func encodeBody(r Record, jseq uint64) ([]byte, error) {
 		return encodeCacheRec(b, jseq)
 	case *WriteCacheRec:
 		return encodeWriteCacheRec(b, jseq)
+	case *ReceiveCacheRec:
+		return encodeReceiveCacheRec(b, jseq)
 	case *SyncRec:
 		return encodeSyncRec(b, jseq)
 	case *GapRec:
@@ -751,6 +756,8 @@ func decodeBody(k Kind, body []byte) (Record, error) {
 		return decodeCacheRec(body)
 	case KindWriteCache:
 		return decodeWriteCacheRec(body)
+	case KindReceiveCache:
+		return decodeReceiveCacheRec(body)
 	case KindSync:
 		return decodeSyncRec(body)
 	case KindGap:
@@ -789,6 +796,8 @@ func kindOf(body any) (Kind, bool) {
 		return KindCache, true
 	case *WriteCacheRec:
 		return KindWriteCache, true
+	case *ReceiveCacheRec:
+		return KindReceiveCache, true
 	case *SyncRec:
 		return KindSync, true
 	}
@@ -813,6 +822,8 @@ func size(r Record) int64 {
 		return 320 + int64(len(b.Candidates)+len(b.Targets)+len(b.Suppressed))*20
 	case *WriteCacheRec:
 		return 512 + int64(len(b.Transition.Pruned))*8
+	case *ReceiveCacheRec:
+		return 512 + int64(len(b.Transition.Pruned))*8 + int64(len(b.Transition.Origin.WriterRun)+len(b.Transition.CheckedOrigin.WriterRun)+len(b.Transition.Source.Via))
 	case *SyncRec:
 		return 256
 	case *StepRec:

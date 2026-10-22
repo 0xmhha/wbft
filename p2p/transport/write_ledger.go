@@ -103,7 +103,7 @@ func (l *WriteLedger) release(r *writeReservation) {
 }
 
 func (l *WriteLedger) pruneClosed(t *WriteTransition) {
-	for _, r := range l.pending { //wbft:unordered every closed stream is reclaimed
+	for _, r := range l.pending { //wbft:unordered closed-stream releases commute; observation IDs are sorted before publication
 		if !r.target.Session.Active() {
 			if l.opt.Trace != nil {
 				t.Pruned = append(t.Pruned, r.observation)

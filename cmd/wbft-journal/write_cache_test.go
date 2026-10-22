@@ -113,3 +113,26 @@ func TestWriteCacheR01ProjectionRemainsUnavailable(t *testing.T) {
 		})
 	}
 }
+
+type unsupportedReceiveRecordObserver struct{ writer journal.Writer }
+
+func (o unsupportedReceiveRecordObserver) ObserveReceiveTransition(event transport.ReceiveTransition) {
+	o.writer.Put(journal.Record{Body: &journal.ReceiveCacheRec{Transition: event}})
+}
+func TestReceiveCacheRecordR01ProjectionUnavailableWithoutProfile(t *testing.T) {
+	fs := fsys.NewMem()
+	writer, err := journal.Open(journal.Options{FS: fs, Dir: "/receive-kind", Synchronous: true}, journal.Identity{Run: "receive-kind"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = transport.NewReceiveLedger(transport.ReceiveLedgerOptions{Pending: 16, PerPeer: 4, KeyWithCode: true, Trace: unsupportedReceiveRecordObserver{writer}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := exportR01(fs, "/receive-kind", "/out-receive", "", ""); err == nil || !strings.Contains(err.Error(), "accepted-receive cache observations") {
+		t.Fatal("new receive kind projected as legacy cache", err)
+	}
+}

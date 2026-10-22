@@ -38,8 +38,12 @@ func (w *r01Writer) indexCache(rec journal.Record, pos wal.Position) {
 	if w.cacheErr != nil {
 		return
 	}
-	if _, ok := rec.Body.(*journal.WriteCacheRec); ok {
+	if _, write := rec.Body.(*journal.WriteCacheRec); write {
 		w.cacheErr = fmt.Errorf("completed-write cache observations are unavailable in R01 exports")
+		return
+	}
+	if _, ok := rec.Body.(*journal.ReceiveCacheRec); ok {
+		w.cacheErr = fmt.Errorf("accepted-receive cache observations are unavailable in R01 exports")
 		return
 	}
 	if s, ok := rec.Body.(*journal.SegmentRec); ok {
