@@ -10,18 +10,47 @@ import (
 // by the adapter, independently of recording observers. It is process-local
 // metadata, never part of a wire message or a persisted consensus input.
 // A session must not be copied after first use; transports pass its pointer.
-type WriteSession struct{ active atomic.Bool }
+type WriteSession struct {
+	active      atomic.Bool
+	observation uint64
+}
+
+var observationIDs atomic.Uint64
+
+// nextObservationID never wraps or reuses a process-local observation number.
+// Exhaustion disables identification, without changing functional ownership.
+func nextObservationID() uint64 {
+	for {
+		previous := observationIDs.Load()
+		if previous == ^uint64(0) {
+			return 0
+		}
+		if observationIDs.CompareAndSwap(previous, previous+1) {
+			return previous + 1
+		}
+	}
+}
 
 // NewWriteSession starts a fresh stream lifetime, including on reconnection to
 // the same peer address. A zero session is inactive.
 func NewWriteSession() *WriteSession {
-	s := new(WriteSession)
+	s := &WriteSession{observation: nextObservationID()}
 	s.active.Store(true)
 	return s
 }
 
 // Active reports whether the transport still owns this attached stream.
 func (s *WriteSession) Active() bool { return s != nil && s.active.Load() }
+
+// ObservationID identifies this lifetime for diagnostics within this process.
+// It remains stable after Close. Zero means unavailable. It must be qualified
+// by a recording run before persistence, and never grants functional ownership.
+func (s *WriteSession) ObservationID() uint64 {
+	if s == nil {
+		return 0
+	}
+	return s.observation
+}
 
 // Close ends a stream lifetime permanently. Only the transport owner calls it.
 func (s *WriteSession) Close() {

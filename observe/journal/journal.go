@@ -289,6 +289,8 @@ func monoOf(r Record) time.Duration {
 		return b.Mono
 	case *StepRec:
 		return b.Mono
+	case *WriteCacheRec:
+		return b.Mono
 	case *SyncRec:
 		return b.Mono
 	}

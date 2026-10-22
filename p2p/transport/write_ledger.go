@@ -14,6 +14,7 @@ import (
 type WriteLedgerOptions struct {
 	Pending, PerPeer uint64
 	KeyWithCode      bool
+	Trace            WriteTransitionObserver
 }
 
 // WriteDecision separates a completed recent entry from pending work and from
@@ -39,11 +40,12 @@ type pendingWriteKey struct {
 }
 
 type writeReservation struct {
-	owner   *WriteLedger
-	target  WritePeer
-	key     writeKey
-	code    uint64
-	payload types.Hash
+	owner       *WriteLedger
+	target      WritePeer
+	key         writeKey
+	code        uint64
+	payload     types.Hash
+	observation uint64
 }
 
 // WriteTicket is one ledger-owned request. Its zero value owns nothing. A
@@ -56,12 +58,14 @@ type WriteTicket struct{ reservation *writeReservation }
 // Methods never call the transport or an observer while holding the mutex.
 // This type is a functional primitive, not an enabled node cache policy.
 type WriteLedger struct {
-	mu      sync.Mutex
-	opt     WriteLedgerOptions
-	closed  bool
-	pending map[pendingWriteKey]*writeReservation
-	counts  map[types.Address]uint64
-	recent  *lru[types.Address, *lru[writeKey, struct{}]]
+	mu                         sync.Mutex
+	observation, traceSequence uint64
+	traceExhausted             bool
+	opt                        WriteLedgerOptions
+	closed                     bool
+	pending                    map[pendingWriteKey]*writeReservation
+	counts                     map[types.Address]uint64
+	recent                     *lru[types.Address, *lru[writeKey, struct{}]]
 }
 
 // NewWriteLedger requires explicit positive pending entry limits. It uses the
@@ -70,7 +74,15 @@ func NewWriteLedger(opt WriteLedgerOptions) (*WriteLedger, error) {
 	if opt.Pending == 0 || opt.PerPeer == 0 || opt.PerPeer > opt.Pending {
 		return nil, errors.New("transport: write ledger requires positive pending and per-peer limits")
 	}
-	return &WriteLedger{opt: opt, pending: make(map[pendingWriteKey]*writeReservation), counts: make(map[types.Address]uint64), recent: newLRU[types.Address, *lru[writeKey, struct{}]](InmemoryPeers)}, nil
+	l := &WriteLedger{opt: opt, pending: make(map[pendingWriteKey]*writeReservation), counts: make(map[types.Address]uint64), recent: newLRU[types.Address, *lru[writeKey, struct{}]](InmemoryPeers)}
+	if opt.Trace != nil {
+		l.observation = nextObservationID()
+		l.mu.Lock()
+		event := l.transition(WriteStart)
+		event.PendingLimit, event.PerPeerLimit, event.KeyWithCode = opt.Pending, opt.PerPeer, opt.KeyWithCode
+		l.observedUnlock(&event)
+	}
+	return l, nil
 }
 
 func (l *WriteLedger) key(code uint64, payload []byte) writeKey {
@@ -90,9 +102,12 @@ func (l *WriteLedger) release(r *writeReservation) {
 	}
 }
 
-func (l *WriteLedger) pruneClosed() {
+func (l *WriteLedger) pruneClosed(t *WriteTransition) {
 	for _, r := range l.pending { //wbft:unordered every closed stream is reclaimed
 		if !r.target.Session.Active() {
+			if l.opt.Trace != nil {
+				t.Pruned = append(t.Pruned, r.observation)
+			}
 			l.release(r)
 		}
 	}
@@ -101,17 +116,25 @@ func (l *WriteLedger) pruneClosed() {
 // Prepare reserves functional ownership before calling SendWrite. Callers must
 // distinguish the decision when no ticket is returned; capacity refusal and
 // pending suppression are not evidence that a message was written.
-func (l *WriteLedger) Prepare(target WritePeer, code uint64, payload []byte) (WriteTicket, WriteDecision) {
-	if !target.Session.Active() || CheckOutbound(code, payload) != nil {
+func (l *WriteLedger) Prepare(target WritePeer, code uint64, payload []byte) (ticket WriteTicket, decision WriteDecision) {
+	active := target.Session.Active()
+	valid := active && CheckOutbound(code, payload) == nil
+	if l.opt.Trace == nil && !valid {
 		return WriteTicket{}, WriteUnavailable
 	}
 	key := l.key(code, payload)
 	l.mu.Lock()
-	defer l.mu.Unlock()
-	if l.closed || !target.Session.Active() {
+	event := l.transition(WritePrepare)
+	if l.opt.Trace != nil {
+		event.Input = l.identity(target, code, key, sha256.Sum256(payload))
+		event.Valid = valid
+	}
+	defer func() { event.Decision = decision; l.observedUnlock(&event) }()
+	event.SessionActive = active && target.Session.Active()
+	if l.closed || !event.SessionActive || !valid {
 		return WriteTicket{}, WriteUnavailable
 	}
-	l.pruneClosed()
+	l.pruneClosed(&event)
 	if recent, ok := l.recent.Get(target.Addr); ok {
 		if _, exists := recent.Get(key); exists {
 			return WriteTicket{}, WriteAlreadyRecent
@@ -124,9 +147,10 @@ func (l *WriteLedger) Prepare(target WritePeer, code uint64, payload []byte) (Wr
 	if uint64(len(l.pending)) >= l.opt.Pending || l.counts[target.Addr] >= l.opt.PerPeer {
 		return WriteTicket{}, WritePendingFull
 	}
-	r := &writeReservation{owner: l, target: target, key: key, code: code, payload: sha256.Sum256(payload)}
+	r := &writeReservation{owner: l, target: target, key: key, code: code, payload: sha256.Sum256(payload), observation: event.Sequence}
 	l.pending[pk] = r
 	l.counts[target.Addr]++
+	event.Request = r.observation
 	return WriteTicket{reservation: r}, WriteReserved
 }
 
@@ -141,13 +165,20 @@ func (l *WriteLedger) owns(ticket WriteTicket) *writeReservation {
 // QueueResult reclaims a rejected queue request. A Queued return never revives
 // ownership that a synchronous completion or stream close already consumed.
 func (l *WriteLedger) QueueResult(ticket WriteTicket, result SendResult) {
-	if result == Queued {
+	if result == Queued && l.opt.Trace == nil {
 		return
 	}
 	l.mu.Lock()
-	defer l.mu.Unlock()
+	event := l.transition(WriteQueueResult)
+	l.ticketIdentity(&event, ticket)
+	event.Queue = result
+	defer l.observedUnlock(&event)
 	if r := l.owns(ticket); r != nil {
-		l.release(r)
+		event.Owned = true
+		if result != Queued {
+			l.release(r)
+			event.Released = true
+		}
 	}
 }
 
@@ -155,16 +186,27 @@ func (l *WriteLedger) QueueResult(ticket WriteTicket, result SendResult) {
 // returns true only when this completion adds a successful recent entry.
 func (l *WriteLedger) Complete(ticket WriteTicket, receipt WriteReceipt) bool {
 	l.mu.Lock()
-	defer l.mu.Unlock()
+	event := l.transition(WriteComplete)
+	l.ticketIdentity(&event, ticket)
+	if l.opt.Trace != nil {
+		event.Receipt = WriteIdentity{Peer: receipt.Target.Addr, Session: receipt.Target.Session.ObservationID(), Code: receipt.Code, PayloadSHA256: receipt.PayloadSHA256}
+		event.Result = receipt.Result
+	}
+	defer l.observedUnlock(&event)
 	r := l.owns(ticket)
+	event.Owned = r != nil
 	if r == nil || receipt.Target != r.target || receipt.Code != r.code || receipt.PayloadSHA256 != r.payload {
 		return false
 	}
+	event.Matched = true
 	if receipt.Result != LocalWriteOK && receipt.Result != LocalWriteCancelled && receipt.Result != LocalWriteError {
 		return false
 	}
+	event.Valid = true
 	l.release(r)
-	if l.closed || receipt.Result != LocalWriteOK || !r.target.Session.Active() {
+	event.Released = true
+	event.SessionActive = r.target.Session.Active()
+	if l.closed || receipt.Result != LocalWriteOK || !event.SessionActive {
 		return false
 	}
 	m, ok := l.recent.Get(r.target.Addr)
@@ -173,6 +215,7 @@ func (l *WriteLedger) Complete(ticket WriteTicket, receipt WriteReceipt) bool {
 		l.recent.Add(r.target.Addr, m)
 	}
 	m.Add(r.key, struct{}{})
+	event.Registered = true
 	return true
 }
 
@@ -180,13 +223,20 @@ func (l *WriteLedger) Complete(ticket WriteTicket, receipt WriteReceipt) bool {
 // stream. An unavailable or closed stream never falls back to a current peer
 // address lookup. This shares the recent LRU with successful local writes.
 func (l *WriteLedger) RecordAccepted(target WritePeer, code uint64, payload []byte) bool {
-	if CheckOutbound(code, payload) != nil {
+	valid := CheckOutbound(code, payload) == nil
+	if l.opt.Trace == nil && !valid {
 		return false
 	}
 	key := l.key(code, payload)
 	l.mu.Lock()
-	defer l.mu.Unlock()
-	if l.closed || !target.Session.Active() {
+	event := l.transition(WriteAccept)
+	if l.opt.Trace != nil {
+		event.Input = l.identity(target, code, key, sha256.Sum256(payload))
+	}
+	event.Valid = valid
+	event.SessionActive = target.Session.Active()
+	defer l.observedUnlock(&event)
+	if !valid || l.closed || !event.SessionActive {
 		return false
 	}
 	m, ok := l.recent.Get(target.Addr)
@@ -195,6 +245,7 @@ func (l *WriteLedger) RecordAccepted(target WritePeer, code uint64, payload []by
 		l.recent.Add(target.Addr, m)
 	}
 	m.Add(key, struct{}{})
+	event.Registered = true
 	return true
 }
 
@@ -211,8 +262,9 @@ func (l *WriteLedger) Recent(peer types.Address, code uint64, payload []byte) bo
 // It accounts for ledger records, not payload bytes still owned by an adapter.
 func (l *WriteLedger) Pending() uint64 {
 	l.mu.Lock()
-	defer l.mu.Unlock()
-	l.pruneClosed()
+	event := l.transition(WritePrune)
+	defer l.observedUnlock(&event)
+	l.pruneClosed(&event)
 	return uint64(len(l.pending))
 }
 
@@ -220,7 +272,8 @@ func (l *WriteLedger) Pending() uint64 {
 // Old callbacks can never transfer ownership into a replacement ledger.
 func (l *WriteLedger) Close() {
 	l.mu.Lock()
-	defer l.mu.Unlock()
+	event := l.transition(WriteClose)
+	defer l.observedUnlock(&event)
 	l.closed = true
 	clear(l.pending)
 	clear(l.counts)

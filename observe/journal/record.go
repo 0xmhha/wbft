@@ -29,6 +29,7 @@ const (
 	KindTimer      Kind = 8  // measured scheduler mutation and queue timing
 	KindCache      Kind = 9  // measured cache mutation and empty-instance declaration
 	KindSync       Kind = 10 // submitted and processed application sync controls
+	KindWriteCache Kind = 11 // actual accepted/completed write-ledger observations
 )
 
 func (k Kind) String() string {
@@ -53,13 +54,15 @@ func (k Kind) String() string {
 		return "cache"
 	case KindSync:
 		return "sync"
+	case KindWriteCache:
+		return "write_cache"
 	}
 	return fmt.Sprintf("kind(%d)", uint8(k))
 }
 
 // Record is one journal record. Body is one of *SegmentRec, *PeerRec,
 // *MsgRec, *OutcomeRec, *SuppressedRec, *StepRec, *GapRec, *TimerRec, *CacheRec,
-// or *SyncRec. JSeq is assigned
+// *WriteCacheRec, or *SyncRec. JSeq is assigned
 // by the writer: it increases by one per written record within a run.
 type Record struct {
 	Kind Kind
@@ -586,6 +589,8 @@ func encodeBody(r Record, jseq uint64) ([]byte, error) {
 		return encodeTimerRec(b, jseq)
 	case *CacheRec:
 		return encodeCacheRec(b, jseq)
+	case *WriteCacheRec:
+		return encodeWriteCacheRec(b, jseq)
 	case *SyncRec:
 		return encodeSyncRec(b, jseq)
 	case *GapRec:
@@ -744,6 +749,8 @@ func decodeBody(k Kind, body []byte) (Record, error) {
 		return decodeTimerRec(body)
 	case KindCache:
 		return decodeCacheRec(body)
+	case KindWriteCache:
+		return decodeWriteCacheRec(body)
 	case KindSync:
 		return decodeSyncRec(body)
 	case KindGap:
@@ -780,6 +787,8 @@ func kindOf(body any) (Kind, bool) {
 		return KindTimer, true
 	case *CacheRec:
 		return KindCache, true
+	case *WriteCacheRec:
+		return KindWriteCache, true
 	case *SyncRec:
 		return KindSync, true
 	}
@@ -802,6 +811,8 @@ func size(r Record) int64 {
 		return int64(len(b.Input)) + 256
 	case *CacheRec:
 		return 320 + int64(len(b.Candidates)+len(b.Targets)+len(b.Suppressed))*20
+	case *WriteCacheRec:
+		return 512 + int64(len(b.Transition.Pruned))*8
 	case *SyncRec:
 		return 256
 	case *StepRec:
