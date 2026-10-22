@@ -11,8 +11,9 @@ import (
 // metadata, never part of a wire message or a persisted consensus input.
 // A session must not be copied after first use; transports pass its pointer.
 type WriteSession struct {
-	active      atomic.Bool
-	observation uint64
+	active         atomic.Bool
+	observation    uint64
+	observationRun atomic.Pointer[string]
 }
 
 var observationIDs atomic.Uint64
@@ -50,6 +51,38 @@ func (s *WriteSession) ObservationID() uint64 {
 		return 0
 	}
 	return s.observation
+}
+
+// ObservationRun qualifies the ordinal with its first recording writer run.
+// Empty means unavailable. It remains stable after Close or observer changes.
+func (s *WriteSession) ObservationRun() string {
+	if s == nil {
+		return ""
+	}
+	if run := s.observationRun.Load(); run != nil {
+		return *run
+	}
+	return ""
+}
+
+// BindObservationRun assigns the observation-only namespace once. It neither
+// activates a session nor grants functional ownership. Callers must preserve
+// an unavailable qualification already frozen in an earlier request record.
+func (s *WriteSession) BindObservationRun(run string) string {
+	if s == nil || s.observation == 0 {
+		return ""
+	}
+	if previous := s.observationRun.Load(); previous != nil {
+		return *previous
+	}
+	if run == "" {
+		return ""
+	}
+	frozen := run
+	if s.observationRun.CompareAndSwap(nil, &frozen) {
+		return frozen
+	}
+	return s.ObservationRun()
 }
 
 // Close ends a stream lifetime permanently. Only the transport owner calls it.

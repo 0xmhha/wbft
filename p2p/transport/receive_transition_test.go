@@ -208,3 +208,27 @@ func TestReceiveTransitionsClosedRequestSetHasCanonicalOrder(t *testing.T) {
 	}
 	ledger.Close()
 }
+
+func TestReceiveTransitionsKeepUnavailableOriginalSessionRun(t *testing.T) {
+	observer := new(receiveTransitions)
+	ledger, err := NewReceiveLedger(ReceiveLedgerOptions{Pending: 16, PerPeer: 4, KeyWithCode: true, Trace: observer})
+	if err != nil {
+		t.Fatal(err)
+	}
+	scope := NewValidationScope()
+	in := Inbound{Peer: types.Address{7}, Code: uint64(codec.CodeRoundChange), Payload: ledgerNormalMessage(t, 1), Stream: NewWriteSession()}
+	ticket, decision := ledger.Prepare(scope, in, ReceiveOrigin{})
+	if decision != ReceiveReserved {
+		t.Fatal(decision)
+	}
+	in.Stream.BindObservationRun("later-observer")
+	if ledger.Accept(ticket, in) != ReceiveRegistered {
+		t.Fatal("recording changed normal completed check")
+	}
+	for _, event := range observer.snapshot() {
+		if event.Action == ReceiveCheckAccept && (event.Input.SessionRun != "" || event.Checked.SessionRun != "later-observer") {
+			t.Fatal("original missing stream qualification replaced", event.Input.SessionRun, event.Checked.SessionRun)
+		}
+	}
+	ledger.Close()
+}

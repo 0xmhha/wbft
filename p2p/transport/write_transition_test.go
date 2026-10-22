@@ -275,3 +275,67 @@ func TestWriteTransitionsClosedRequestSetHasCanonicalOrder(t *testing.T) {
 	}
 	ledger.Close()
 }
+
+func TestWriteSessionObservationRunImmutableAcrossObservers(t *testing.T) {
+	session := NewWriteSession()
+	id := session.ObservationID()
+	if session.ObservationRun() != "" || session.BindObservationRun("") != "" {
+		t.Fatal("missing observation run inferred")
+	}
+	const workersCount = 32
+	observed := make(chan string, workersCount)
+	var workers sync.WaitGroup
+	for index := range workersCount {
+		run := "first-writer"
+		if index%2 == 1 {
+			run = "second-writer"
+		}
+		workers.Go(func() { observed <- session.BindObservationRun(run) })
+	}
+	workers.Wait()
+	close(observed)
+	original := session.ObservationRun()
+	if original != "first-writer" && original != "second-writer" {
+		t.Fatal("observation run unavailable")
+	}
+	for run := range observed {
+		if run != original {
+			t.Fatal("observers received different source identities")
+		}
+	}
+	if !session.Active() || session.ObservationID() != id {
+		t.Fatal("recording changed functional session")
+	}
+	session.Close()
+	if session.BindObservationRun("later-writer") != original || session.ObservationRun() != original || session.Active() {
+		t.Fatal("recording rebound or revived a closed session")
+	}
+	var missing *WriteSession
+	if missing.BindObservationRun("missing") != "" || missing.ObservationRun() != "" || new(WriteSession).BindObservationRun("zero") != "" {
+		t.Fatal("unavailable session qualified")
+	}
+}
+
+func TestWriteTransitionsKeepUnavailableOriginalSessionRun(t *testing.T) {
+	observer := new(writeTransitions)
+	ledger, err := NewWriteLedger(WriteLedgerOptions{Pending: 16, PerPeer: 4, KeyWithCode: true, Trace: observer})
+	if err != nil {
+		t.Fatal(err)
+	}
+	target := WritePeer{Addr: types.Address{7}, Session: NewWriteSession()}
+	raw := ledgerNormalMessage(t, 1)
+	ticket, decision := ledger.Prepare(target, uint64(codec.CodeRoundChange), raw)
+	if decision != WriteReserved {
+		t.Fatal(decision)
+	}
+	target.Session.BindObservationRun("later-observer")
+	if !ledger.Complete(ticket, WriteReceipt{Target: target, Code: uint64(codec.CodeRoundChange), PayloadSHA256: sha256.Sum256(raw), Result: LocalWriteOK}) {
+		t.Fatal("recording prevented normal functional completion")
+	}
+	for _, event := range observer.snapshot() {
+		if event.Action == WriteComplete && (event.Input.SessionRun != "" || event.Receipt.SessionRun != "later-observer") {
+			t.Fatal("original missing qualification replaced", event.Input.SessionRun, event.Receipt.SessionRun)
+		}
+	}
+	ledger.Close()
+}

@@ -21,9 +21,12 @@ const (
 
 // WriteIdentity contains only value metadata. Session is a process-local
 // observation number, never a replacement for the original session pointer.
+// SessionRun is the frozen first-writer qualification; an empty qualification
+// must not be replaced with the current recording run.
 type WriteIdentity struct {
 	Peer          types.Address
 	Session       uint64
+	SessionRun    string
 	Code          uint64
 	Key           types.Hash
 	PayloadSHA256 types.Hash
@@ -98,7 +101,7 @@ func (l *WriteLedger) observedUnlock(t *WriteTransition) {
 }
 
 func (l *WriteLedger) identity(target WritePeer, code uint64, key writeKey, sha types.Hash) WriteIdentity {
-	return WriteIdentity{Peer: target.Addr, Session: target.Session.ObservationID(), Code: code, Key: key.payload, PayloadSHA256: sha}
+	return WriteIdentity{Peer: target.Addr, Session: target.Session.ObservationID(), SessionRun: target.Session.ObservationRun(), Code: code, Key: key.payload, PayloadSHA256: sha}
 }
 
 func (l *WriteLedger) ticketIdentity(t *WriteTransition, ticket WriteTicket) {
@@ -108,6 +111,7 @@ func (l *WriteLedger) ticketIdentity(t *WriteTransition, ticket WriteTicket) {
 	if r := ticket.reservation; r != nil && r.owner == l {
 		t.Request = r.observation
 		t.Input = l.identity(r.target, r.code, r.key, r.payload)
+		t.Input.SessionRun = r.streamRun
 		t.SessionActive = r.target.Session.Active()
 	}
 }

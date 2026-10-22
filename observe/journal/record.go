@@ -821,9 +821,9 @@ func size(r Record) int64 {
 	case *CacheRec:
 		return 320 + int64(len(b.Candidates)+len(b.Targets)+len(b.Suppressed))*20
 	case *WriteCacheRec:
-		return 512 + int64(len(b.Transition.Pruned))*8
+		return 512 + int64(len(b.Transition.Pruned))*8 + int64(len(b.Transition.Input.SessionRun)+len(b.Transition.Receipt.SessionRun))
 	case *ReceiveCacheRec:
-		return 640 + int64(len(b.Transition.Pruned))*8 + int64(len(b.Transition.Origin.WriterRun)+len(b.Transition.CheckedOrigin.WriterRun)+len(b.Transition.Source.Via)+len(b.Transition.Context.Sequence)+len(b.Transition.Context.Round)+len(b.Transition.Context.State)+len(b.Transition.Context.PriorRound))
+		return 640 + int64(len(b.Transition.Pruned))*8 + int64(len(b.Transition.Origin.WriterRun)+len(b.Transition.CheckedOrigin.WriterRun)+len(b.Transition.Source.Via)+len(b.Transition.Context.Sequence)+len(b.Transition.Context.Round)+len(b.Transition.Context.State)+len(b.Transition.Context.PriorRound)+len(b.Transition.Input.SessionRun)+len(b.Transition.Checked.SessionRun))
 	case *SyncRec:
 		return 256
 	case *StepRec:

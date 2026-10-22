@@ -96,7 +96,7 @@ func (l *ReceiveLedger) observedReceiveUnlock(t *ReceiveTransition) {
 	}
 }
 func (l *ReceiveLedger) receiveIdentity(in Inbound, key receiveKey) WriteIdentity {
-	return WriteIdentity{Peer: in.Peer, Session: in.Stream.ObservationID(), Code: in.Code, Key: key.key.payload, PayloadSHA256: sha256.Sum256(in.Payload)}
+	return WriteIdentity{Peer: in.Peer, Session: in.Stream.ObservationID(), SessionRun: in.Stream.ObservationRun(), Code: in.Code, Key: key.key.payload, PayloadSHA256: sha256.Sum256(in.Payload)}
 }
 func (l *ReceiveLedger) receiveTicketIdentity(t *ReceiveTransition, ticket ReceiveTicket) {
 	if l.opt.Trace == nil {
@@ -108,7 +108,7 @@ func (l *ReceiveLedger) receiveTicketIdentity(t *ReceiveTransition, ticket Recei
 		t.Context, t.ContextKnown = r.scope.Context()
 		t.ScopeActive = r.scope.Active()
 		t.Origin = r.origin
-		t.Input = WriteIdentity{Peer: r.peer, Session: r.stream, Code: r.code, Key: r.key.key.payload, PayloadSHA256: r.payload}
+		t.Input = WriteIdentity{Peer: r.peer, Session: r.stream, SessionRun: r.streamRun, Code: r.code, Key: r.key.key.payload, PayloadSHA256: r.payload}
 	}
 }
 

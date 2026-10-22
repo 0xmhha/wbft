@@ -67,6 +67,7 @@ type receiveReservation struct {
 	payload             types.Hash
 	origin              ReceiveOrigin
 	observation, stream uint64
+	streamRun           string
 }
 
 // ReceiveTicket owns one check, rather than one payload key. Two normal
@@ -178,6 +179,7 @@ func (l *ReceiveLedger) Prepare(scope *ValidationScope, in Inbound, origin Recei
 	r := &receiveReservation{owner: l, scope: scope, peer: in.Peer, code: in.Code, key: key, payload: sha256.Sum256(in.Payload), origin: origin, observation: event.Sequence}
 	if l.opt.Trace != nil {
 		r.stream = in.Stream.ObservationID()
+		r.streamRun = event.Input.SessionRun
 	}
 	l.pending[r] = struct{}{}
 	l.counts[in.Peer]++

@@ -75,6 +75,9 @@ func receiveInputPresent(in transport.WriteIdentity) bool {
 }
 
 func validReceiveTransition(t transport.ReceiveTransition) bool {
+	if !validSessionObservation(t.Input) || !validSessionObservation(t.Checked) {
+		return false
+	}
 	if t.Ledger == 0 || t.Sequence == 0 || t.Action < transport.ReceiveLedgerStart || t.Action > transport.ReceiveLedgerClose || !validReceiveOrigin(t.Origin) || !validReceiveOrigin(t.CheckedOrigin) {
 		return false
 	}

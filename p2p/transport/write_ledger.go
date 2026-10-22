@@ -46,6 +46,7 @@ type writeReservation struct {
 	code        uint64
 	payload     types.Hash
 	observation uint64
+	streamRun   string
 }
 
 // WriteTicket is one ledger-owned request. Its zero value owns nothing. A
@@ -148,6 +149,9 @@ func (l *WriteLedger) Prepare(target WritePeer, code uint64, payload []byte) (ti
 		return WriteTicket{}, WritePendingFull
 	}
 	r := &writeReservation{owner: l, target: target, key: key, code: code, payload: sha256.Sum256(payload), observation: event.Sequence}
+	if l.opt.Trace != nil {
+		r.streamRun = event.Input.SessionRun
+	}
 	l.pending[pk] = r
 	l.counts[target.Addr]++
 	event.Request = r.observation
@@ -189,7 +193,7 @@ func (l *WriteLedger) Complete(ticket WriteTicket, receipt WriteReceipt) bool {
 	event := l.transition(WriteComplete)
 	l.ticketIdentity(&event, ticket)
 	if l.opt.Trace != nil {
-		event.Receipt = WriteIdentity{Peer: receipt.Target.Addr, Session: receipt.Target.Session.ObservationID(), Code: receipt.Code, PayloadSHA256: receipt.PayloadSHA256}
+		event.Receipt = WriteIdentity{Peer: receipt.Target.Addr, Session: receipt.Target.Session.ObservationID(), SessionRun: receipt.Target.Session.ObservationRun(), Code: receipt.Code, PayloadSHA256: receipt.PayloadSHA256}
 		event.Result = receipt.Result
 	}
 	defer l.observedUnlock(&event)

@@ -29,7 +29,14 @@ type writeCacheRLP struct {
 	Mono, WallNs                      uint64
 }
 
+func validSessionObservation(identity transport.WriteIdentity) bool {
+	return identity.SessionRun == "" || identity.Session != 0
+}
+
 func validWriteTransition(t transport.WriteTransition) bool {
+	if !validSessionObservation(t.Input) || !validSessionObservation(t.Receipt) {
+		return false
+	}
 	if t.Ledger == 0 || t.Sequence == 0 || t.Action < transport.WriteStart || t.Action > transport.WriteClose {
 		return false
 	}
