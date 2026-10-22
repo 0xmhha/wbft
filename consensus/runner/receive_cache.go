@@ -58,11 +58,12 @@ func (r *Runner) beginReceiveCheck(q queued) (transport.ReceiveTicket, transport
 	if current == nil {
 		return transport.ReceiveTicket{}, transport.Inbound{}, false
 	}
-	in := transport.Inbound{Peer: m.Peer, Code: uint64(m.Code), Payload: m.Payload, RecvMono: m.RecvMono, Capture: q.capture}
+	in := transport.Inbound{Peer: m.Peer, Code: uint64(m.Code), Payload: m.Payload, RecvMono: m.RecvMono, Capture: q.capture, Stream: q.stream}
 	origin := transport.ReceiveOrigin{}
 	if q.deferred != nil {
 		origin = transport.ReceiveOrigin{WriterRun: q.deferred.record.CaptureRun, CaptureID: q.deferred.record.Capture}
 		in.Capture = origin.CaptureID
+		in.Stream = q.deferred.record.stream
 	}
 	ticket, decision := r.receiveCache.Prepare(current.scope, in, origin)
 	if decision == transport.ReceiveKnown && q.via == viaPeer && q.deferred == nil {
@@ -86,9 +87,11 @@ func (r *Runner) completeReceiveCheck(ticket transport.ReceiveTicket, in transpo
 	for _, out := range outs {
 		o, ok := out.(consensus.Outcome)
 		if ok && o.Relayed && (o.Via == "direct" || o.Via == "self") && uint64(o.Code) == in.Code && o.Peer == in.Peer && o.DedupKey == key {
-			r.receiveCache.Accept(ticket, in)
+			if r.receiveCache.Accept(ticket, in) == transport.ReceiveRegistered && r.d.ReceiveCacheRecorded != nil {
+				r.d.ReceiveCacheRecorded(in.Code)
+			}
 			if r.d.Transport != nil && in.Peer != r.cfg.Core.Self {
-				r.d.Transport.RecordAccepted(in.Peer, in.Code, in.Payload)
+				r.d.Transport.RecordAcceptedInput(in)
 			}
 			return
 		}

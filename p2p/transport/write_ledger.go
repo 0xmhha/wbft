@@ -176,6 +176,28 @@ func (l *WriteLedger) Complete(ticket WriteTicket, receipt WriteReceipt) bool {
 	return true
 }
 
+// RecordAccepted records a fully accepted reception on its original active
+// stream. An unavailable or closed stream never falls back to a current peer
+// address lookup. This shares the recent LRU with successful local writes.
+func (l *WriteLedger) RecordAccepted(target WritePeer, code uint64, payload []byte) bool {
+	if CheckOutbound(code, payload) != nil {
+		return false
+	}
+	key := l.key(code, payload)
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.closed || !target.Session.Active() {
+		return false
+	}
+	m, ok := l.recent.Get(target.Addr)
+	if !ok {
+		m = newLRU[writeKey, struct{}](InmemoryMessages)
+		l.recent.Add(target.Addr, m)
+	}
+	m.Add(key, struct{}{})
+	return true
+}
+
 // Recent inspects completed entries without changing their LRU order.
 func (l *WriteLedger) Recent(peer types.Address, code uint64, payload []byte) bool {
 	key := l.key(code, payload)
@@ -203,4 +225,10 @@ func (l *WriteLedger) Close() {
 	clear(l.pending)
 	clear(l.counts)
 	l.recent = newLRU[types.Address, *lru[writeKey, struct{}]](InmemoryPeers)
+}
+
+func (l *WriteLedger) Closed() bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.closed
 }

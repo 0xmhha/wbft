@@ -134,8 +134,12 @@ type Config struct {
 
 // Deps are the runner's collaborators.
 type Deps struct {
-	Chain Chain
-	App   App
+	// ReceiveCacheRecorded observes a direct core ACCEPT retained in the
+	// received cache. It runs after the cache mutex is released and must not
+	// block. Nil changes no functional cache ownership or state.
+	ReceiveCacheRecorded func(code uint64)
+	Chain                Chain
+	App                  App
 	// Transport sends and deduplicates; nil sends nothing.
 	Transport *transport.Dedup
 	// Net is the transport under Transport, used to disconnect peers; nil
@@ -187,6 +191,7 @@ var (
 
 // queued is one input with where it came from.
 type queued struct {
+	stream   *transport.WriteSession // optional original functional stream, never WAL input
 	deferred *deferredEntry
 	capture  uint64
 	in       consensus.Input
@@ -286,6 +291,12 @@ type commitJob struct {
 
 // New returns a stopped runner.
 func New(cfg Config, d Deps) (*Runner, error) {
+	if d.Transport != nil && d.Transport.CompletedWritesClosed() {
+		return nil, fmt.Errorf("runner: completed-write cache lifetime is closed")
+	}
+	if d.Transport != nil && d.Transport.CompletedWritesEnabled() && (cfg.ReceiveCache == nil || !cfg.ReceiveCache.KeyWithCode) {
+		return nil, fmt.Errorf("runner: completed-write cache requires code-aware accepted reception")
+	}
 	var receiveCache *transport.ReceiveLedger
 	if opt := cfg.ReceiveCache; opt != nil {
 		if d.Journal != nil {
@@ -548,6 +559,9 @@ func (r *Runner) Close() error {
 	}
 	if r.receiveCache != nil {
 		r.receiveCache.Close()
+	}
+	if r.d.Transport != nil {
+		r.d.Transport.CloseCompletedWrites()
 	}
 	return nil
 }

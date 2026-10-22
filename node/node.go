@@ -122,6 +122,19 @@ const (
 
 // New returns a node that is not started.
 func New(cfg Config, d Deps) (*Node, error) {
+	if cfg.CachePolicy != nil {
+		limits := *cfg.CachePolicy
+		if err := limits.Validate(); err != nil {
+			return nil, fmt.Errorf("%w: %v", ErrConfig, err)
+		}
+		if !cfg.Journal.Disabled {
+			return nil, fmt.Errorf("%w: cache policy journal profile is not available", ErrConfig)
+		}
+		if _, ok := d.Transport.(transport.WriteSender); !ok {
+			return nil, fmt.Errorf("%w: actual write completion is unavailable", ErrConfig)
+		}
+		cfg.CachePolicy = &limits
+	}
 	if d.App == nil || d.Authority == nil {
 		return nil, fmt.Errorf("%w: App and Authority are required", ErrConfig)
 	}
@@ -461,21 +474,30 @@ func (n *Node) start(ctx context.Context) error {
 			out = recordedTransport{Transport: n.d.Transport, rec: rec}
 		}
 		suppressed := n.metrics.Counter("wbft_send_suppressed_total", "Sends left out because the peer's recent cache holds the message, by cause.", "cause")
-		hits := n.metrics.Counter("wbft_dedup_hits_total", "Received messages whose key was already in a dedup cache, by cache (known, peer_recent).", "cache")
-		record := inbound
-		inbound = func(peer types.Address, known, peerRecent bool) {
-			if known {
-				hits.Inc("known")
-			}
-			if peerRecent {
-				hits.Inc("peer_recent")
-			}
-			if record != nil {
-				record(peer, known, peerRecent)
+		if n.cfg.CachePolicy == nil {
+			hits := n.metrics.Counter("wbft_dedup_hits_total", "Received messages whose key was already in a dedup cache, by cache (known, peer_recent).", "cache")
+			record := inbound
+			inbound = func(peer types.Address, known, peerRecent bool) {
+				if known {
+					hits.Inc("known")
+				}
+				if peerRecent {
+					hits.Inc("peer_recent")
+				}
+				if record != nil {
+					record(peer, known, peerRecent)
+				}
 			}
 		}
-		if dedup, err = transport.NewDedup(out, transport.DedupOptions{Self: self,
-			Suppressed: func(c event.SendCause) { suppressed.Inc(string(c)) }, Inbound: inbound}); err != nil {
+		options := transport.DedupOptions{Self: self, Suppressed: func(c event.SendCause) { suppressed.Inc(string(c)) }, Inbound: inbound}
+		if policy := n.cfg.CachePolicy; policy != nil {
+			write := policy.WriteOptions()
+			options.KeyWithCode, options.RecordAfterSend, options.CompletedWrites = true, true, &write
+			options.Inbound = nil // a read-loop hit is not a later core ACCEPT
+			completed := n.metrics.Counter("wbft_cache_write_completed_total", "Successful local writes retained in the completed-write cache.", "code")
+			options.WriteCompleted = func(code uint64) { completed.Inc(fmt.Sprintf("%#x", code)) }
+		}
+		if dedup, err = transport.NewDedup(out, options); err != nil {
 			return err
 		}
 	}
@@ -492,7 +514,14 @@ func (n *Node) start(ctx context.Context) error {
 	if jw != nil {
 		deps.Journal = jw
 	}
-	r, err := runner.New(runner.Config{Core: core, ReplayWAL: true, NextHeight: n.cfg.NextHeight}, deps)
+	config := runner.Config{Core: core, ReplayWAL: true, NextHeight: n.cfg.NextHeight}
+	if policy := n.cfg.CachePolicy; policy != nil {
+		receive := policy.ReceiveOptions()
+		config.ReceiveCache = &receive
+		accepted := n.metrics.Counter("wbft_cache_receive_accepted_total", "Message inputs accepted by the core and retained in the receive cache.", "code")
+		deps.ReceiveCacheRecorded = func(code uint64) { accepted.Inc(fmt.Sprintf("%#x", code)) }
+	}
+	r, err := runner.New(config, deps)
 	if err != nil {
 		return err
 	}
@@ -868,6 +897,9 @@ func (n *Node) startFields(act runner.HandshakeAction, recov wal.Recovery) map[s
 		f["sign_floor"] = map[string]any{"height": n.floor.String(), "status": n.floorState}
 	}
 	f["validator"] = n.signer != nil
+	if n.cfg.CachePolicy != nil {
+		f["transport_cache"] = map[string]any{"profile": transport.CachePolicyProfile, "limits": *n.cfg.CachePolicy, "active": n.signer != nil}
+	}
 	if n.chainCfg != nil {
 		f["rules_digest"] = n.chainCfg.RulesDigest()
 		f["rule_activations"] = n.chainCfg.RuleActivations()

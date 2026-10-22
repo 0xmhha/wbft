@@ -36,11 +36,21 @@ type Receiver interface {
 // Inbound is one received message after the frame stage: data is the payload
 // of codes 0x12 .. 0x15 and the unwrapped payload of 0x11.
 type Inbound struct {
-	Capture  uint64 // optional journal provenance, never a consensus input field
+	// Stream is optional functional provenance. It is frozen by an adapter
+	// for a StreamReceiver, never serialized or inferred from a recorder.
+	Stream   *WriteSession `json:"-"`
+	Capture  uint64        // optional journal provenance, never a consensus input field
 	Peer     types.Address
 	Code     uint64
 	Payload  []byte
 	RecvMono time.Duration
+}
+
+// StreamReceiver requests exact functional stream identity. Legacy receivers
+// retain their original Inbound values and require no completion capability.
+type StreamReceiver interface {
+	Receiver
+	UsesStreamIdentity() bool
 }
 
 // PeerInfo describes an attached peer.

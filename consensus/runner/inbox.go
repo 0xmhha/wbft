@@ -69,6 +69,13 @@ func (b *inbox) init(r *Runner) {
 // to.
 func (r *Runner) Receiver() transport.Receiver { return &r.inbox }
 
+// UsesStreamIdentity requests functional provenance only for the policy that
+// registers peer-recent entries after validation or actual local write.
+func (b *inbox) UsesStreamIdentity() bool {
+	r := b.r
+	return r.receiveCache != nil && r.d.Transport != nil && r.d.Transport.CompletedWritesEnabled()
+}
+
 func (b *inbox) peer(a types.Address) *peerIn {
 	p := b.peers[a]
 	if p == nil {
@@ -393,7 +400,7 @@ func (b *inbox) hasReady() bool {
 }
 
 // take returns the next checked message, one per peer in turn.
-func (b *inbox) take() (consensus.Message, uint64, bool) {
+func (b *inbox) take() (consensus.Message, uint64, *transport.WriteSession, bool) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	n := len(b.order)
@@ -408,10 +415,10 @@ func (b *inbox) take() (consensus.Message, uint64, bool) {
 				continue
 			}
 			delete(b.slots, k)
-			return consensus.Message{Code: codec.Code(s.in.Code), Payload: s.in.Payload, Peer: s.in.Peer, RecvMono: s.in.RecvMono}, s.in.Capture, true
+			return consensus.Message{Code: codec.Code(s.in.Code), Payload: s.in.Payload, Peer: s.in.Peer, RecvMono: s.in.RecvMono}, s.in.Capture, s.in.Stream, true
 		}
 	}
-	return consensus.Message{}, 0, false
+	return consensus.Message{}, 0, nil, false
 }
 
 // InboundBytes returns the payload bytes waiting in the per-peer receive

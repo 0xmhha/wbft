@@ -17,7 +17,7 @@ func (d *Dedup) CanRecordAccepted() bool {
 // operation for a later core completion. The accepted-input receiver keeps
 // its independently scoped known cache rather than consulting this legacy one.
 func (d *Dedup) RecordAccepted(peer types.Address, code uint64, payload []byte) bool {
-	if !d.CanRecordAccepted() || CheckOutbound(code, payload) != nil {
+	if d.completedWrites != nil || !d.CanRecordAccepted() || CheckOutbound(code, payload) != nil {
 		return false
 	}
 	key := codec.DedupKey(payload)
@@ -26,4 +26,14 @@ func (d *Dedup) RecordAccepted(peer types.Address, code uint64, payload []byte) 
 	d.peerCache(peer).Add(key, struct{}{})
 	d.known.Add(key, struct{}{})
 	return true
+}
+
+// RecordAcceptedInput retains an original active stream in completion mode.
+// Missing runtime ownership is unavailable, even if a matching address is now
+// attached. It does not recover a session from capture metadata or WAL replay.
+func (d *Dedup) RecordAcceptedInput(in Inbound) bool {
+	if d.completedWrites != nil {
+		return d.completedWrites.RecordAccepted(WritePeer{Addr: in.Peer, Session: in.Stream}, in.Code, in.Payload)
+	}
+	return d.RecordAccepted(in.Peer, in.Code, in.Payload)
 }
