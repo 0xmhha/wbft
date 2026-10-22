@@ -136,3 +136,36 @@ func TestReceiveCacheRecordR01ProjectionUnavailableWithoutProfile(t *testing.T) 
 		t.Fatal("new receive kind projected as legacy cache", err)
 	}
 }
+
+func TestSessionSourceR01ProjectionUnavailableWithoutProfile(t *testing.T) {
+	for _, legacy := range []uint64{0, journal.CacheTraceVersion} {
+		for _, domain := range []string{"lifetime", "frame"} {
+			t.Run(fmt.Sprintf("%s/%d", domain, legacy), func(t *testing.T) {
+				fs := fsys.NewMem()
+				writer, err := journal.Open(journal.Options{FS: fs, Dir: "/session-source", Synchronous: true}, journal.Identity{Run: "current-writer", Core: journal.CoreOptions{CacheTrace: legacy}})
+				if err != nil {
+					t.Fatal(err)
+				}
+				ref := &journal.SessionRef{Run: "original-writer", Ordinal: 7}
+				if domain == "lifetime" {
+					writer.Put(journal.Record{Body: &journal.SessionRec{Session: ref, Event: journal.SessionObserved, Active: true}})
+				} else {
+					writer.Put(journal.Record{Body: &journal.MsgRec{Session: ref, Dir: journal.In, Code: uint64(codec.CodeRoundChange)}})
+				}
+				if err := writer.Close(); err != nil {
+					t.Fatal(err)
+				}
+				if _, err := exportR01(fs, "/session-source", "/session-out", "", ""); err == nil || !strings.Contains(err.Error(), "session") {
+					t.Fatal("session sources projected with legacy semantics", err)
+				}
+				if entries, err := fs.ReadDir("/session-out"); err == nil {
+					for _, name := range entries {
+						if strings.HasSuffix(name, ".jsonl") {
+							t.Fatal("unsupported source emitted a partial result")
+						}
+					}
+				}
+			})
+		}
+	}
+}

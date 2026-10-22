@@ -46,6 +46,14 @@ func (w *r01Writer) indexCache(rec journal.Record, pos wal.Position) {
 		w.cacheErr = fmt.Errorf("accepted-receive cache observations are unavailable in R01 exports")
 		return
 	}
+	if _, ok := rec.Body.(*journal.SessionRec); ok {
+		w.cacheErr = fmt.Errorf("session observations are unavailable in R01 exports")
+		return
+	}
+	if m, ok := rec.Body.(*journal.MsgRec); ok && m.Session != nil {
+		w.cacheErr = fmt.Errorf("session frame sources are unavailable in R01 exports")
+		return
+	}
 	if s, ok := rec.Body.(*journal.SegmentRec); ok {
 		if s.Core.CachePolicy != nil {
 			w.cacheErr = fmt.Errorf("accepted/completed cache profile is unavailable in R01 exports")

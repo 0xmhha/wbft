@@ -31,6 +31,7 @@ const (
 	KindSync         Kind = 10 // submitted and processed application sync controls
 	KindWriteCache   Kind = 11 // actual accepted/completed write-ledger observations
 	KindReceiveCache Kind = 12 // actual accepted-input checking-ledger observations
+	KindSession      Kind = 13 // original stream observations and functional endings
 )
 
 func (k Kind) String() string {
@@ -59,13 +60,15 @@ func (k Kind) String() string {
 		return "write_cache"
 	case KindReceiveCache:
 		return "receive_cache"
+	case KindSession:
+		return "session"
 	}
 	return fmt.Sprintf("kind(%d)", uint8(k))
 }
 
 // Record is one journal record. Body is one of *SegmentRec, *PeerRec,
 // *MsgRec, *OutcomeRec, *SuppressedRec, *StepRec, *GapRec, *TimerRec, *CacheRec,
-// *WriteCacheRec, *ReceiveCacheRec, or *SyncRec. JSeq is assigned
+// *WriteCacheRec, *ReceiveCacheRec, *SessionRec, or *SyncRec. JSeq is assigned
 // by the writer: it increases by one per written record within a run.
 type Record struct {
 	Kind Kind
@@ -137,6 +140,8 @@ const (
 type SendAttempt struct{ Sequence, Cache, Operation uint64 }
 
 type MsgRec struct {
+	// Session is the original adapter loop owner; nil makes no stream claim.
+	Session *SessionRef
 	Attempt *SendAttempt
 	// IO is absent in old recordings and when the transport reports no interval.
 	IO *IOInterval
@@ -354,8 +359,9 @@ type msgRLP struct {
 	Engine   string
 	Dedup    uint64 // rlpDedup
 	Capture  uint64
-	IO       []uint64 `rlp:"optional"`
-	Attempt  []uint64 `rlp:"optional"`
+	IO       []uint64        `rlp:"optional"`
+	Attempt  []uint64        `rlp:"optional"`
+	Session  []sessionRefRLP `rlp:"optional"`
 }
 
 type msgRLPNoCapture struct {
@@ -555,10 +561,14 @@ func encodeBody(r Record, jseq uint64) ([]byte, error) {
 		if err != nil {
 			return nil, err
 		}
+		session, err := encodeSessionRef(b.Session)
+		if err != nil {
+			return nil, err
+		}
 		return rlp.Encode(&msgRLP{Format: Format, JSeq: jseq, Dir: b.Dir, PeerIdx: uint64(b.PeerIdx), Mono: uint64(int64(b.Mono)),
 			WallNs: uint64(b.WallNs), Code: b.Code, WireCode: b.WireCode, Payload: bytesOrEmpty(b.Payload), DedupKey: b.DedupKey,
 			Offer: b.Offer, Cause: string(b.Cause), RelayOf: b.RelayOf, Write: b.Write, Size: b.Size, Engine: b.Engine,
-			Dedup: rlpDedup(b.Dedup), Capture: b.Capture, IO: io, Attempt: attempt})
+			Dedup: rlpDedup(b.Dedup), Capture: b.Capture, IO: io, Attempt: attempt, Session: session})
 	case *OutcomeRec:
 		return rlp.Encode(&outcomeRLP{Format: Format, JSeq: jseq, Of: b.Of, Code: b.Code, Peer: b.Peer, DedupKey: b.DedupKey,
 			Outcome: string(b.Outcome), Check: b.Check, Row: uint64(b.Row + 1), Reason: b.Reason, ErrorClass: b.ErrorClass,
@@ -596,6 +606,8 @@ func encodeBody(r Record, jseq uint64) ([]byte, error) {
 		return encodeWriteCacheRec(b, jseq)
 	case *ReceiveCacheRec:
 		return encodeReceiveCacheRec(b, jseq)
+	case *SessionRec:
+		return encodeSessionRec(b, jseq)
 	case *SyncRec:
 		return encodeSyncRec(b, jseq)
 	case *GapRec:
@@ -696,7 +708,11 @@ func decodeBody(k Kind, body []byte) (Record, error) {
 		if err != nil {
 			return fail(err)
 		}
-		return Record{Kind: k, JSeq: w.JSeq, Body: &MsgRec{Attempt: attempt, IO: io, Dir: w.Dir, PeerIdx: uint32(w.PeerIdx), Mono: time.Duration(int64(w.Mono)),
+		session, err := decodeSessionRef(w.Session)
+		if err != nil {
+			return fail(err)
+		}
+		return Record{Kind: k, JSeq: w.JSeq, Body: &MsgRec{Session: session, Attempt: attempt, IO: io, Dir: w.Dir, PeerIdx: uint32(w.PeerIdx), Mono: time.Duration(int64(w.Mono)),
 			WallNs: int64(w.WallNs), Code: w.Code, WireCode: w.WireCode, Payload: w.Payload, DedupKey: w.DedupKey, Offer: w.Offer,
 			Cause: event.SendCause(w.Cause), RelayOf: w.RelayOf, Write: w.Write, Size: w.Size, Engine: w.Engine,
 			Dedup: dedupOf(w.Dedup), Capture: w.Capture}}, nil
@@ -758,6 +774,8 @@ func decodeBody(k Kind, body []byte) (Record, error) {
 		return decodeWriteCacheRec(body)
 	case KindReceiveCache:
 		return decodeReceiveCacheRec(body)
+	case KindSession:
+		return decodeSessionRec(body)
 	case KindSync:
 		return decodeSyncRec(body)
 	case KindGap:
@@ -798,6 +816,8 @@ func kindOf(body any) (Kind, bool) {
 		return KindWriteCache, true
 	case *ReceiveCacheRec:
 		return KindReceiveCache, true
+	case *SessionRec:
+		return KindSession, true
 	case *SyncRec:
 		return KindSync, true
 	}
@@ -815,6 +835,9 @@ func size(r Record) int64 {
 		if b.Attempt != nil {
 			n += 48
 		}
+		if b.Session != nil {
+			n += 48 + int64(len(b.Session.Run))
+		}
 		return n
 	case *TimerRec:
 		return int64(len(b.Input)) + 256
@@ -824,6 +847,12 @@ func size(r Record) int64 {
 		return 512 + int64(len(b.Transition.Pruned))*8 + int64(len(b.Transition.Input.SessionRun)+len(b.Transition.Receipt.SessionRun))
 	case *ReceiveCacheRec:
 		return 640 + int64(len(b.Transition.Pruned))*8 + int64(len(b.Transition.Origin.WriterRun)+len(b.Transition.CheckedOrigin.WriterRun)+len(b.Transition.Source.Via)+len(b.Transition.Context.Sequence)+len(b.Transition.Context.Round)+len(b.Transition.Context.State)+len(b.Transition.Context.PriorRound)+len(b.Transition.Input.SessionRun)+len(b.Transition.Checked.SessionRun))
+	case *SessionRec:
+		n := int64(160 + len(b.Event))
+		if b.Session != nil {
+			n += 48 + int64(len(b.Session.Run))
+		}
+		return n
 	case *SyncRec:
 		return 256
 	case *StepRec:
