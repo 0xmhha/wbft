@@ -106,7 +106,7 @@ func TestCoreStepObserverActualAcceptedSource(t *testing.T) {
 	observed.writer = writer
 	n.coreSteps = observed
 	observed.inspect = func() { _ = n.r.Vars() }
-	receive := new(runnerReceiveTransitions)
+	receive := &runnerReceiveTransitions{writer: writer, clock: n.clock}
 	n.receiveCache = &transport.ReceiveLedgerOptions{Pending: 16, PerPeer: 4, KeyWithCode: true, Trace: receive}
 	n.boot()
 	if n.r.d.Journal != nil {
@@ -126,9 +126,11 @@ func TestCoreStepObserverActualAcceptedSource(t *testing.T) {
 	n.r.Pump()
 	n.deliver(2, codec.CodePrepare, k.vote(t, 2, codec.CodePrepare, view(10, 0), b))
 	var source transport.ReceiveAcceptSource
+	var acceptedLedger, acceptedScope uint64
 	for _, r := range receive.snapshot() {
 		if r.Action == transport.ReceiveCheckAccept && r.Input.PayloadSHA256 == types.Hash(sha256.Sum256(raw)) && r.Decision == transport.ReceiveRegistered {
 			source = r.Source
+			acceptedLedger, acceptedScope = r.Ledger, r.Scope
 		}
 	}
 	if source.Step == 0 || source.Output == 0 {
@@ -172,6 +174,9 @@ func TestCoreStepObserverActualAcceptedSource(t *testing.T) {
 			t.Fatal("actual post-step authority/context changed")
 		}
 		if s.Step == source.Step {
+			if s.ReceiveLedgerRun != writer.CaptureRun() || s.ReceiveLedger != acceptedLedger || s.ReceiveScopeBefore != acceptedScope || s.ReceiveScopeBefore == 0 {
+				t.Fatal("actual entry scope was replaced by later context")
+			}
 			if s.Origin != in.Origin || s.StreamRun != in.Stream.ObservationRun() || s.Stream != in.Stream.ObservationID() {
 				t.Fatal("original input provenance replaced")
 			}
@@ -237,6 +242,18 @@ func TestCoreStepObserverActualAcceptedSource(t *testing.T) {
 	}
 	if stored != len(observed.steps) {
 		t.Fatal("actual core source records missing", stored, len(observed.steps))
+	}
+	stops := map[uint64]int{}
+	for _, s := range observed.steps {
+		if s.InputKind == inputlog.KindStop {
+			stops[s.EngineRun]++
+			if s.AfterKnown || s.ReceiveScopeAfter != 0 {
+				t.Fatal("lifecycle end retained a current context")
+			}
+		}
+	}
+	if stops[1] != 1 || stops[2] != 1 {
+		t.Fatal("actual lifecycle Stop steps were not observed exactly once", stops)
 	}
 	var firstEngine []journal.Record
 	steps := uint64(0)

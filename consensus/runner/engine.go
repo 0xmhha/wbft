@@ -106,13 +106,18 @@ func (r *Runner) startEngine(_ context.Context, head *types.Header) error {
 		r.stepAt = event.Stamp{Wall: r.d.Clock.Now(), Mono: r.d.Clock.Mono(), Step: &step}
 		r.env.begin(false)
 		var before *consensus.Snapshot
+		var receiveBefore uint64
 		if r.d.CoreSteps != nil {
 			before = r.core.Snapshot()
+			receiveBefore = r.currentReceiveScopeObservation()
 		}
 		outs := r.core.Step(r.env, consensus.Start{})
 		answers := r.env.end()
 		r.running.Store(true)
 		sc := &stepCtx{q: queued{in: consensus.Start{}, via: viaEngine}, step: r.step, outs: outs, env: answers}
+		if r.d.CoreSteps != nil {
+			sc.receiveBefore, sc.receiveAfter = receiveBefore, r.currentReceiveScopeObservation()
+		}
 		body, _ := inputlog.Encode(consensus.Start{})
 		r.execute(sc)
 		snap := r.core.Snapshot()
@@ -176,6 +181,10 @@ func (r *Runner) writeRunStart(from types.Height, head *types.Header, snap *cons
 // stopEngine discards the core state, the armed timers and the queued
 // inputs.
 func (r *Runner) stopEngine(reason string) {
+	var receiveBefore uint64
+	if r.d.CoreSteps != nil {
+		receiveBefore = r.currentReceiveScopeObservation()
+	}
 	r.updateReceiveContext(nil)
 	if r.nextHeight != nil {
 		r.nextHeight.clear()
@@ -184,12 +193,24 @@ func (r *Runner) stopEngine(reason string) {
 		r.step++
 		step := r.step
 		r.stepAt = event.Stamp{Wall: r.d.Clock.Now(), Mono: r.d.Clock.Mono(), Step: &step}
+		var before *consensus.Snapshot
+		var envStart int
+		if r.d.CoreSteps != nil {
+			before = r.core.Snapshot()
+			envStart = len(r.env.answers)
+		}
 		outs := r.core.Step(r.env, consensus.Stop{})
 		sc := &stepCtx{q: queued{in: consensus.Stop{}, via: viaEngine}, step: r.step, outs: outs}
 		r.execute(sc)
 		body, _ := inputlog.Encode(consensus.Stop{})
 		snap := r.core.Snapshot()
 		r.journalStep(sc, inputlog.KindStop, body, snap)
+		if r.d.CoreSteps != nil {
+			source := *sc
+			source.receiveBefore, source.receiveAfter = receiveBefore, r.currentReceiveScopeObservation()
+			source.env = r.env.answers[envStart:]
+			r.observeCoreStep(&source, inputlog.KindStop, body, before, snap)
+		}
 	}
 	r.stopHousekeeping()
 	r.timers.setOwner(r.engineRun, r.step, 0, "lifecycle")

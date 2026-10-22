@@ -39,6 +39,7 @@ func TestCoreStepRecordStrictCodecAndOriginalProvenance(t *testing.T) {
 	s.Origin = transport.ReceiveOrigin{WriterRun: "original-input", CaptureID: ^uint64(0)}
 	s.StreamRun, s.Stream = "original-session", ^uint64(0)
 	s.CoreSelf, s.Improvements, s.BacklogLimit = types.Address{9}, ^uint64(0), -(1 << 63)
+	s.ReceiveLedgerRun, s.ReceiveLedger, s.ReceiveScopeBefore, s.ReceiveScopeAfter = "original-receive-writer", ^uint64(0), (1<<53)+1, ^uint64(0)
 	head, err := codec.EncodeHeader(&types.Header{Number: types.HeightFromUint64(9), Difficulty: big.NewInt(1)})
 	if err != nil {
 		t.Fatal(err)
@@ -68,6 +69,9 @@ func TestCoreStepRecordStrictCodecAndOriginalProvenance(t *testing.T) {
 	if r.CoreSelf != s.CoreSelf || r.Improvements != s.Improvements || r.BacklogLimit != s.BacklogLimit || !bytes.Equal(r.Head, s.Head) {
 		t.Fatal("actual head/options source changed")
 	}
+	if r.ReceiveLedgerRun != s.ReceiveLedgerRun || r.ReceiveLedger != s.ReceiveLedger || r.ReceiveScopeBefore != s.ReceiveScopeBefore || r.ReceiveScopeAfter != s.ReceiveScopeAfter {
+		t.Fatal("original scope reference changed")
+	}
 	call, err := DecodeCoreEnvironment(r.Environment[0])
 	if err != nil {
 		t.Fatal(err)
@@ -89,6 +93,7 @@ func TestCoreStepRecordStrictCodecAndOriginalProvenance(t *testing.T) {
 		func(w *coreStepRLP) { w.Flags = 8 },
 		func(w *coreStepRLP) { w.EngineRun = 0 },
 		func(w *coreStepRLP) { w.Step = 0 },
+		func(w *coreStepRLP) { w.ReceiveLedger = 0 },
 		func(w *coreStepRLP) { w.Origin.WriterRun = "" },
 		func(w *coreStepRLP) { w.Stream = 0 },
 		func(w *coreStepRLP) { w.Via = "unknown" },

@@ -172,11 +172,12 @@ func (r *Runner) processOne() bool {
 
 // stepCtx carries what the output execution of one step needs.
 type stepCtx struct {
-	q     queued
-	step  uint64
-	outs  []consensus.Output
-	env   []envAnswer
-	seqIn types.Height
+	q                           queued
+	step                        uint64
+	outs                        []consensus.Output
+	env                         []envAnswer
+	seqIn                       types.Height
+	receiveBefore, receiveAfter uint64
 }
 
 // handle processes one input: WAL record, core step, outputs, end-of-height
@@ -227,6 +228,10 @@ func (r *Runner) handle(q queued) {
 		}
 	}
 	before := r.core.Snapshot()
+	var receiveBefore uint64
+	if r.d.CoreSteps != nil {
+		receiveBefore = r.currentReceiveScopeObservation()
+	}
 	gens := r.core.AllTimerGens()
 	r.env.begin(true)
 	outs := r.core.Step(r.env, q.in)
@@ -236,6 +241,9 @@ func (r *Runner) handle(q queued) {
 		r.updateReceiveContext(r.core.Snapshot())
 	}
 	sc := &stepCtx{q: q, step: step, outs: outs, env: answers, seqIn: before.View.Sequence}
+	if r.d.CoreSteps != nil {
+		sc.receiveBefore, sc.receiveAfter = receiveBefore, r.currentReceiveScopeObservation()
+	}
 	r.execute(sc)
 	if r.Halted() != nil {
 		return

@@ -88,6 +88,7 @@ func (t ReceiveTicket) Origin() ReceiveOrigin {
 type ReceiveLedger struct {
 	mu                         sync.Mutex
 	observation, traceSequence uint64
+	traceRun                   string
 	traceExhausted             bool
 	opt                        ReceiveLedgerOptions
 	closed                     bool
@@ -104,12 +105,30 @@ func NewReceiveLedger(opt ReceiveLedgerOptions) (*ReceiveLedger, error) {
 	l := &ReceiveLedger{opt: opt, pending: make(map[*receiveReservation]struct{}), counts: make(map[types.Address]uint64), known: newLRU[receiveKey, struct{}](InmemoryMessages), recent: newLRU[types.Address, *lru[receiveKey, struct{}]](InmemoryPeers)}
 	if opt.Trace != nil {
 		l.observation = nextObservationID()
+		if source, ok := opt.Trace.(interface{ CaptureRun() string }); ok {
+			l.traceRun = source.CaptureRun()
+		}
 		l.mu.Lock()
 		event := l.transitionReceive(ReceiveLedgerStart)
 		event.PendingLimit, event.PerPeerLimit, event.KeyWithCode = opt.Pending, opt.PerPeer, opt.KeyWithCode
 		l.observedReceiveUnlock(&event)
 	}
 	return l, nil
+}
+
+// ReceiveLedgerSource names only this original diagnostic ledger. An empty
+// WriterRun is unqualified forever, even if its observer gains a name later.
+// These references never grant functional scope or ticket ownership.
+type ReceiveLedgerSource struct {
+	WriterRun string
+	Ledger    uint64
+}
+
+func (l *ReceiveLedger) ObservationSource() ReceiveLedgerSource {
+	if l == nil || l.observation == 0 {
+		return ReceiveLedgerSource{}
+	}
+	return ReceiveLedgerSource{WriterRun: l.traceRun, Ledger: l.observation}
 }
 
 func (l *ReceiveLedger) key(scope *ValidationScope, code uint64, payload []byte) receiveKey {

@@ -876,7 +876,7 @@ func size(r Record) int64 {
 	case *ReceiveCacheRec:
 		return 640 + int64(len(b.Transition.Pruned))*8 + int64(len(b.Transition.Origin.WriterRun)+len(b.Transition.CheckedOrigin.WriterRun)+len(b.Transition.Source.Via)+len(b.Transition.Context.Sequence)+len(b.Transition.Context.Round)+len(b.Transition.Context.State)+len(b.Transition.Context.PriorRound)+len(b.Transition.Input.SessionRun)+len(b.Transition.Checked.SessionRun))
 	case *CoreStepRec:
-		n := int64(1024 + len(b.Head) + len(b.Input) + len(b.Outputs) + len(b.Origin.WriterRun) + len(b.StreamRun) + len(b.InputKind) + len(b.Via) + len(b.Unavailable))
+		n := int64(1024 + len(b.Head) + len(b.Input) + len(b.Outputs) + len(b.Origin.WriterRun) + len(b.StreamRun) + len(b.ReceiveLedgerRun) + len(b.InputKind) + len(b.Via) + len(b.Unavailable))
 		n += int64(len(b.Before.Sequence) + len(b.Before.Round) + len(b.Before.State) + len(b.Before.PriorRound) + len(b.After.Sequence) + len(b.After.Round) + len(b.After.State) + len(b.After.PriorRound))
 		for _, e := range b.Environment {
 			n += int64(len(e.Bytes) + 8*len(e.ValidatorKeyPresent) + 32)

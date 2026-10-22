@@ -54,16 +54,18 @@ type coreSourceWriter struct {
 	improvements, backlog uint64
 }
 type coreSourceAccepted struct {
-	writer               string
-	engine, step, output uint64
-	peer                 types.Address
-	code                 uint64
-	key                  types.Hash
-	via                  string
-	input                transportCoreInput
-	before               transport.ValidationContext
-	beforeKnown          bool
-	origin               transport.ReceiveOrigin
+	writer                      string
+	engine, step, output        uint64
+	peer                        types.Address
+	code                        uint64
+	key                         types.Hash
+	via                         string
+	input                       transportCoreInput
+	before                      transport.ValidationContext
+	beforeKnown                 bool
+	origin                      transport.ReceiveOrigin
+	receiveLedgerRun            string
+	receiveLedger, receiveScope uint64
 }
 type transportCoreInput struct {
 	identity transport.WriteIdentity
@@ -265,6 +267,7 @@ func reconstructCoreSources(records []Record, limits CoreSourceLimits) (CoreSour
 					continue
 				}
 				proof := coreSourceAccepted{writer: writer, engine: s.EngineRun, step: s.Step, output: uint64(index + 1), peer: o.Peer, code: uint64(o.Code), key: o.DedupKey, via: o.Via, before: before, beforeKnown: beforeKnown, origin: s.Origin}
+				proof.receiveLedgerRun, proof.receiveLedger, proof.receiveScope = s.ReceiveLedgerRun, s.ReceiveLedger, s.ReceiveScopeBefore
 				if m, ok := in.(consensus.Message); ok {
 					proof.input = transportCoreInput{identity: transport.WriteIdentity{Peer: m.Peer, Code: uint64(m.Code), Key: codec.DedupKey(m.Payload), PayloadSHA256: sha256.Sum256(m.Payload), Session: s.Stream, SessionRun: s.StreamRun}, present: true}
 				}

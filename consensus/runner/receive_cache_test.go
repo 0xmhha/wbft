@@ -23,6 +23,14 @@ type runnerReceiveTransitions struct {
 	events []transport.ReceiveTransition
 	writer journal.Writer
 	start  time.Time
+	clock  Clock
+}
+
+func (o *runnerReceiveTransitions) CaptureRun() string {
+	if source, ok := o.writer.(interface{ CaptureRun() string }); ok {
+		return source.CaptureRun()
+	}
+	return ""
 }
 
 func (o *runnerReceiveTransitions) ObserveReceiveTransition(event transport.ReceiveTransition) {
@@ -31,7 +39,11 @@ func (o *runnerReceiveTransitions) ObserveReceiveTransition(event transport.Rece
 	o.events = append(o.events, event)
 	if o.writer != nil {
 		now := time.Now()
-		o.writer.Put(journal.Record{Body: &journal.ReceiveCacheRec{Transition: event, Mono: now.Sub(o.start), WallNs: now.UnixNano()}})
+		mono, wall := now.Sub(o.start), now.UnixNano()
+		if o.clock != nil {
+			mono, wall = o.clock.Mono(), o.clock.Now().UnixNano()
+		}
+		o.writer.Put(journal.Record{Body: &journal.ReceiveCacheRec{Transition: event, Mono: mono, WallNs: wall}})
 	}
 }
 func (o *runnerReceiveTransitions) snapshot() []transport.ReceiveTransition {

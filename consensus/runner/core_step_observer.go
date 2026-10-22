@@ -40,12 +40,26 @@ func coreStepMoment(stamp event.Stamp) CoreStepMoment {
 	return CoreStepMoment{Mono: int64(stamp.Mono), WallNs: stamp.Wall.UnixNano()}
 }
 
+func (r *Runner) currentReceiveScopeObservation() uint64 {
+	if r.receiveCache == nil || r.receiveCache.ObservationSource().Ledger == 0 {
+		return 0
+	}
+	current := r.receiveContext.Load()
+	if current == nil {
+		return 0
+	}
+	return current.scope.ObservationID()
+}
+
 func (r *Runner) observeCoreStep(sc *stepCtx, kind string, body []byte, before, after *consensus.Snapshot) {
 	observer := r.d.CoreSteps
 	if observer == nil {
 		return
 	}
 	o := CoreStepObservation{EngineRun: r.engineRun, Step: sc.step, ReplayedPrefix: r.replay.Replayed, Via: sc.q.via, InputKind: kind, Input: bytes.Clone(body), Entry: coreStepMoment(r.stepAt)}
+	ledger := r.receiveCache.ObservationSource()
+	o.ReceiveLedgerRun, o.ReceiveLedger = ledger.WriterRun, ledger.Ledger
+	o.ReceiveScopeBefore, o.ReceiveScopeAfter = sc.receiveBefore, sc.receiveAfter
 	o.CoreSelf, o.Improvements, o.BacklogLimit = r.cfg.Core.Self, uint64(r.cfg.Core.Improvements), int64(r.cfg.Core.BacklogLimit)
 	if r.env != nil && r.env.head != nil {
 		var err error
