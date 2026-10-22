@@ -3,6 +3,7 @@ package sim
 import (
 	"context"
 	"errors"
+	"slices"
 	"testing"
 	"time"
 
@@ -82,6 +83,43 @@ func TestAcceptedCacheDiagnosticNormalSourceChain(t *testing.T) {
 		if err != nil || accepted.Status != "consistent" || accepted.PhysicalStatus != "unavailable" || accepted.ScheduleStatus != "unavailable" {
 			t.Fatal("simulated accepted-input recent source", n.i, accepted, err)
 		}
+		timerLimits := journal.TimerSourceLimits{Core: limits.Core, Operations: 20000, Bindings: 20000, Bytes: 64 << 20}
+		timerCheck, err := journal.CheckTimerSources(records, timerLimits)
+		if err != nil || timerCheck.Status != "consistent" || timerCheck.Arms == 0 || timerCheck.Cancels == 0 || timerCheck.PhysicalStatus != "unavailable" || timerCheck.ScheduleStatus != "unavailable" {
+			t.Fatal("simulated core/scheduler source bindings", n.i, timerCheck, err)
+		}
+		if n.i == 0 {
+			// Only copied offline source metadata changes. No altered timer,
+			// packet, signature or fault command reaches the running model.
+			for _, mode := range []string{"missing_arm", "changed_deadline", "inspection_limit"} {
+				copied := slices.Clone(records)
+				bounds := timerLimits
+				if mode == "inspection_limit" {
+					bounds.Operations = 1
+				} else {
+					for index, record := range copied {
+						if timer, ok := record.Body.(*journal.TimerRec); ok && timer.Action == "arm" && timer.Source == "core" {
+							if mode == "missing_arm" {
+								copied = append(copied[:index:index], copied[index+1:]...)
+							} else {
+								value := *timer
+								value.Deadline++
+								copied[index].Body = &value
+							}
+							break
+						}
+					}
+				}
+				check, err := journal.CheckTimerSources(copied, bounds)
+				if mode == "changed_deadline" {
+					if check.Status != "inconsistent" || !errors.Is(err, journal.ErrTimerSource) {
+						t.Fatal("offline timer contradiction accepted", mode, check, err)
+					}
+				} else if err != nil || check.Status != "unavailable" {
+					t.Fatal("missing or bounded timer source became proof", mode, check, err)
+				}
+			}
+		}
 		external += reads.External
 		writes += writeCheck.Writes
 		recent += accepted.Registrations
@@ -143,4 +181,66 @@ func TestAcceptedCacheRequiresExplicitDiagnosticScope(t *testing.T) {
 	if _, err := cloneAcceptedCache(p, sc); err == nil {
 		t.Fatal("missing original endpoint capability replaced by a current address")
 	}
+}
+
+func TestAcceptedCacheNormalBuildServiceTimeoutSources(t *testing.T) {
+	sc := writeQueueScenario(t, false)
+	sc.Until.Height = 3
+	// Ordinary successful application service outlasts the initial timeout.
+	// No frame, fault, partition or adversary is introduced.
+	sc.App.BuildDelay = []time.Duration{3 * time.Second}
+	for i := range sc.Nodes {
+		sc.Nodes[i].AcceptedCache = cacheExperimentProfile()
+	}
+	s, err := newSimulation(sc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	for _, n := range s.nodes {
+		n.stop()
+	}
+	result := s.result()
+	if len(result.Violations) != 0 {
+		t.Fatal("normal successful build service", result.Violations)
+	}
+	var pops uint64
+	for _, n := range s.nodes {
+		if n.head() < 3 {
+			t.Fatal("normal service did not make progress", result.Heads)
+		}
+		records, err := journal.ReadAll(n.fs, journalDir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		limits := journal.TimerSourceLimits{Core: cacheSourceLimits().Core, Operations: 20000, Bindings: 20000, Bytes: 64 << 20}
+		check, err := journal.CheckTimerSources(records, limits)
+		if err != nil || check.Status != "consistent" || check.PhysicalStatus != "unavailable" || check.ScheduleStatus != "unavailable" {
+			t.Fatal("actual normal timeout/core input binding", n.i, check, err)
+		}
+		pops += check.Timeouts
+		// A copied source that points a timeout dequeue at an observed
+		// non-timeout core input is a contradiction, not a new live input.
+		if n.i == 0 {
+			copied := slices.Clone(records)
+			for index, record := range copied {
+				if timer, ok := record.Body.(*journal.TimerRec); ok && timer.Action == "pop" && timer.Source == "dequeue" {
+					value := *timer
+					value.Step = 1 // this engine's observed Start input
+					copied[index].Body = &value
+					break
+				}
+			}
+			changed, err := journal.CheckTimerSources(copied, limits)
+			if changed.Status != "inconsistent" || !errors.Is(err, journal.ErrTimerSource) {
+				t.Fatal("copied timeout source borrowed another input", changed, err)
+			}
+		}
+	}
+	if pops == 0 {
+		t.Fatal("normal timeout source path not exercised")
+	}
+	t.Log("ordinary successful build service timeout bindings", pops, "physical/schedule unavailable")
 }

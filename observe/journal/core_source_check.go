@@ -81,6 +81,12 @@ func CheckCoreStepSources(records []Record, limits CoreSourceLimits) (CoreSource
 }
 
 func reconstructCoreSources(records []Record, limits CoreSourceLimits) (CoreSourceCheck, []coreSourceAccepted, error) {
+	return inspectCoreSourceOutputs(records, limits, nil)
+}
+
+// capture sees only outputs independently recomputed and already compared with
+// retained sources. It is private inspection code, never a runner callback.
+func inspectCoreSourceOutputs(records []Record, limits CoreSourceLimits, capture func(string, *CoreStepRec, []consensus.Output)) (CoreSourceCheck, []coreSourceAccepted, error) {
 	report := CoreSourceCheck{Status: "unavailable", Scope: "core_execution_on_recorded_inputs", PhysicalStatus: "unavailable", ScheduleStatus: "unavailable"}
 	unavailable := func(reason string) (CoreSourceCheck, []coreSourceAccepted, error) {
 		report.Status, report.Reason = "unavailable", reason
@@ -260,6 +266,9 @@ func reconstructCoreSources(records []Record, limits CoreSourceLimits) (CoreSour
 			}
 			if afterKnown != s.AfterKnown || after != s.After {
 				return inconsistent("after_context_changed")
+			}
+			if capture != nil {
+				capture(writer, s, outputs)
 			}
 			for index, out := range outputs {
 				o, ok := out.(consensus.Outcome)
