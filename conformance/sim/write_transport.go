@@ -51,6 +51,7 @@ type writeRoute struct {
 	q      *writequeue.Queue
 	target transport.WritePeer
 	remote *writeRoute
+	source *cacheSources
 }
 
 // Only this explicit adapter implements WriteSender; default adapter method
@@ -103,8 +104,11 @@ func (t *writeAdapter) route(dst *node) *writeRoute {
 	if err != nil {
 		panic(err) // scenario validation established constructor preconditions
 	}
-	original = &writeRoute{inc: inc, q: q, target: q.WritePeers()[0]}
+	original = &writeRoute{inc: inc, q: q, target: q.WritePeers()[0], source: t.n.sources}
 	t.routes[dst] = original
+	if original.source != nil {
+		original.source.session(original.target, journal.SessionObserved)
+	}
 	if dst.writes != nil {
 		if remote := dst.writes.route(t.n); remote != nil {
 			original.remote, remote.remote = remote, original
@@ -131,8 +135,11 @@ func (t *writeAdapter) SendWrite(target transport.WritePeer, code uint64, payloa
 	// The queue owns its own copy. The journal callback must also retain the
 	// original bytes, independent of the caller's next buffer use.
 	owned := append([]byte(nil), payload...)
+	source := r.source
 	return r.q.SendWrite(target, code, owned, attempt, func(receipt transport.WriteReceipt) {
-		if receipt.Result == transport.LocalWriteOK && t.n.jw != nil {
+		if receipt.Result == transport.LocalWriteOK && source != nil {
+			source.wrote(target, code, owned, attempt)
+		} else if receipt.Result == transport.LocalWriteOK && t.n.jw != nil {
 			dst := t.n.s.byAddr[target.Addr]
 			t.n.jw.Put(journal.Record{Body: &journal.MsgRec{Dir: journal.Out, PeerIdx: uint32(dst.i), Mono: t.n.s.l.c.Mono(),
 				WallNs: t.n.clock.Now().UnixNano(), Code: code, WireCode: code, Payload: owned,
@@ -168,8 +175,14 @@ func (t *writeAdapter) closePeer(dst *node) {
 		}
 		// Remove both original routes before callbacks may reconnect.
 		r.q.Close()
+		if r.source != nil {
+			r.source.session(r.target, string(transport.SessionRemoved))
+		}
 		if remote != nil {
 			remote.q.Close()
+			if remote.source != nil {
+				remote.source.session(remote.target, string(transport.SessionRemoved))
+			}
 		}
 	}
 }

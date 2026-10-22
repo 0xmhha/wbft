@@ -51,18 +51,19 @@ type node struct {
 	app           *app
 	adversary     bool
 
-	inc    int
-	alive  bool
-	down   bool // stopped or crashed by the schedule or a fault
-	clock  *nodeClock
-	rng    *rand.Rand
-	r      *runner.Runner
-	signer *privval.FileSigner
-	log    *wal.Log
-	jw     *journal.FileWriter
-	tr     *adapter
-	writes *writeAdapter
-	ev     *event.Writer
+	inc     int
+	alive   bool
+	down    bool // stopped or crashed by the schedule or a fault
+	clock   *nodeClock
+	rng     *rand.Rand
+	r       *runner.Runner
+	signer  *privval.FileSigner
+	log     *wal.Log
+	jw      *journal.FileWriter
+	tr      *adapter
+	writes  *writeAdapter
+	sources *cacheSources
+	ev      *event.Writer
 
 	eventFiles       map[string]*bytes.Buffer
 	faultHits        map[string]int
@@ -194,6 +195,11 @@ func (n *node) start() {
 	if l := n.spec.NextHeight; l != nil {
 		id.Core.NextHeight = &journal.DeferredOptions{Profile: journal.DeferredInputProfile, Entries: l.Entries, Bytes: l.Bytes, PerPeer: l.PerPeer, PerSource: l.PerSource}
 	}
+	if p := n.spec.AcceptedCache; p != nil {
+		id.Mode = "diagnostic"
+		id.Core.TimerTrace = 0 // no functional scheduler observer is installed
+		id.Core.CachePolicy = &journal.CachePolicyOptions{Profile: journal.AcceptedCompletedCacheProfile, Limits: p.Limits}
+	}
 	jw, err := journal.Open(journal.Options{FS: n.fs, Dir: journalDir, KeepHeights: 100000, MaxBytes: 8 << 30,
 		SegmentBytes: 1 << 20, Synchronous: true}, id)
 	if err != nil {
@@ -203,6 +209,10 @@ func (n *node) start() {
 	n.jw = jw
 	n.capture = 0
 	n.recordedPeers = map[uint32]bool{}
+	n.sources = nil
+	if n.spec.AcceptedCache != nil {
+		n.sources = newCacheSources(n, jw)
+	}
 
 	// Start-up handshake.
 	st, err := runner.InspectWAL(n.fs, walDir)
@@ -236,7 +246,20 @@ func (n *node) start() {
 		n.writes = &writeAdapter{adapter: n.tr, routes: map[*node]*writeRoute{}}
 		net = n.writes
 	}
-	dedup, err := transport.NewDedup(net, transport.DedupOptions{Self: n.v.address})
+	dedupOptions := transport.DedupOptions{Self: n.v.address}
+	var receiveOptions *transport.ReceiveLedgerOptions
+	var functionalJournal journal.Writer = jw
+	var coreSources runner.CoreStepObserver
+	if p := n.spec.AcceptedCache; p != nil {
+		write := p.Limits.WriteOptions()
+		write.Trace = n.sources
+		dedupOptions.KeyWithCode, dedupOptions.RecordAfterSend, dedupOptions.CompletedWrites = true, true, &write
+		receive := p.Limits.ReceiveOptions()
+		receive.Trace = n.sources
+		receiveOptions = &receive
+		functionalJournal, coreSources = nil, n.sources
+	}
+	dedup, err := transport.NewDedup(net, dedupOptions)
 	if err != nil {
 		fail(err)
 		return
@@ -246,9 +269,9 @@ func (n *node) start() {
 		application = sealingApplication{n.app}
 	}
 	processing, workers := n.processingModel()
-	r, err := runner.New(runner.Config{Core: opts, ReplayWAL: n.spec.ReplayWAL, Manual: true, Workers: workers, NextHeight: n.spec.NextHeight},
+	r, err := runner.New(runner.Config{Core: opts, ReplayWAL: n.spec.ReplayWAL, Manual: true, Workers: workers, NextHeight: n.spec.NextHeight, ReceiveCache: receiveOptions},
 		runner.Deps{Chain: n.app, App: application, Transport: dedup, Net: net, Signer: recSigner{signer, n}, WAL: log,
-			Clock: n.clock, Events: countingSink{n.ev, n.s}, Journal: jw, Rand: n.rng.IntN, Faults: fh, Logger: n.s.logger(logcat.ConsensusRound), ModuleLogger: n.s.moduleLogger(), ManualProcessing: processing})
+			Clock: n.clock, Events: countingSink{n.ev, n.s}, Journal: functionalJournal, CoreSteps: coreSources, Rand: n.rng.IntN, Faults: fh, Logger: n.s.logger(logcat.ConsensusRound), ModuleLogger: n.s.moduleLogger(), ManualProcessing: processing})
 	if err != nil {
 		fail(err)
 		return
@@ -260,6 +283,10 @@ func (n *node) start() {
 	fields := map[string]any{"impl": "wbft", "mode": "standalone", "profile": n.spec.Profile, "sign_floor": floor, "wal_recovery": map[string]any{"records": recov.Records, "torn_bytes": recov.TornBytes, "corrupted": len(recov.Corrupted)}}
 	if p := n.spec.WriteQueue; p != nil {
 		fields["write_queue_model"] = map[string]any{"profile": "simulated_v1", "waiting_entries": p.Waiting, "write_time_ns": strconv.FormatInt(int64(p.WriteTime), 10), "link_delay": "scenario", "completion": "simulated_local_write", "cache_policy": "legacy"}
+	}
+	if p := n.spec.AcceptedCache; p != nil {
+		fields["write_queue_model"].(map[string]any)["cache_policy"] = transport.CachePolicyProfile
+		fields["transport_cache"] = map[string]any{"profile": transport.CachePolicyProfile, "active": true, "limits": p.Limits}
 	}
 	if processing != nil {
 		fields["processing_model"] = processingDeclaration(n.spec.Processing)
@@ -404,6 +431,12 @@ func (n *node) stop() {
 	}
 	if n.r != nil && n.r.Running() {
 		n.guard(func() { _ = n.r.Stop() })
+	}
+	if n.sources != nil {
+		n.closeWriteQueues()
+		if n.r != nil {
+			_ = n.r.Close()
+		}
 	}
 	if n.log != nil {
 		_ = n.log.Close()

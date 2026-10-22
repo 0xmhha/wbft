@@ -165,12 +165,24 @@ func (n *node) receiveFromStream(from types.Address, code uint64, payload []byte
 		if src != nil {
 			idx = uint32(src.i)
 		}
-		if src != nil && !n.recordedPeers[idx] {
+		if n.sources != nil {
+			var known bool
+			idx, known = n.sources.peer(from)
+			if !known {
+				// The frame already reached the sink; missing original metadata
+				// cannot grant a peer index from a later/current topology.
+				return capture, offer
+			}
+		} else if src != nil && !n.recordedPeers[idx] {
 			n.jw.Put(journal.Record{Body: &journal.PeerRec{PeerIdx: idx, Addr: src.v.address, Event: "attached"}})
 			n.recordedPeers[idx] = true
 		}
-		n.jw.Put(journal.Record{Body: &journal.MsgRec{Capture: capture, Dir: journal.In, PeerIdx: idx, Mono: s.l.c.Mono(), WallNs: n.clock.Now().UnixNano(),
-			Code: code, WireCode: code, Payload: payload, DedupKey: codec.DedupKey(payload), Offer: offer}})
+		m := &journal.MsgRec{Capture: capture, Dir: journal.In, PeerIdx: idx, Mono: s.l.c.Mono(), WallNs: n.clock.Now().UnixNano(),
+			Code: code, WireCode: code, Payload: payload, DedupKey: codec.DedupKey(payload), Offer: offer}
+		if n.sources != nil {
+			m.Session = cacheSessionRef(stream)
+		}
+		n.jw.Put(journal.Record{Body: m})
 	}
 	return capture, offer
 }

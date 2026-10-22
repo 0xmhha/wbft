@@ -136,7 +136,7 @@
             "write_time_ns": { "type": "string", "pattern": "^(0|[1-9][0-9]*)$" },
             "link_delay": { "const": "scenario" },
             "completion": { "const": "simulated_local_write" },
-            "cache_policy": { "const": "legacy" }
+            "cache_policy": { "enum": ["legacy", "accepted_completed_v1"] }
           },
           "required": ["profile", "waiting_entries", "write_time_ns", "link_delay", "completion", "cache_policy"],
           "additionalProperties": false

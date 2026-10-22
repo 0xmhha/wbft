@@ -49,6 +49,9 @@ type NodeSpec struct {
 	// WriteQueue opts into normal FIFO local-write service before link delivery.
 	// Nil preserves the original transport. It does not enable a cache policy.
 	WriteQueue *WriteQueueProfile `json:",omitempty"`
+	// AcceptedCache is a diagnostic-only cache experiment. It requires normal
+	// write queues on all endpoints and never enables functional journal replay.
+	AcceptedCache *AcceptedCacheProfile `json:",omitempty"`
 	// BuildQueuePolicy opts into a declared serial application worker. Empty
 	// preserves the independent-request model used by existing scenarios.
 	BuildQueuePolicy string
@@ -579,6 +582,10 @@ func newSimulation(sc Scenario) (*simulation, error) {
 		}
 		spec.Processing = processing
 		spec.WriteQueue, err = cloneWriteQueue(spec.WriteQueue, sc)
+		if err != nil {
+			return nil, err
+		}
+		spec.AcceptedCache, err = cloneAcceptedCache(spec.AcceptedCache, sc)
 		if err != nil {
 			return nil, err
 		}

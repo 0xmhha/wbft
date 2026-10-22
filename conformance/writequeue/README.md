@@ -21,3 +21,13 @@ unchanged legacy cache policy. This model accepts normal, lossless scenarios
 and ordinary stop/restart actions. It does not select completed-write caches,
 enable functional cache replay or reconstruct physical execution. Analyzer
 runtime fitting refuses this declaration until an explicit model supports it.
+
+`NodeSpec.AcceptedCache` is a separate diagnostic experiment requiring explicit
+`Journal: sim.CacheDiagnosticOnly`, positive cache limits and write queues on
+all endpoints. It connects accepted-input and completed-write ledgers to an
+independent diagnostic writer, using original receiver-side streams and capture
+origins. The functional runner journal stays nil. Session, cache and detached
+core-source records support independent comparisons on retained inputs; socket
+I/O timing stays absent. Unsupported functional replay, physical reconstruction
+and complete scheduling proof remain unavailable. Restored WAL prefixes need
+their own source reconstruction before they can satisfy those broader claims.
