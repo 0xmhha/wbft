@@ -145,8 +145,8 @@ func (r *Runner) next() (queued, bool) {
 		}
 	}
 	if hasPeer {
-		if m, capture, stream, origin, ok := r.inbox.takeWithOrigin(); ok {
-			return queued{in: m, via: viaPeer, capture: capture, stream: stream, origin: origin}, true
+		if q, ok := r.inbox.takeQueued(); ok {
+			return q, true
 		}
 	}
 	return queued{}, false
@@ -188,6 +188,7 @@ type stepCtx struct {
 func (r *Runner) handle(q queued) {
 	ticket, received, duplicate := r.beginReceiveCheck(q)
 	if duplicate {
+		r.inbox.dispatchSource(q, "discard")
 		return
 	}
 	if r.receiveCache != nil {
@@ -252,12 +253,13 @@ func (r *Runner) handle(q queued) {
 		return
 	}
 	after := r.core.Snapshot()
-	r.snap.Store(after)
+	r.publishSnapshot(after, snapshotStep)
 	if _, ok := q.in.(consensus.NewHead); ok && after.Running && (!before.Running || after.View.Sequence.Cmp(before.View.Sequence) != 0) {
 		r.endHeight(after, gens)
 	}
 	r.journalStep(sc, kind, body, after)
 	r.observeCoreStep(sc, kind, body, before, after)
+	r.inbox.dispatchSource(q, "dispatch")
 }
 
 // endHeight writes the end-of-height record of the head the core left

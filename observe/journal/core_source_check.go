@@ -87,6 +87,11 @@ func reconstructCoreSources(records []Record, limits CoreSourceLimits) (CoreSour
 // capture sees only outputs independently recomputed and already compared with
 // retained sources. It is private inspection code, never a runner callback.
 func inspectCoreSourceOutputs(records []Record, limits CoreSourceLimits, capture func(string, *CoreStepRec, []consensus.Output)) (CoreSourceCheck, []coreSourceAccepted, error) {
+	return inspectCoreSourceStates(records, limits, capture, nil)
+}
+
+// Snapshot consumers receive only independently executed, source-checked states.
+func inspectCoreSourceStates(records []Record, limits CoreSourceLimits, capture func(string, *CoreStepRec, []consensus.Output), snapshots func(string, *CoreStepRec, *consensus.Snapshot)) (CoreSourceCheck, []coreSourceAccepted, error) {
 	report := CoreSourceCheck{Status: "unavailable", Scope: "core_execution_on_recorded_inputs", PhysicalStatus: "unavailable", ScheduleStatus: "unavailable"}
 	unavailable := func(reason string) (CoreSourceCheck, []coreSourceAccepted, error) {
 		report.Status, report.Reason = "unavailable", reason
@@ -260,12 +265,16 @@ func inspectCoreSourceOutputs(records []Record, limits CoreSourceLimits, capture
 			if digest != s.OutDigest || !bytes.Equal(encoded, s.Outputs) {
 				return inconsistent("core_outputs_changed")
 			}
-			after, afterKnown, err := coreSourceContext(model.state.Snapshot())
+			afterSnapshot := model.state.Snapshot()
+			after, afterKnown, err := coreSourceContext(afterSnapshot)
 			if err != nil {
 				return unavailable("authority_digest_unavailable")
 			}
 			if afterKnown != s.AfterKnown || after != s.After {
 				return inconsistent("after_context_changed")
+			}
+			if snapshots != nil {
+				snapshots(writer, s, afterSnapshot)
 			}
 			if capture != nil {
 				capture(writer, s, outputs)

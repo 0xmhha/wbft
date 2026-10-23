@@ -299,6 +299,8 @@ func monoOf(r Record) time.Duration {
 		return time.Duration(b.Observed.Mono)
 	case *AppQueueRec:
 		return b.Mono
+	case *InboxRec:
+		return time.Duration(b.Mono)
 	case *FinalizeRec:
 		return b.Mono
 	case *SyncRec:
@@ -408,6 +410,11 @@ func (w *FileWriter) write(r Record) {
 			w.stats.first = b.WallNs
 		}
 		w.stats.last = b.WallNs
+	case *InboxRec:
+		if w.stats.first == 0 {
+			w.stats.first = int64(b.WallNs)
+		}
+		w.stats.last = int64(b.WallNs)
 	case *FinalizeRec:
 		if w.stats.first == 0 {
 			w.stats.first = b.WallNs

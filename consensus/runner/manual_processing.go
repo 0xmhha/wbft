@@ -6,7 +6,6 @@ import (
 
 	"github.com/0xmhha/wbft/consensus"
 	"github.com/0xmhha/wbft/consensus/inputlog"
-	"github.com/0xmhha/wbft/p2p/transport"
 )
 
 var ErrProcessingPending = errors.New("runner: manual core service pending")
@@ -78,7 +77,8 @@ func (r *Runner) deferManualStep(q queued) bool {
 	return true
 }
 
-func (r *Runner) deferManualCheck(in transport.Inbound) bool {
+func (r *Runner) deferManualCheck(entry inboxEntry) bool {
+	in := entry.in
 	if r.d.ManualProcessing == nil {
 		return false
 	}
@@ -99,7 +99,7 @@ func (r *Runner) deferManualCheck(in transport.Inbound) bool {
 		}
 		r.manualChecks--
 		if r.running.Load() && r.Halted() == nil {
-			r.inbox.check(in)
+			r.inbox.check(entry)
 		}
 	})
 	return true

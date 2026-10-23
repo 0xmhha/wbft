@@ -164,6 +164,8 @@ type Deps struct {
 	AppQueueSources AppQueueSourceObserver
 	// FinalizeSources observes detached commit-queue and application-call boundaries.
 	FinalizeSources FinalizeSourceObserver
+	// InboxSources observes detached receive queue and slot boundaries.
+	InboxSources InboxSourceObserver
 	// Synchronising reports whether the application is synchronising the
 	// chain; consensus messages that arrive while the engine is stopped are
 	// then dropped instead of closing the connection.
@@ -201,13 +203,14 @@ var (
 
 // queued is one input with where it came from.
 type queued struct {
-	appSource uint64                  // diagnostic append identity; never functional authority
-	stream    *transport.WriteSession // optional original functional stream, never WAL input
-	origin    transport.ReceiveOrigin // frozen observer provenance; never functional authority
-	deferred  *deferredEntry
-	capture   uint64
-	in        consensus.Input
-	via       string
+	inboxSource uint64                  // original inbox append; never functional authority
+	appSource   uint64                  // diagnostic append identity; never functional authority
+	stream      *transport.WriteSession // optional original functional stream, never WAL input
+	origin      transport.ReceiveOrigin // frozen observer provenance; never functional authority
+	deferred    *deferredEntry
+	capture     uint64
+	in          consensus.Input
+	via         string
 }
 
 // Values of the via of journal step records.
@@ -255,7 +258,7 @@ type Runner struct {
 	replay    ReplayInfo
 
 	running  atomic.Bool
-	snap     atomic.Pointer[consensus.Snapshot]
+	snap     publishedSnapshot
 	halted   atomic.Pointer[error]
 	lastHead atomic.Pointer[types.Header] // head of the last processed NewHead or Start
 	hkGen    atomic.Uint64                // generation of the periodic tasks
@@ -400,7 +403,7 @@ func New(cfg Config, d Deps) (*Runner, error) {
 		r.nextHeight = newNextHeightPool(*cfg.NextHeight)
 	}
 	r.commitCond = sync.NewCond(&r.commitMu)
-	r.snap.Store(&consensus.Snapshot{})
+	r.publishSnapshot(&consensus.Snapshot{}, snapshotInitial)
 	return r, nil
 }
 

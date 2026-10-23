@@ -121,7 +121,7 @@ func (r *Runner) startEngine(_ context.Context, head *types.Header) error {
 		body, _ := inputlog.Encode(consensus.Start{})
 		r.execute(sc)
 		snap := r.core.Snapshot()
-		r.snap.Store(snap)
+		r.publishSnapshot(snap, snapshotStart)
 		if err := r.writeRunStart(from, head, snap, false); err != nil {
 			return err
 		}
@@ -137,7 +137,7 @@ func (r *Runner) startEngine(_ context.Context, head *types.Header) error {
 		}
 		r.step = uint64(len(journalRecs))
 		snap := r.core.Snapshot()
-		r.snap.Store(snap)
+		r.publishSnapshot(snap, snapshotReplay)
 		if err := r.writeRunStart(from, r.env.head, snap, true); err != nil {
 			return err
 		}
@@ -228,7 +228,7 @@ func (r *Runner) stopEngine(reason string) {
 		r.buildDone = nil
 	}
 	r.running.Store(false)
-	r.snap.Store(&consensus.Snapshot{})
+	r.publishSnapshot(&consensus.Snapshot{}, snapshotStopped)
 	r.emit(event.Record{Kind: event.EngineStop, Fields: map[string]any{"engine_run": r.engineRun, "reason": reason}}, nil)
 }
 
