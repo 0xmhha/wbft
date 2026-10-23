@@ -218,6 +218,9 @@ func CheckInboxSources(records []Record, limits InboxLimits) (InboxCheck, error)
 		writers = append(writers, name)
 	}
 	slices.Sort(writers)
+	// One original queued frame proves at most one admission. This index is
+	// bounded by the already checked original raw capture count.
+	admittedCaptures := map[receiveSourceCaptureKey]bool{}
 	for _, name := range writers {
 		items := groups[name]
 		slices.SortFunc(items, func(a, b *InboxRec) int {
@@ -276,7 +279,11 @@ func CheckInboxSources(records []Record, limits InboxLimits) (InboxCheck, error)
 				if r.Origin.WriterRun == "" || r.Capture == 0 || r.Origin.CaptureID != r.Capture || r.StreamRun == "" || r.Stream == 0 {
 					return unavailable("original_frame_source_missing")
 				}
-				frame, exists := raw[receiveSourceCaptureKey{r.Origin.WriterRun, r.Capture}]
+				captureKey := receiveSourceCaptureKey{r.Origin.WriterRun, r.Capture}
+				if admittedCaptures[captureKey] {
+					return inconsistent("capture_appended_twice")
+				}
+				frame, exists := raw[captureKey]
 				if !exists || !frame.peerKnown {
 					return unavailable("original_frame_missing")
 				}
@@ -299,6 +306,7 @@ func CheckInboxSources(records []Record, limits InboxLimits) (InboxCheck, error)
 				if r.Before != uint64(len(queue)) || r.BytesBefore != bytesBefore || r.BytesAfter != bytesBefore+uint64(len(r.Payload)) {
 					return inconsistent("append_queue_changed")
 				}
+				admittedCaptures[captureKey] = true
 				model.pending[r.Request] = r
 				model.queues[r.Peer] = append(queue, r)
 				report.Appended++

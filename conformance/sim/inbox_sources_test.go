@@ -245,3 +245,66 @@ func TestInboxSourcesNormalQueuesAndOfflineContradictions(t *testing.T) {
 		}
 	}
 }
+
+func TestInboxSourcesRejectReusedQueuedCapture(t *testing.T) {
+	sc := writeQueueScenario(t, false)
+	sc.Until.Height = 4
+	for i := range sc.Nodes {
+		sc.Nodes[i].AcceptedCache = cacheExperimentProfile()
+	}
+	s, err := newSimulation(sc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	for _, n := range s.nodes {
+		n.stop()
+	}
+	if result := s.result(); len(result.Violations) > 0 {
+		t.Fatal(result.Violations)
+	}
+	records, err := journal.ReadAll(s.nodes[0].fs, journalDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var appendSource, checkSource *journal.InboxRec
+	for _, record := range records {
+		if r, ok := record.Body.(*journal.InboxRec); ok {
+			if appendSource == nil && r.Action == "append" {
+				appendSource = r
+			}
+			if checkSource == nil && r.Action == "check" {
+				checkSource = r
+			}
+		}
+	}
+	if appendSource == nil || checkSource == nil || appendSource.Sequence != 1 || appendSource.Before != 0 {
+		t.Fatal("normal first queue admission missing")
+	}
+	// Copy completed-run metadata only. One original OfferQueued raw frame
+	// cannot prove two distinct appends, even if both finite queues are plausible.
+	finite := []journal.Record{}
+	for _, record := range records {
+		if r, ok := record.Body.(*journal.InboxRec); ok && r.Sequence > appendSource.Sequence {
+			continue
+		}
+		if r, ok := record.Body.(*journal.CoreStepRec); ok && r.Step > checkSource.SnapshotStep {
+			continue
+		}
+		finite = append(finite, record)
+	}
+	duplicate := *appendSource
+	duplicate.Sequence++
+	duplicate.Request = duplicate.Sequence
+	duplicate.Before = appendSource.After
+	duplicate.After = duplicate.Before + 1
+	duplicate.BytesBefore = appendSource.BytesAfter
+	duplicate.BytesAfter = duplicate.BytesBefore + uint64(len(duplicate.Payload))
+	finite = append(finite, journal.Record{Body: &duplicate})
+	result, err := journal.CheckInboxSources(finite, inboxSourceBounds())
+	if err == nil || result.Status != "inconsistent" || result.Reason != "capture_appended_twice" {
+		t.Fatalf("reused raw capture: status=%s reason=%s retained=%d err=%v", result.Status, result.Reason, result.RetainedQueued, err)
+	}
+}
