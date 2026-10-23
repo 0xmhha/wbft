@@ -35,6 +35,7 @@ const (
 	KindSession      Kind = 13 // original stream observations and functional endings
 	KindCoreStep     Kind = 14 // detached actual live core execution sources
 	KindAppQueue     Kind = 15 // detached application-input queue mutex mutations
+	KindFinalize     Kind = 16 // detached commit queue and application call boundaries
 )
 
 func (k Kind) String() string {
@@ -69,13 +70,15 @@ func (k Kind) String() string {
 		return "core_step_source"
 	case KindAppQueue:
 		return "app_queue_source"
+	case KindFinalize:
+		return "finalize_source"
 	}
 	return fmt.Sprintf("kind(%d)", uint8(k))
 }
 
 // Record is one journal record. Body is one of *SegmentRec, *PeerRec,
 // *MsgRec, *OutcomeRec, *SuppressedRec, *StepRec, *GapRec, *TimerRec, *CacheRec,
-// *WriteCacheRec, *ReceiveCacheRec, *SessionRec, *CoreStepRec, *AppQueueRec, or *SyncRec. JSeq is assigned
+// *WriteCacheRec, *ReceiveCacheRec, *SessionRec, *CoreStepRec, *AppQueueRec, *FinalizeRec, or *SyncRec. JSeq is assigned
 // by the writer: it increases by one per written record within a run.
 type Record struct {
 	Kind Kind
@@ -628,6 +631,8 @@ func encodeBody(r Record, jseq uint64) ([]byte, error) {
 		return encodeCoreStepRec(b, jseq)
 	case *AppQueueRec:
 		return encodeAppQueueRec(b, jseq)
+	case *FinalizeRec:
+		return encodeFinalizeRec(b, jseq)
 	case *SyncRec:
 		return encodeSyncRec(b, jseq)
 	case *GapRec:
@@ -807,6 +812,8 @@ func decodeBody(k Kind, body []byte) (Record, error) {
 		return decodeCoreStepRec(body)
 	case KindAppQueue:
 		return decodeAppQueueRec(body)
+	case KindFinalize:
+		return decodeFinalizeRec(body)
 	case KindSync:
 		return decodeSyncRec(body)
 	case KindGap:
@@ -853,6 +860,8 @@ func kindOf(body any) (Kind, bool) {
 		return KindCoreStep, true
 	case *AppQueueRec:
 		return KindAppQueue, true
+	case *FinalizeRec:
+		return KindFinalize, true
 	case *SyncRec:
 		return KindSync, true
 	}
@@ -904,6 +913,8 @@ func size(r Record) int64 {
 		return n
 	case *AppQueueRec:
 		return 256 + int64(len(b.Input)+len(b.InputKind)+len(b.Action)+len(b.Unavailable))
+	case *FinalizeRec:
+		return 256 + int64(len(b.Arguments)+len(b.Input)+len(b.QueueRun)+len(b.Action)+len(b.Unavailable))
 	case *SyncRec:
 		return 256
 	case *StepRec:

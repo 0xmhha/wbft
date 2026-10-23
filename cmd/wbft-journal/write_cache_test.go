@@ -141,7 +141,7 @@ func TestReceiveCacheRecordR01ProjectionUnavailableWithoutProfile(t *testing.T) 
 
 func TestSessionSourceR01ProjectionUnavailableWithoutProfile(t *testing.T) {
 	for _, legacy := range []uint64{0, journal.CacheTraceVersion} {
-		for _, domain := range []string{"lifetime", "frame", "write_attempt", "core_step", "app_queue"} {
+		for _, domain := range []string{"lifetime", "frame", "write_attempt", "core_step", "app_queue", "finalize"} {
 			t.Run(fmt.Sprintf("%s/%d", domain, legacy), func(t *testing.T) {
 				fs := fsys.NewMem()
 				writer, err := journal.Open(journal.Options{FS: fs, Dir: "/session-source", Synchronous: true}, journal.Identity{Run: "current-writer", Core: journal.CoreOptions{CacheTrace: legacy}})
@@ -152,6 +152,8 @@ func TestSessionSourceR01ProjectionUnavailableWithoutProfile(t *testing.T) {
 				switch domain {
 				case "lifetime":
 					writer.Put(journal.Record{Body: &journal.SessionRec{Session: ref, Event: journal.SessionObserved, Active: true}})
+				case "finalize":
+					writer.Put(journal.Record{Body: &journal.FinalizeRec{Version: journal.FinalizeSourceVersion, Sequence: 1, Task: 1, EngineRun: 1, Step: 1, Output: 1, Action: "return"}})
 				case "app_queue":
 					input, e := inputlog.Encode(consensus.PeerConnected{Addr: types.Address{3}})
 					if e != nil {
@@ -183,6 +185,9 @@ func TestSessionSourceR01ProjectionUnavailableWithoutProfile(t *testing.T) {
 				expected := "session"
 				if domain == "core_step" {
 					expected = "core step sources"
+				}
+				if domain == "finalize" {
+					expected = "finalization sources"
 				}
 				if domain == "app_queue" {
 					expected = "application queue sources"
