@@ -25,18 +25,20 @@ import (
 // was not taken yet; round-0 PRE-PREPAREs have two slots so that the first
 // one is kept.
 type inbox struct {
-	r     *Runner
-	mu    sync.Mutex // runner.inbox.mu
-	cond  *sync.Cond
-	peers map[types.Address]*peerIn
-	order []types.Address // peers in the order they were first seen
-	wIdx  int             // worker turn
-	cIdx  int             // consensus turn
-	slots map[slotKey]*slot
+	r               *Runner
+	mu              sync.Mutex // runner.inbox.mu
+	cond            *sync.Cond
+	peers           map[types.Address]*peerIn
+	order           []types.Address // peers in the order they were first seen
+	wIdx            int             // worker turn
+	cIdx            int             // consensus turn
+	slots           map[slotKey]*slot
+	sourceSequence  uint64
+	sourceExhausted bool
 }
 
 type peerIn struct {
-	q     []transport.Inbound
+	q     []inboxEntry
 	bytes int64
 	ready []slotKey
 	drops []time.Duration
@@ -50,12 +52,13 @@ type slotKey struct {
 }
 
 type slot struct {
-	in     transport.Inbound
-	dedup  types.Hash
-	digest types.Hash
-	sig    []byte
-	source types.Address
-	ready  types.Address // the peer whose ready list holds the slot key
+	request uint64
+	in      transport.Inbound
+	dedup   types.Hash
+	digest  types.Hash
+	sig     []byte
+	source  types.Address
+	ready   types.Address // the peer whose ready list holds the slot key
 }
 
 func (b *inbox) init(r *Runner) {
@@ -145,10 +148,21 @@ func (b *inbox) Offer(in transport.Inbound) bool {
 		return true
 	}
 	b.mu.Lock()
-	p.q = append(p.q, in)
+	before, bytesBefore := len(p.q), p.bytes
+	observation := b.inboxSourceLocked("append", inboxEntry{in: in})
+	entry := inboxEntry{in: in}
+	if observation != nil {
+		entry.request = observation.Request
+	}
+	p.q = append(p.q, entry)
 	p.bytes += int64(len(in.Payload))
+	if observation != nil {
+		observation.Before, observation.After = uint64(before), uint64(len(p.q))
+		observation.BytesBefore, observation.BytesAfter = uint64(bytesBefore), uint64(p.bytes)
+	}
 	b.cond.Signal()
 	b.mu.Unlock()
+	b.publishInbox(observation)
 	return true
 }
 
@@ -202,11 +216,20 @@ func hexAddr(a types.Address) string { return "0x" + hex.EncodeToString(a[:]) }
 // clear drops every queued message and slot.
 func (b *inbox) clear() {
 	b.mu.Lock()
-	defer b.mu.Unlock()
+	observation := b.inboxSourceLocked("clear", inboxEntry{})
+	if observation != nil {
+		observation.EngineRun, observation.Step = b.r.engineRun, b.r.step
+	}
 	for _, p := range b.peers { //wbft:unordered every peer is cleared
+		if observation != nil {
+			observation.Before += uint64(len(p.q))
+			observation.BytesBefore += uint64(p.bytes)
+		}
 		p.q, p.bytes, p.ready = nil, 0, nil
 	}
 	b.slots = map[slotKey]*slot{}
+	b.mu.Unlock()
+	b.publishInbox(observation)
 }
 
 // workerLoop runs receive checks until the runner closes.
@@ -257,32 +280,54 @@ func (b *inbox) checkOne(manual bool) bool {
 		return false
 	}
 	var a types.Address
+	choice := 0
 	if manual {
-		a = cands[r.rand(len(cands))]
+		choice = r.rand(len(cands))
+		a = cands[choice]
 	} else {
 		b.wIdx = (b.wIdx + 1) % len(cands)
 		a = cands[b.wIdx]
 	}
 	p := b.peers[a]
-	in := p.q[0]
+	entry := p.q[0]
+	before, bytesBefore := len(p.q), p.bytes
 	p.q = p.q[1:]
-	p.bytes -= int64(len(in.Payload))
+	p.bytes -= int64(len(entry.in.Payload))
+	observation := b.inboxSourceLocked("dequeue", entry)
+	if observation != nil {
+		observation.Before, observation.After = uint64(before), uint64(len(p.q))
+		observation.BytesBefore, observation.BytesAfter = uint64(bytesBefore), uint64(p.bytes)
+		observation.Candidates = append([]types.Address(nil), cands...)
+		if manual {
+			observation.Manual, observation.Choice = 1, uint64(choice)
+		}
+	}
 	b.mu.Unlock()
-	if !manual || !r.deferManualCheck(in) {
-		b.check(in)
+	b.publishInbox(observation)
+	if !manual || !r.deferManualCheck(entry) {
+		b.check(entry)
 	}
 	return true
 }
 
 // check runs the receive checks on one message and puts it into its slot.
-func (b *inbox) check(in transport.Inbound) {
+func (b *inbox) check(entry inboxEntry) {
+	in := entry.in
 	r := b.r
-	snap := r.snap.Load()
+	publication := r.snap.loadPublication()
+	var snap *consensus.Snapshot
+	if publication != nil {
+		snap = publication.snapshot
+	}
 	isMember := func(a types.Address, _ types.View) bool {
 		if snap == nil || !snap.Running {
 			return true
 		}
 		return (snap.Validators != nil && snap.Validators.Contains(a)) || (snap.PriorValidators != nil && snap.PriorValidators.Contains(a))
+	}
+	var snapshotSource journal.InboxRec
+	if r.d.InboxSources != nil {
+		snapshotSource = inboxSnapshotSource(publication)
 	}
 	code := codec.Code(in.Code)
 	v, err := consensus.Recover(code, in.Payload, isMember)
@@ -291,10 +336,12 @@ func (b *inbox) check(in transport.Inbound) {
 		if errors.Is(err, ecdsa.ErrUnauthorizedAddress) {
 			reason = "membership"
 		}
+		b.rejectedSource(entry, reason, snapshotSource)
 		r.prefilter(in, nil, event.Ignore, reason, false)
 		return
 	}
 	if snap != nil && snap.Running && outsideWindow(snap, code, v.Msg.View) {
+		b.rejectedSource(entry, "window", snapshotSource)
 		r.prefilter(in, v, event.Ignore, "window", false)
 		return
 	}
@@ -308,6 +355,22 @@ func (b *inbox) check(in transport.Inbound) {
 		}
 	}
 	s := b.slots[key]
+	result := "replace"
+	if s == nil {
+		result = "insert"
+	} else if s.dedup == dedup {
+		result = "duplicate"
+	}
+	observation := b.checkSourceLocked(entry, result, snapshotSource)
+	if observation != nil {
+		observation.Signer, observation.ViewSequence, observation.ViewRound = key.src, key.seq, key.round
+		if key.second {
+			observation.Second = 1
+		}
+		if s != nil {
+			observation.Holder, observation.OldRequest = s.ready, s.request
+		}
+	}
 	switch {
 	case s == nil:
 		holder := in.Peer
@@ -319,18 +382,25 @@ func (b *inbox) check(in transport.Inbound) {
 				holder = f.ready
 			}
 		}
-		b.slots[key] = &slot{in: in, dedup: dedup, digest: digest, sig: v.Msg.Signature, source: v.Source, ready: holder}
+		b.slots[key] = &slot{in: in, request: entry.request, dedup: dedup, digest: digest, sig: v.Msg.Signature, source: v.Source, ready: holder}
 		p := b.peer(holder)
 		p.ready = append(p.ready, key)
+		if observation != nil {
+			observation.Holder, observation.Order = holder, append([]types.Address(nil), b.order...)
+		}
 		b.mu.Unlock()
+		b.publishInbox(observation)
 	case s.dedup == dedup:
 		b.mu.Unlock()
+		b.publishInbox(observation)
 		r.prefilter(in, v, event.DropSilent, "duplicate", false)
 		return
 	default:
 		old := *s
 		s.in, s.dedup, s.digest, s.sig = in, dedup, digest, v.Msg.Signature
+		s.request = entry.request
 		b.mu.Unlock()
+		b.publishInbox(observation)
 		r.prefilter(old.in, nil, event.DropSilent, "overwritten", false)
 		if hasDigest && old.digest != digest {
 			kind := "equivocation"
@@ -408,8 +478,16 @@ func (b *inbox) hasReady() bool {
 
 // take returns the next checked message, one per peer in turn.
 func (b *inbox) takeWithOrigin() (consensus.Message, uint64, *transport.WriteSession, transport.ReceiveOrigin, bool) {
+	q, ok := b.takeQueued()
+	if !ok {
+		return consensus.Message{}, 0, nil, transport.ReceiveOrigin{}, false
+	}
+	return q.in.(consensus.Message), q.capture, q.stream, q.origin, true
+}
+
+// takeQueued retains the original request through delayed core dispatch.
+func (b *inbox) takeQueued() (queued, bool) {
 	b.mu.Lock()
-	defer b.mu.Unlock()
 	n := len(b.order)
 	for i := 0; i < n; i++ {
 		b.cIdx = (b.cIdx + 1) % n
@@ -422,10 +500,22 @@ func (b *inbox) takeWithOrigin() (consensus.Message, uint64, *transport.WriteSes
 				continue
 			}
 			delete(b.slots, k)
-			return consensus.Message{Code: codec.Code(s.in.Code), Payload: s.in.Payload, Peer: s.in.Peer, RecvMono: s.in.RecvMono}, s.in.Capture, s.in.Stream, s.in.Origin, true
+			observation := b.inboxSourceLocked("take", inboxEntry{in: s.in, request: s.request})
+			if observation != nil {
+				observation.EngineRun = b.r.engineRun
+				observation.Holder, observation.Signer, observation.ViewSequence, observation.ViewRound = s.ready, k.src, k.seq, k.round
+				if k.second {
+					observation.Second = 1
+				}
+			}
+			q := queued{in: consensus.Message{Code: codec.Code(s.in.Code), Payload: s.in.Payload, Peer: s.in.Peer, RecvMono: s.in.RecvMono}, via: viaPeer, capture: s.in.Capture, stream: s.in.Stream, origin: s.in.Origin, inboxSource: s.request}
+			b.mu.Unlock()
+			b.publishInbox(observation)
+			return q, true
 		}
 	}
-	return consensus.Message{}, 0, nil, transport.ReceiveOrigin{}, false
+	b.mu.Unlock()
+	return queued{}, false
 }
 
 // InboundBytes returns the payload bytes waiting in the per-peer receive
