@@ -44,7 +44,14 @@ func TestAppQueueObserverDetachedAfterUnlock(t *testing.T) {
 	o := &appQueueObservations{alter: true}
 	n.appQueueSources = o
 	n.boot()
-	o.inspect = func() { n.r.appMu.Lock(); n.r.appMu.Unlock() }
+	o.inspect = func() {
+		n.r.appMu.Lock()
+		pending := len(n.r.appQ)
+		n.r.appMu.Unlock()
+		if pending > 2 {
+			t.Errorf("unexpected queued inputs after observer unlock: %d", pending)
+		}
+	}
 	n.r.PeerConnected(k.addrs[0])
 	n.r.NewHead(n.chain.head)
 	n.r.NewHead(n.chain.head)
@@ -125,7 +132,14 @@ func TestAppQueueNormalCoreSourcesAndFiniteRetainedHorizon(t *testing.T) {
 func TestAppQueueObserverConcurrentNormalNotifications(t *testing.T) {
 	o := new(appQueueObservations)
 	r := &Runner{d: Deps{Clock: SystemClock(), AppQueueSources: o}, notify: make(chan struct{}, 1)}
-	o.inspect = func() { r.appMu.Lock(); r.appMu.Unlock() }
+	o.inspect = func() {
+		r.appMu.Lock()
+		pending := len(r.appQ)
+		r.appMu.Unlock()
+		if pending < 1 || pending > 4 {
+			t.Errorf("unexpected concurrent queue state after observer unlock: %d", pending)
+		}
+	}
 	var producers sync.WaitGroup
 	for i := range 4 {
 		producers.Go(func() { r.PeerConnected(types.Address{byte(i + 1)}) })
