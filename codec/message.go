@@ -450,18 +450,36 @@ func (p *proposalRLP) DecodeRLP(s *gethrlp.Stream) error {
 	return err
 }
 
+// signedPreprepareRLP is [[sequence, round, proposal], signature].
+type signedPreprepareRLP struct {
+	Payload struct {
+		Sequence *big.Int
+		Round    *big.Int
+		Proposal *proposalRLP
+	}
+	Signature []byte
+}
+
+func (w *signedPreprepareRLP) message() *Message {
+	m := &Message{
+		Code: CodePreprepare,
+		View: types.View{
+			Sequence: types.MustHeightFromBig(w.Payload.Sequence),
+			Round:    mustRound(w.Payload.Round),
+		},
+		Signature: w.Signature,
+	}
+	if w.Payload.Proposal != nil {
+		m.Proposal = w.Payload.Proposal.b
+	}
+	return m
+}
+
 // preprepareRLP is [[[sequence, round, proposal], signature], [round_changes,
 // prepares]]. Each round change is delimited as one raw item and decoded on
 // its own.
 type preprepareRLP struct {
-	SignedPayload struct {
-		Payload struct {
-			Sequence *big.Int
-			Round    *big.Int
-			Proposal *proposalRLP
-		}
-		Signature []byte
-	}
+	SignedPayload signedPreprepareRLP
 	Justification struct {
 		RoundChanges []rlp.RawValue
 		Prepares     []*voteRLP
@@ -474,17 +492,7 @@ func decodePreprepare(payload []byte) (*Message, error) {
 	if err := rlp.DecodeStrict(payload, &w); err != nil {
 		return nil, err
 	}
-	m := &Message{
-		Code: CodePreprepare,
-		View: types.View{
-			Sequence: types.MustHeightFromBig(w.SignedPayload.Payload.Sequence),
-			Round:    mustRound(w.SignedPayload.Payload.Round),
-		},
-		Signature: w.SignedPayload.Signature,
-	}
-	if w.SignedPayload.Payload.Proposal != nil {
-		m.Proposal = w.SignedPayload.Payload.Proposal.b
-	}
+	m := w.SignedPayload.message()
 	for _, raw := range w.Justification.RoundChanges {
 		s, r := newStream(raw)
 		rc := &Message{}

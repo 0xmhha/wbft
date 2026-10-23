@@ -67,6 +67,7 @@ type TraceWarmup struct {
 
 // StepResult is one replayed core Step.
 type StepResult struct {
+	DeferredOrigin    *journal.DeferredEvidence `json:"deferred_origin,omitempty"`
 	Scheduled         *TraceInputPosition
 	SuppressionReason string
 
@@ -159,6 +160,7 @@ func RunTrace(j JournalReader, opts TraceOptions, yield func(StepResult) error) 
 	var core *consensus.State
 	var run, last uint64
 	var writerRun string
+	var deferredProfile bool
 	var configuration []byte
 	approximate := false
 	everStarted := false
@@ -199,6 +201,7 @@ func RunTrace(j JournalReader, opts TraceOptions, yield func(StepResult) error) 
 				run, last = 0, 0
 				writerRun = b.Run
 				configuration = encoded
+				deferredProfile = b.Core.NextHeight != nil
 			}
 
 		case *journal.GapRec:
@@ -218,6 +221,9 @@ func RunTrace(j JournalReader, opts TraceOptions, yield func(StepResult) error) 
 				if p.Removed || original.Step != slot.Step {
 					changed = true
 				}
+			}
+			if b.InputKind == inputlog.KindDeferredMessage && !deferredProfile {
+				return ErrTraceConfiguration
 			}
 			if cfg == nil {
 				return ErrTraceNoSegment
@@ -329,6 +335,12 @@ func RunTrace(j JournalReader, opts TraceOptions, yield func(StepResult) error) 
 			}
 			if err != nil {
 				return &TraceError{Approximate: approximate, WriterRun: writerRun, EngineRun: original.EngineRun, Step: original.Step, Err: err}
+			}
+			if original.InputKind == inputlog.KindDeferredMessage {
+				res.DeferredOrigin, err = deferredEvidence(j, original.Input)
+				if err != nil {
+					return err
+				}
 			}
 			res.WriterRun = writerRun
 			if err = markWarmup(&res, original, opts.Warmup, approximate); err != nil {

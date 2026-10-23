@@ -194,6 +194,9 @@ func timedEntries(j JournalReader, pool *AnswerPool, observed *observedTimers) (
 			}
 			writer = seg.Run
 			identity = seg.Core
+			if err := identity.NextHeight.Validate(); err != nil {
+				return nil, err
+			}
 		}
 		if rec.JSeq == 0 || seq != 0 && rec.JSeq != seq+1 {
 			return nil, ErrTraceGap
@@ -212,6 +215,9 @@ func timedEntries(j JournalReader, pool *AnswerPool, observed *observedTimers) (
 		case *journal.GapRec:
 			return nil, ErrTraceGap
 		case *journal.StepRec:
+			if b.InputKind == inputlog.KindDeferredMessage && identity.NextHeight == nil {
+				return nil, ErrTraceConfiguration
+			}
 			if len(entries) >= MaxAnswerSteps {
 				return nil, ErrTraceAnswerLimit
 			}
@@ -481,6 +487,12 @@ func runTimedEntries(entries []timedSourceEntry, j JournalReader, opts TimedOpti
 				return e
 			}
 			if original != nil {
+				if original.InputKind == inputlog.KindDeferredMessage {
+					result.DeferredOrigin, e = deferredEvidence(j, original.Input)
+					if e != nil {
+						return e
+					}
+				}
 				result.RecordedInputKind = original.InputKind
 				result.Step = original.Step
 				result.Match = result.OutDigest == original.OutDigest && consensus.ValsetDigest(state.Snapshot().Validators) == original.ValsetDigest
@@ -869,6 +881,12 @@ func runTimedEntries(entries []timedSourceEntry, j JournalReader, opts TimedOpti
 				return err
 			}
 			if frame.Record.Mono < 0 || frame.Record.Mono > b.Entry.Mono {
+				return ErrTraceTiming
+			}
+		}
+		if b.InputKind == inputlog.KindDeferredMessage {
+			receipt, err := deferredReceipt(j, writer, b.Input)
+			if err != nil || receipt > int64(b.Entry.Mono) {
 				return ErrTraceTiming
 			}
 		}

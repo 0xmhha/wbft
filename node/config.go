@@ -62,6 +62,10 @@ type Config struct {
 	// addition to restart safety. Empty preserves the existing defaults.
 	// Unknown or repeated names refuse construction.
 	Improvements []string
+	// NextHeight enables the separate next-sequence receive lane with explicit
+	// limits. Nil preserves the original receiver. Its WAL profile requires a
+	// compatible binary on every subsequent restart.
+	NextHeight *runner.NextHeightLimits
 }
 
 // LogDefaults are the log settings of a node whose Config.Log is nil: every

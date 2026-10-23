@@ -272,6 +272,9 @@ func Decode(kind string, body []byte, msgs func(jseq uint64) ([]byte, error)) (c
 			return fail(err)
 		}
 		return consensus.Request{Block: b}, nil
+	case KindDeferredMessage:
+		m, _, err := DecodeDeferredMessage(body)
+		return m, err
 	case KindMessage, KindCapturedMessage:
 		var m messageRLP
 		if err := rlp.DecodeStrict(body, &m); err != nil {

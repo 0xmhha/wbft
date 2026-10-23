@@ -419,6 +419,30 @@ all-zero profiles preserve the original execution and evidence bytes without
 extra random draws. Unlisted work classes keep zero cost.
 Lifecycle steps and WAL replay retain their existing synchronous execution.
 
+The optional `node.Config.NextHeight` (or `runner.Config.NextHeight`) takes
+`runner.NextHeightLimits` with four explicit positive limits: total entries,
+owned raw bytes, entries per peer, and entries per recovered outer signer.
+Nil preserves the original receiver. The lane authenticates only the outer
+signature of exactly the next sequence, then verifies the entire message
+against the active validator set when that sequence becomes current. Raw-byte
+reservations survive queued work, authentication, WAL persistence and core
+consumption; they do not bound process heap, CPU time or WAL disk usage.
+Enabling the lane requires WAL replay and a compatible binary on later starts.
+
+Journal segments declare this receive profile and its limits separately from
+consensus improvement flags. A `deferred_message` input retains inline message
+bytes and the first writer-run/capture pair, including after process restart and
+WAL replay. `wbft-replay` reports `deferred_origin` separately from functional
+replay: missing or pruned captures leave the inline input usable, without
+substituting a matching frame from a later run. Receipt times belong to the
+original writer's clock. Timed and scheduled replay require a verified source
+in the same writer run; cross-run clock comparison remains unavailable.
+`sim.NodeSpec.NextHeight` declares the same explicit limits and persists the
+receive profile in every incarnation. Nil preserves existing execution bytes
+and random draws. Enabled lanes require WAL replay and atomic receive/core
+processing; positive pre-dispatch service samples remain unsupported. JSON
+receive limits use decimal strings to retain the full unsigned integer domain.
+
 The `pre_dispatch_service/1` policy reserves an input, occupies its worker for
 the sampled time, then executes the existing operation atomically. Core state,
 environment lookups, timer arms and outputs are evaluated at dispatch after

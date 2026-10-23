@@ -261,6 +261,8 @@ func externalReceipt(reader JournalReader, writer string, b *journal.StepRec) (i
 		// The frame and completed step use the same journal clock. RecvMono in
 		// an inline transport input can have a different clock origin.
 		return int64(frame.Record.Mono), nil
+	case inputlog.KindDeferredMessage:
+		return deferredReceipt(reader, writer, b.Input)
 	case inputlog.KindMessage:
 		in, err := inputlog.Decode(b.InputKind, b.Input, nil)
 		if err != nil {

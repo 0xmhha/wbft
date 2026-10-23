@@ -165,11 +165,12 @@ func decodeBoundary(body []byte) (boundaryRec, error) {
 
 // walStep is one recorded input with the records that followed it.
 type walStep struct {
-	kind  string
-	body  []byte
-	env   [][]byte
-	own   []ownRec
-	index int // position of the input record
+	deferred *deferredRecord
+	kind     string
+	body     []byte
+	env      [][]byte
+	own      []ownRec
+	index    int // position of the input record
 }
 
 // CommitRequest is a decided block the write-ahead log handed to the
@@ -197,12 +198,12 @@ func InspectWAL(fs fsys.FS, dir string) (WALState, error) {
 		return st, err
 	}
 	for _, rec := range recs {
-		if rec.Format != walFormat {
+		if rec.Format != walFormat && rec.Format != nextHeightFormat {
 			continue
 		}
 		switch rec.Kind {
 		case walEndHeight:
-			b, err := decodeBoundary(rec.Body)
+			b, _, err := decodeRunnerBoundary(rec)
 			if err != nil {
 				return st, err
 			}

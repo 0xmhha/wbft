@@ -1,6 +1,7 @@
 package runner
 
 import (
+	"bytes"
 	"encoding/hex"
 	"errors"
 	"sync"
@@ -94,6 +95,19 @@ func (b *inbox) Offer(in transport.Inbound) bool {
 			r.prefilter(in, nil, event.DropSilent, "engine_stopped", true)
 		}
 		return true
+	}
+	if r.nextHeight != nil {
+		snap := r.snap.Load()
+		if snap != nil && snap.Running {
+			seq, err := codec.SignedSequenceBytes(codec.Code(in.Code), in.Payload)
+			if err == nil && bytes.Equal(seq, snap.View.Sequence.AddUint64(1).Bytes()) {
+				run := ""
+				if jw, ok := r.d.Journal.(interface{ CaptureRun() string }); ok {
+					run = jw.CaptureRun()
+				}
+				return r.nextHeight.offer(in, run)
+			}
+		}
 	}
 	now := r.d.Clock.Mono()
 	b.mu.Lock()
