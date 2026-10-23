@@ -81,14 +81,16 @@ package validator
 import _ "github.com/0xmhha/wbft/observe"
 EOF
 
-expect "chain rules import the network layer" lint chain/epoch/zz_neg.go "pure-layer" <<'EOF'
-package epoch
+# External test packages avoid cycles through the transport's internal tests
+# while still requiring the exact architectural boundary diagnostic.
+expect "chain rules import the network layer" lint chain/epoch/zz_neg_test.go "pure-layer" <<'EOF'
+package epoch_test
 
 import _ "github.com/0xmhha/wbft/p2p/transport"
 EOF
 
-expect "core imports transport" lint consensus/zz_neg.go "core-boundary" <<'EOF'
-package consensus
+expect "core imports transport" lint consensus/zz_neg_test.go "core-boundary" <<'EOF'
+package consensus_test
 
 import _ "github.com/0xmhha/wbft/p2p/transport"
 EOF
