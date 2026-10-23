@@ -113,13 +113,16 @@ func (r *Runner) next() (queued, bool) {
 	}
 	r.appMu.Lock()
 	if len(r.appQ) > 0 {
+		before := len(r.appQ)
 		q := r.appQ[0]
 		r.appQ = r.appQ[1:]
 		if _, ok := q.in.(consensus.NewHead); ok {
 			q.in = consensus.NewHead{Header: r.headNote}
 			r.headNote = nil
 		}
+		observation := r.appQueueRecordLocked("pop", q.appSource, q.in, r.engineRun, r.step+1, before)
 		r.appMu.Unlock()
+		r.publishAppQueue(observation)
 		return q, true
 	}
 	r.appMu.Unlock()
@@ -559,8 +562,9 @@ func (r *Runner) finalizeDone(j commitJob, err error) {
 	if r.cfg.Core.Improvements.Has(consensus.WatchCommittedImport) || r.cfg.Core.Improvements.Has(consensus.AdvanceOnCommitFailure) {
 		result.View = &types.View{Sequence: j.block.Header.Number, Round: j.round}
 	}
-	r.appQ = append(r.appQ, queued{in: result, via: viaApp})
+	observation := r.appendAppLocked(result)
 	r.appMu.Unlock()
+	r.publishAppQueue(observation)
 	r.wake()
 }
 

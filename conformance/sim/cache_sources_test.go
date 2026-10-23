@@ -83,6 +83,70 @@ func TestAcceptedCacheDiagnosticNormalSourceChain(t *testing.T) {
 		if err != nil || accepted.Status != "consistent" || accepted.PhysicalStatus != "unavailable" || accepted.ScheduleStatus != "unavailable" {
 			t.Fatal("simulated accepted-input recent source", n.i, accepted, err)
 		}
+		appQueue, err := journal.CheckAppQueueSources(records, journal.AppQueueLimits{Core: limits.Core, Operations: 20000, Entries: 10000, Bytes: 64 << 20})
+		if err != nil || appQueue.Status != "consistent" || appQueue.Appended == 0 || appQueue.Popped == 0 || appQueue.Clears == 0 || appQueue.Retained != 0 || appQueue.PhysicalStatus != "unavailable" || appQueue.ScheduleStatus != "unavailable" {
+			t.Fatal("normal application-input queue sources", n.i, appQueue, err)
+		}
+		if n.i == 0 {
+			// Copy offline metadata only; no altered input reaches the runner.
+			for _, mode := range []string{"owner", "count", "stop", "sequence", "missing", "operations", "bytes"} {
+				copied := slices.Clone(records)
+				bounds := journal.AppQueueLimits{Core: limits.Core, Operations: 20000, Entries: 10000, Bytes: 64 << 20}
+				switch mode {
+				case "operations":
+					bounds.Operations = 1
+				case "bytes":
+					bounds.Bytes = 1
+				default:
+					for i, record := range copied {
+						q, ok := record.Body.(*journal.AppQueueRec)
+						if !ok || (mode == "owner" || mode == "sequence") && q.Action != "pop" || mode == "stop" && q.Action != "clear" {
+							continue
+						}
+						changed := *q
+						switch mode {
+						case "owner":
+							changed.Request += 100000
+						case "count":
+							changed.Before++
+							changed.After++
+						case "stop":
+							changed.Step = 1
+						case "sequence":
+							changed.Sequence = 1
+						case "missing":
+							copied = append(copied[:i:i], copied[i+1:]...)
+						}
+						if mode != "missing" {
+							copied[i].Body = &changed
+						}
+						break
+					}
+				}
+				checked, err := journal.CheckAppQueueSources(copied, bounds)
+				if mode == "missing" || mode == "operations" || mode == "bytes" {
+					if err != nil || checked.Status != "unavailable" {
+						t.Fatal("missing app queue evidence became proof", mode, checked, err)
+					}
+				} else if checked.Status != "inconsistent" || !errors.Is(err, journal.ErrAppQueueSource) {
+					t.Fatal("contradictory app queue metadata accepted", mode, checked, err)
+				}
+			}
+			copied := slices.Clone(records)
+			var positions []int
+			for i, record := range copied {
+				if _, ok := record.Body.(*journal.AppQueueRec); ok {
+					positions = append(positions, i)
+				}
+			}
+			for i, j := 0, len(positions)-1; i < j; i, j = i+1, j-1 {
+				copied[positions[i]], copied[positions[j]] = copied[positions[j]], copied[positions[i]]
+			}
+			reordered, err := journal.CheckAppQueueSources(copied, journal.AppQueueLimits{Core: limits.Core, Operations: 20000, Entries: 10000, Bytes: 64 << 20})
+			if err != nil || reordered != appQueue {
+				t.Fatal("observer delivery order replaced app mutex order", reordered, err)
+			}
+		}
 		timerLimits := journal.TimerSourceLimits{Core: limits.Core, Operations: 20000, Bindings: 20000, Bytes: 64 << 20}
 		timerCheck, err := journal.CheckTimerSources(records, timerLimits)
 		if err != nil || timerCheck.Status != "consistent" || timerCheck.Arms == 0 || timerCheck.Cancels == 0 || timerCheck.PhysicalStatus != "unavailable" || timerCheck.ScheduleStatus != "unavailable" {

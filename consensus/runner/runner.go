@@ -160,6 +160,8 @@ type Deps struct {
 	// TimerSources observes detached scheduler operations after its mutex is
 	// released. Nil preserves the original journal and timer behavior.
 	TimerSources TimerSourceObserver
+	// AppQueueSources observes detached application-input queue mutations.
+	AppQueueSources AppQueueSourceObserver
 	// Synchronising reports whether the application is synchronising the
 	// chain; consensus messages that arrive while the engine is stopped are
 	// then dropped instead of closing the connection.
@@ -197,12 +199,13 @@ var (
 
 // queued is one input with where it came from.
 type queued struct {
-	stream   *transport.WriteSession // optional original functional stream, never WAL input
-	origin   transport.ReceiveOrigin // frozen observer provenance; never functional authority
-	deferred *deferredEntry
-	capture  uint64
-	in       consensus.Input
-	via      string
+	appSource uint64                  // diagnostic append identity; never functional authority
+	stream    *transport.WriteSession // optional original functional stream, never WAL input
+	origin    transport.ReceiveOrigin // frozen observer provenance; never functional authority
+	deferred  *deferredEntry
+	capture   uint64
+	in        consensus.Input
+	via       string
 }
 
 // Values of the via of journal step records.
@@ -255,9 +258,11 @@ type Runner struct {
 	lastHead atomic.Pointer[types.Header] // head of the last processed NewHead or Start
 	hkGen    atomic.Uint64                // generation of the periodic tasks
 
-	appMu    sync.Mutex // runner.app.mu
-	appQ     []queued
-	headNote *types.Header // coalesced NewHead
+	appMu              sync.Mutex // runner.app.mu
+	appSourceSequence  uint64
+	appSourceExhausted bool
+	appQ               []queued
+	headNote           *types.Header // coalesced NewHead
 
 	// headSuspect is the core head at a head check that found the
 	// application ahead; only the head check goroutine touches it.
@@ -449,8 +454,9 @@ func (r *Runner) halt(err error) {
 // Submit hands a proposal of the block builder to the core.
 func (r *Runner) Submit(b *types.Block) {
 	r.appMu.Lock()
-	r.appQ = append(r.appQ, queued{in: consensus.Request{Block: b}, via: viaApp})
+	observation := r.appendAppLocked(consensus.Request{Block: b})
 	r.appMu.Unlock()
+	r.publishAppQueue(observation)
 	r.emit(event.Record{Kind: event.ProposalSubmitted, Fields: map[string]any{"number": b.Header.Number.String()}}, nil)
 	r.wake()
 }
@@ -460,19 +466,25 @@ func (r *Runner) Submit(b *types.Block) {
 // sees the latest head.
 func (r *Runner) NewHead(h *types.Header) {
 	r.appMu.Lock()
+	before := len(r.appQ)
+	action, request := "coalesce", r.firstHeadSourceLocked()
 	if r.headNote == nil {
-		r.appQ = append(r.appQ, queued{in: consensus.NewHead{}, via: viaApp})
+		action, request = "append", r.nextAppSourceLocked()
+		r.appQ = append(r.appQ, queued{in: consensus.NewHead{}, via: viaApp, appSource: request})
 	}
 	r.headNote = h
+	observation := r.appQueueRecordLocked(action, request, consensus.NewHead{Header: h}, 0, 0, before)
 	r.appMu.Unlock()
+	r.publishAppQueue(observation)
 	r.wake()
 }
 
 // PeerConnected reports that a validator peer (re)connected.
 func (r *Runner) PeerConnected(a types.Address) {
 	r.appMu.Lock()
-	r.appQ = append(r.appQ, queued{in: consensus.PeerConnected{Addr: a}, via: viaApp})
+	observation := r.appendAppLocked(consensus.PeerConnected{Addr: a})
 	r.appMu.Unlock()
+	r.publishAppQueue(observation)
 	r.wake()
 }
 

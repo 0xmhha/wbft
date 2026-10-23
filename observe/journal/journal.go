@@ -297,6 +297,8 @@ func monoOf(r Record) time.Duration {
 		return b.Mono
 	case *CoreStepRec:
 		return time.Duration(b.Observed.Mono)
+	case *AppQueueRec:
+		return b.Mono
 	case *SyncRec:
 		return b.Mono
 	}
@@ -400,6 +402,11 @@ func (w *FileWriter) write(r Record) {
 		}
 		w.stats.last = b.WallNs
 	case *MsgRec:
+		if w.stats.first == 0 {
+			w.stats.first = b.WallNs
+		}
+		w.stats.last = b.WallNs
+	case *AppQueueRec:
 		if w.stats.first == 0 {
 			w.stats.first = b.WallNs
 		}

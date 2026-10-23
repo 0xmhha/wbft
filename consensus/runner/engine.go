@@ -218,8 +218,11 @@ func (r *Runner) stopEngine(reason string) {
 	r.inbox.clear()
 	r.internal = nil
 	r.appMu.Lock()
+	appBefore := len(r.appQ)
 	r.appQ, r.headNote = nil, nil
+	appObservation := r.appQueueRecordLocked("clear", 0, nil, r.engineRun, r.step, appBefore)
 	r.appMu.Unlock()
+	r.publishAppQueue(appObservation)
 	if r.buildDone != nil {
 		close(r.buildDone)
 		r.buildDone = nil
