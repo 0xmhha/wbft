@@ -88,6 +88,10 @@ func TestAcceptedCacheDiagnosticNormalSourceChain(t *testing.T) {
 		if err != nil || timerCheck.Status != "consistent" || timerCheck.Arms == 0 || timerCheck.Cancels == 0 || timerCheck.PhysicalStatus != "unavailable" || timerCheck.ScheduleStatus != "unavailable" {
 			t.Fatal("simulated core/scheduler source bindings", n.i, timerCheck, err)
 		}
+		lifecycle, err := journal.CheckTimerLifecycleSources(records, timerLimits)
+		if err != nil || lifecycle.Status != "consistent" || lifecycle.Arms == 0 || lifecycle.Clears == 0 || lifecycle.PhysicalStatus != "unavailable" || lifecycle.ScheduleStatus != "unavailable" || lifecycle.RetainedLive != 0 || lifecycle.RetainedQueued != 0 {
+			t.Fatal("normal scheduler mutation sources", n.i, lifecycle, err)
+		}
 		if n.i == 0 {
 			// Only copied offline source metadata changes. No altered timer,
 			// packet, signature or fault command reaches the running model.
@@ -219,6 +223,10 @@ func TestAcceptedCacheNormalBuildServiceTimeoutSources(t *testing.T) {
 		check, err := journal.CheckTimerSources(records, limits)
 		if err != nil || check.Status != "consistent" || check.PhysicalStatus != "unavailable" || check.ScheduleStatus != "unavailable" {
 			t.Fatal("actual normal timeout/core input binding", n.i, check, err)
+		}
+		lifecycle, err := journal.CheckTimerLifecycleSources(records, limits)
+		if err != nil || lifecycle.Status != "consistent" || lifecycle.Popped != check.Timeouts || lifecycle.Queued < lifecycle.Popped || lifecycle.ScheduleStatus != "unavailable" || lifecycle.PhysicalStatus != "unavailable" {
+			t.Fatal("normal successful build timer lifecycle", n.i, lifecycle, err)
 		}
 		pops += check.Timeouts
 		// A copied source that points a timeout dequeue at an observed
