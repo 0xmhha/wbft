@@ -71,8 +71,13 @@ func TestInboxSourcesNormalWorkerCursorAndUnlockedDetachedCallback(t *testing.T)
 			t.Fatal("normal signed vote refused")
 		}
 	}
-	if !n.r.inbox.checkOne(false) || !n.r.inbox.checkOne(false) || n.r.inbox.checkOne(false) {
-		t.Fatal("normal worker queue did not drain exactly once")
+	for range 2 {
+		if !n.r.inbox.checkOne(false) {
+			t.Fatal("normal worker queue did not drain exactly once")
+		}
+	}
+	if n.r.inbox.checkOne(false) {
+		t.Fatal("normal worker queue retained extra work")
 	}
 	dequeues := []journal.InboxRec{}
 	for _, source := range o.observations[start:] {
