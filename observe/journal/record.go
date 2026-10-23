@@ -7,6 +7,7 @@ import (
 
 	"github.com/0xmhha/wbft/codec/rlp"
 	"github.com/0xmhha/wbft/observe/event"
+	"github.com/0xmhha/wbft/p2p/transport"
 	"github.com/0xmhha/wbft/types"
 )
 
@@ -19,16 +20,20 @@ type Kind uint8
 
 // Record kinds.
 const (
-	KindSegment    Kind = 1  // first record of every segment: who wrote it
-	KindPeer       Kind = 2  // a peer's consensus stream was attached or closed
-	KindMsg        Kind = 3  // a consensus message received or sent
-	KindOutcome    Kind = 4  // what the node did with a received message
-	KindSuppressed Kind = 5  // a send suppressed by the recent cache
-	KindStep       Kind = 6  // one input of the core and the digest of its outputs
-	KindGap        Kind = 7  // records dropped while the queue was full
-	KindTimer      Kind = 8  // measured scheduler mutation and queue timing
-	KindCache      Kind = 9  // measured cache mutation and empty-instance declaration
-	KindSync       Kind = 10 // submitted and processed application sync controls
+	KindSegment      Kind = 1  // first record of every segment: who wrote it
+	KindPeer         Kind = 2  // a peer's consensus stream was attached or closed
+	KindMsg          Kind = 3  // a consensus message received or sent
+	KindOutcome      Kind = 4  // what the node did with a received message
+	KindSuppressed   Kind = 5  // a send suppressed by the recent cache
+	KindStep         Kind = 6  // one input of the core and the digest of its outputs
+	KindGap          Kind = 7  // records dropped while the queue was full
+	KindTimer        Kind = 8  // measured scheduler mutation and queue timing
+	KindCache        Kind = 9  // measured cache mutation and empty-instance declaration
+	KindSync         Kind = 10 // submitted and processed application sync controls
+	KindWriteCache   Kind = 11 // actual accepted/completed write-ledger observations
+	KindReceiveCache Kind = 12 // actual accepted-input checking-ledger observations
+	KindSession      Kind = 13 // original stream observations and functional endings
+	KindCoreStep     Kind = 14 // detached actual live core execution sources
 )
 
 func (k Kind) String() string {
@@ -53,13 +58,21 @@ func (k Kind) String() string {
 		return "cache"
 	case KindSync:
 		return "sync"
+	case KindWriteCache:
+		return "write_cache"
+	case KindReceiveCache:
+		return "receive_cache"
+	case KindSession:
+		return "session"
+	case KindCoreStep:
+		return "core_step_source"
 	}
 	return fmt.Sprintf("kind(%d)", uint8(k))
 }
 
 // Record is one journal record. Body is one of *SegmentRec, *PeerRec,
 // *MsgRec, *OutcomeRec, *SuppressedRec, *StepRec, *GapRec, *TimerRec, *CacheRec,
-// or *SyncRec. JSeq is assigned
+// *WriteCacheRec, *ReceiveCacheRec, *SessionRec, *CoreStepRec, or *SyncRec. JSeq is assigned
 // by the writer: it increases by one per written record within a run.
 type Record struct {
 	Kind Kind
@@ -87,11 +100,12 @@ type Identity struct {
 // CoreOptions is the consensus.Options of the journaled core in a portable
 // form: the chain configuration as its JSON text (types.ParseChainConfig).
 type CoreOptions struct {
-	NextHeight            *DeferredOptions `json:"next_height,omitempty"`
-	ProposerPolicyProfile string           `json:"proposer_policy_profile,omitempty"`
-	TimerTrace            uint64           `json:"timer_trace,omitempty"`
-	CacheTrace            uint64           `json:"cache_trace,omitempty"`
-	SyncTrace             uint64           `json:"sync_trace,omitempty"`
+	CachePolicy           *CachePolicyOptions `json:"cache_policy,omitempty"`
+	NextHeight            *DeferredOptions    `json:"next_height,omitempty"`
+	ProposerPolicyProfile string              `json:"proposer_policy_profile,omitempty"`
+	TimerTrace            uint64              `json:"timer_trace,omitempty"`
+	CacheTrace            uint64              `json:"cache_trace,omitempty"`
+	SyncTrace             uint64              `json:"sync_trace,omitempty"`
 	ChainConfig           []byte
 	Self                  types.Address
 	Improvements          uint64
@@ -130,7 +144,10 @@ const (
 type SendAttempt struct{ Sequence, Cache, Operation uint64 }
 
 type MsgRec struct {
-	Attempt *SendAttempt
+	// Session is the original adapter loop owner; nil makes no stream claim.
+	Session      *SessionRef
+	WriteAttempt *WriteAttemptSource
+	Attempt      *SendAttempt
 	// IO is absent in old recordings and when the transport reports no interval.
 	IO *IOInterval
 	// Capture identifies this received frame within its writer run. It is
@@ -299,6 +316,7 @@ type segmentRLP struct {
 	SyncTrace             uint64   `rlp:"optional"`
 	ProposerPolicyProfile string   `rlp:"optional"`
 	NextHeight            []uint64 `rlp:"optional"`
+	CachePolicy           []uint64 `rlp:"optional"`
 }
 
 type peerRLP struct {
@@ -328,26 +346,28 @@ type peerRLPNoClose struct {
 }
 
 type msgRLP struct {
-	Format   uint64
-	JSeq     uint64
-	Dir      string
-	PeerIdx  uint64
-	Mono     uint64
-	WallNs   uint64
-	Code     uint64
-	WireCode uint64
-	Payload  []byte
-	DedupKey types.Hash
-	Offer    string
-	Cause    string
-	RelayOf  uint64
-	Write    string
-	Size     uint64
-	Engine   string
-	Dedup    uint64 // rlpDedup
-	Capture  uint64
-	IO       []uint64 `rlp:"optional"`
-	Attempt  []uint64 `rlp:"optional"`
+	Format       uint64
+	JSeq         uint64
+	Dir          string
+	PeerIdx      uint64
+	Mono         uint64
+	WallNs       uint64
+	Code         uint64
+	WireCode     uint64
+	Payload      []byte
+	DedupKey     types.Hash
+	Offer        string
+	Cause        string
+	RelayOf      uint64
+	Write        string
+	Size         uint64
+	Engine       string
+	Dedup        uint64 // rlpDedup
+	Capture      uint64
+	IO           []uint64          `rlp:"optional"`
+	Attempt      []uint64          `rlp:"optional"`
+	Session      []sessionRefRLP   `rlp:"optional"`
+	WriteAttempt []writeAttemptRLP `rlp:"optional"`
 }
 
 type msgRLPNoCapture struct {
@@ -534,7 +554,7 @@ func encodeBody(r Record, jseq uint64) ([]byte, error) {
 			BLSPublicKey: bytesOrEmpty(b.BLSPublicKey), Run: b.Run, Commit: b.Commit, ChainID: bigOrZero(b.ChainID),
 			GenesisHash: b.GenesisHash, Mode: b.Mode, WireOffset: b.WireOffset, ConfigDigest: b.ConfigDigest,
 			ChainConfig: bytesOrEmpty(b.Core.ChainConfig), CoreSelf: b.Core.Self, Improvements: b.Core.Improvements,
-			BacklogLimit: b.Core.BacklogLimit, Profile: b.Core.Profile, EngineRun: b.EngineRun, TimerTrace: b.Core.TimerTrace, CacheTrace: b.Core.CacheTrace, SyncTrace: b.Core.SyncTrace, ProposerPolicyProfile: b.Core.ProposerPolicyProfile, NextHeight: b.Core.NextHeight.encode()})
+			BacklogLimit: b.Core.BacklogLimit, Profile: b.Core.Profile, EngineRun: b.EngineRun, TimerTrace: b.Core.TimerTrace, CacheTrace: b.Core.CacheTrace, SyncTrace: b.Core.SyncTrace, ProposerPolicyProfile: b.Core.ProposerPolicyProfile, NextHeight: b.Core.NextHeight.encode(), CachePolicy: b.Core.CachePolicy.encode()})
 	case *PeerRec:
 		return rlp.Encode(&peerRLP{Format: Format, JSeq: jseq, PeerIdx: uint64(b.PeerIdx), Addr: b.Addr, NodeID: bytesOrEmpty(b.NodeID),
 			Remote: b.Remote, Event: b.Event, Reason: b.Reason, By: b.By, Cause: b.Cause})
@@ -547,10 +567,21 @@ func encodeBody(r Record, jseq uint64) ([]byte, error) {
 		if err != nil {
 			return nil, err
 		}
+		if b.WriteAttempt != nil && (b.Attempt != nil || b.Dir != Out) {
+			return nil, fmt.Errorf("journal: conflicting write reservation domain")
+		}
+		writeAttempt, err := encodeWriteAttempt(b.WriteAttempt)
+		if err != nil {
+			return nil, err
+		}
+		session, err := encodeSessionRef(b.Session)
+		if err != nil {
+			return nil, err
+		}
 		return rlp.Encode(&msgRLP{Format: Format, JSeq: jseq, Dir: b.Dir, PeerIdx: uint64(b.PeerIdx), Mono: uint64(int64(b.Mono)),
 			WallNs: uint64(b.WallNs), Code: b.Code, WireCode: b.WireCode, Payload: bytesOrEmpty(b.Payload), DedupKey: b.DedupKey,
 			Offer: b.Offer, Cause: string(b.Cause), RelayOf: b.RelayOf, Write: b.Write, Size: b.Size, Engine: b.Engine,
-			Dedup: rlpDedup(b.Dedup), Capture: b.Capture, IO: io, Attempt: attempt})
+			Dedup: rlpDedup(b.Dedup), Capture: b.Capture, IO: io, Attempt: attempt, Session: session, WriteAttempt: writeAttempt})
 	case *OutcomeRec:
 		return rlp.Encode(&outcomeRLP{Format: Format, JSeq: jseq, Of: b.Of, Code: b.Code, Peer: b.Peer, DedupKey: b.DedupKey,
 			Outcome: string(b.Outcome), Check: b.Check, Row: uint64(b.Row + 1), Reason: b.Reason, ErrorClass: b.ErrorClass,
@@ -584,6 +615,14 @@ func encodeBody(r Record, jseq uint64) ([]byte, error) {
 		return encodeTimerRec(b, jseq)
 	case *CacheRec:
 		return encodeCacheRec(b, jseq)
+	case *WriteCacheRec:
+		return encodeWriteCacheRec(b, jseq)
+	case *ReceiveCacheRec:
+		return encodeReceiveCacheRec(b, jseq)
+	case *SessionRec:
+		return encodeSessionRec(b, jseq)
+	case *CoreStepRec:
+		return encodeCoreStepRec(b, jseq)
 	case *SyncRec:
 		return encodeSyncRec(b, jseq)
 	case *GapRec:
@@ -624,10 +663,14 @@ func decodeBody(k Kind, body []byte) (Record, error) {
 		if err != nil {
 			return fail(err)
 		}
+		cache, err := decodeCachePolicyOptions(w.CachePolicy)
+		if err != nil {
+			return fail(err)
+		}
 		return Record{Kind: k, JSeq: w.JSeq, Body: &SegmentRec{EngineRun: w.EngineRun, Identity: Identity{
 			Self: w.Self, NodeID: w.NodeID, BLSPublicKey: w.BLSPublicKey, Run: w.Run, Commit: w.Commit, ChainID: w.ChainID,
 			GenesisHash: w.GenesisHash, Mode: w.Mode, WireOffset: w.WireOffset, ConfigDigest: w.ConfigDigest,
-			Core: CoreOptions{ChainConfig: w.ChainConfig, Self: w.CoreSelf, Improvements: w.Improvements, BacklogLimit: w.BacklogLimit, Profile: w.Profile, TimerTrace: w.TimerTrace, CacheTrace: w.CacheTrace, SyncTrace: w.SyncTrace, ProposerPolicyProfile: w.ProposerPolicyProfile, NextHeight: deferred},
+			Core: CoreOptions{ChainConfig: w.ChainConfig, Self: w.CoreSelf, Improvements: w.Improvements, BacklogLimit: w.BacklogLimit, Profile: w.Profile, TimerTrace: w.TimerTrace, CacheTrace: w.CacheTrace, SyncTrace: w.SyncTrace, ProposerPolicyProfile: w.ProposerPolicyProfile, NextHeight: deferred, CachePolicy: cache},
 		}}}, nil
 	case KindPeer:
 		var w peerRLP
@@ -680,7 +723,18 @@ func decodeBody(k Kind, body []byte) (Record, error) {
 		if err != nil {
 			return fail(err)
 		}
-		return Record{Kind: k, JSeq: w.JSeq, Body: &MsgRec{Attempt: attempt, IO: io, Dir: w.Dir, PeerIdx: uint32(w.PeerIdx), Mono: time.Duration(int64(w.Mono)),
+		if len(w.WriteAttempt) != 0 && (len(w.Attempt) != 0 || w.Dir != Out) {
+			return fail(fmt.Errorf("journal: conflicting write reservation domain"))
+		}
+		writeAttempt, err := decodeWriteAttempt(w.WriteAttempt)
+		if err != nil {
+			return fail(err)
+		}
+		session, err := decodeSessionRef(w.Session)
+		if err != nil {
+			return fail(err)
+		}
+		return Record{Kind: k, JSeq: w.JSeq, Body: &MsgRec{Session: session, WriteAttempt: writeAttempt, Attempt: attempt, IO: io, Dir: w.Dir, PeerIdx: uint32(w.PeerIdx), Mono: time.Duration(int64(w.Mono)),
 			WallNs: int64(w.WallNs), Code: w.Code, WireCode: w.WireCode, Payload: w.Payload, DedupKey: w.DedupKey, Offer: w.Offer,
 			Cause: event.SendCause(w.Cause), RelayOf: w.RelayOf, Write: w.Write, Size: w.Size, Engine: w.Engine,
 			Dedup: dedupOf(w.Dedup), Capture: w.Capture}}, nil
@@ -738,6 +792,14 @@ func decodeBody(k Kind, body []byte) (Record, error) {
 		return decodeTimerRec(body)
 	case KindCache:
 		return decodeCacheRec(body)
+	case KindWriteCache:
+		return decodeWriteCacheRec(body)
+	case KindReceiveCache:
+		return decodeReceiveCacheRec(body)
+	case KindSession:
+		return decodeSessionRec(body)
+	case KindCoreStep:
+		return decodeCoreStepRec(body)
 	case KindSync:
 		return decodeSyncRec(body)
 	case KindGap:
@@ -774,6 +836,14 @@ func kindOf(body any) (Kind, bool) {
 		return KindTimer, true
 	case *CacheRec:
 		return KindCache, true
+	case *WriteCacheRec:
+		return KindWriteCache, true
+	case *ReceiveCacheRec:
+		return KindReceiveCache, true
+	case *SessionRec:
+		return KindSession, true
+	case *CoreStepRec:
+		return KindCoreStep, true
 	case *SyncRec:
 		return KindSync, true
 	}
@@ -791,11 +861,38 @@ func size(r Record) int64 {
 		if b.Attempt != nil {
 			n += 48
 		}
+		if b.WriteAttempt != nil {
+			n += 64 + int64(len(b.WriteAttempt.WriterRun))
+		}
+		if b.Session != nil {
+			n += 48 + int64(len(b.Session.Run))
+		}
 		return n
 	case *TimerRec:
 		return int64(len(b.Input)) + 256
 	case *CacheRec:
 		return 320 + int64(len(b.Candidates)+len(b.Targets)+len(b.Suppressed))*20
+	case *WriteCacheRec:
+		n := int64(512) + int64(len(b.Transition.Pruned))*8 + int64(len(b.Transition.Input.SessionRun)+len(b.Transition.Receipt.SessionRun))
+		if s := b.Transition.AcceptedSource; s != (transport.AcceptedInputSource{}) {
+			n += 160 + int64(len(s.LedgerRun)+len(s.Origin.WriterRun)+len(s.Core.Via))
+		}
+		return n
+	case *ReceiveCacheRec:
+		return 640 + int64(len(b.Transition.Pruned))*8 + int64(len(b.Transition.Origin.WriterRun)+len(b.Transition.CheckedOrigin.WriterRun)+len(b.Transition.Source.Via)+len(b.Transition.Context.Sequence)+len(b.Transition.Context.Round)+len(b.Transition.Context.State)+len(b.Transition.Context.PriorRound)+len(b.Transition.Input.SessionRun)+len(b.Transition.Checked.SessionRun))
+	case *CoreStepRec:
+		n := int64(1024 + len(b.Head) + len(b.Input) + len(b.Outputs) + len(b.Origin.WriterRun) + len(b.StreamRun) + len(b.ReceiveLedgerRun) + len(b.InputKind) + len(b.Via) + len(b.Unavailable))
+		n += int64(len(b.Before.Sequence) + len(b.Before.Round) + len(b.Before.State) + len(b.Before.PriorRound) + len(b.After.Sequence) + len(b.After.Round) + len(b.After.State) + len(b.After.PriorRound))
+		for _, e := range b.Environment {
+			n += int64(len(e.Bytes) + 8*len(e.ValidatorKeyPresent) + 32)
+		}
+		return n
+	case *SessionRec:
+		n := int64(160 + len(b.Event))
+		if b.Session != nil {
+			n += 48 + int64(len(b.Session.Run))
+		}
+		return n
 	case *SyncRec:
 		return 256
 	case *StepRec:

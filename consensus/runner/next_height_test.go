@@ -26,17 +26,18 @@ import (
 // These tests drive the actual receiver, core actor and WAL with a local chain
 // adapter. They are not a governance-contract or live-network acceptance test.
 type nextHeightNode struct {
-	t      *testing.T
-	k      *keys
-	fs     *fsys.Mem
-	chain  *fakeChain
-	clock  *manualClock
-	r      *Runner
-	log    *wal.Log
-	jw     journal.Writer
-	events *eventLog
-	limits *NextHeightLimits
-	opts   consensus.Options
+	t            *testing.T
+	k            *keys
+	fs           *fsys.Mem
+	chain        *fakeChain
+	clock        *manualClock
+	r            *Runner
+	log          *wal.Log
+	jw           journal.Writer
+	events       *eventLog
+	limits       *NextHeightLimits
+	receiveCache *transport.ReceiveLedgerOptions
+	opts         consensus.Options
 }
 
 func nextHeightSet(t testing.TB, k *keys, indices []int) *validator.Set {
@@ -87,7 +88,7 @@ func (n *nextHeightNode) boot() {
 		n.t.Fatal(err)
 	}
 	n.log, n.events = log, &eventLog{}
-	n.r, err = New(Config{Core: n.opts, ReplayWAL: true, Manual: true, NextHeight: n.limits}, Deps{Chain: n.chain, App: &fakeApp{}, Clock: n.clock, WAL: log, Journal: n.jw, Events: n.events, Rand: func(int) int { return 0 }})
+	n.r, err = New(Config{Core: n.opts, ReplayWAL: true, Manual: true, NextHeight: n.limits, ReceiveCache: n.receiveCache}, Deps{Chain: n.chain, App: &fakeApp{}, Clock: n.clock, WAL: log, Journal: n.jw, Events: n.events, Rand: func(int) int { return 0 }})
 	if err != nil {
 		n.t.Fatal(err)
 	}

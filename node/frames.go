@@ -82,7 +82,25 @@ func (f *frameRecorder) msg(dir string, peer types.Address, code uint64, payload
 }
 
 // Received implements transport.FrameObserver.
-func (f *frameRecorder) Capture() uint64 { return f.capture.Add(1) }
+// Capture saturates instead of reusing a number in this writer run. Zero is
+// unavailable metadata and never grants functional input ownership.
+func (f *frameRecorder) Capture() uint64 {
+	for {
+		previous := f.capture.Load()
+		if previous == ^uint64(0) {
+			return 0
+		}
+		if f.capture.CompareAndSwap(previous, previous+1) {
+			return previous + 1
+		}
+	}
+}
+func (f *frameRecorder) CaptureRun() string {
+	if source, ok := f.jw.(interface{ CaptureRun() string }); ok {
+		return source.CaptureRun()
+	}
+	return ""
+}
 func (f *frameRecorder) Moment() transport.IOMoment {
 	return transport.IOMoment{Mono: f.clock.Mono(), WallNs: f.clock.Now().UnixNano()}
 }
@@ -182,7 +200,11 @@ func (f *frameRecorder) WroteAttempt(peer types.Address, code uint64, payload []
 	}
 	if attempt.OwnedBy(f.owner) {
 		m.Cause = attempt.Cause
-		m.Attempt = &journal.SendAttempt{Sequence: attempt.Sequence, Cache: attempt.Cache, Operation: attempt.Operation}
+		if source, ok := attempt.WriteSource(); ok {
+			m.WriteAttempt = &journal.WriteAttemptSource{Sequence: attempt.Sequence, WriterRun: source.WriterRun, Ledger: source.Ledger, Request: source.Request}
+		} else {
+			m.Attempt = &journal.SendAttempt{Sequence: attempt.Sequence, Cache: attempt.Cache, Operation: attempt.Operation}
+		}
 	}
 	// An exact-attempt callback never consults the legacy peer/key map.
 	f.jw.Put(journal.Record{Body: m})

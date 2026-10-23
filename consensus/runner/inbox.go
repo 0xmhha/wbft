@@ -69,6 +69,16 @@ func (b *inbox) init(r *Runner) {
 // to.
 func (r *Runner) Receiver() transport.Receiver { return &r.inbox }
 
+// UsesStreamIdentity requests functional provenance only for the policy that
+// registers peer-recent entries after validation or actual local write.
+func (b *inbox) UsesStreamIdentity() bool {
+	r := b.r
+	return r.receiveCache != nil && r.d.Transport != nil && r.d.Transport.CompletedWritesEnabled()
+}
+
+// UsesCaptureOrigin requests provenance only for the accepted-input policy.
+func (b *inbox) UsesCaptureOrigin() bool { return b.r.receiveCache != nil }
+
 func (b *inbox) peer(a types.Address) *peerIn {
 	p := b.peers[a]
 	if p == nil {
@@ -102,7 +112,11 @@ func (b *inbox) Offer(in transport.Inbound) bool {
 			seq, err := codec.SignedSequenceBytes(codec.Code(in.Code), in.Payload)
 			if err == nil && bytes.Equal(seq, snap.View.Sequence.AddUint64(1).Bytes()) {
 				run := ""
-				if jw, ok := r.d.Journal.(interface{ CaptureRun() string }); ok {
+				if r.receiveCache != nil {
+					if in.Origin.CaptureID == in.Capture && in.Capture != 0 {
+						run = in.Origin.WriterRun
+					}
+				} else if jw, ok := r.d.Journal.(interface{ CaptureRun() string }); ok {
 					run = jw.CaptureRun()
 				}
 				return r.nextHeight.offer(in, run)
@@ -118,8 +132,15 @@ func (b *inbox) Offer(in transport.Inbound) bool {
 		return false
 	}
 	b.mu.Unlock()
-	// The key enters the known cache only for a message that was queued.
-	if r.d.Transport != nil && r.d.Transport.SeenInbound(in.Peer, in.Code, in.Payload) {
+	// The accepted-input policy consults completed checks without adding an
+	// unverified key. The original receiver keeps its historical semantics.
+	duplicate := false
+	if r.receiveCache != nil {
+		duplicate = r.receiveAlreadyKnown(in)
+	} else if r.d.Transport != nil {
+		duplicate = r.d.Transport.SeenInbound(in.Peer, in.Code, in.Payload)
+	}
+	if duplicate {
 		r.prefilter(in, nil, event.DropSilent, "duplicate", true)
 		return true
 	}
@@ -386,7 +407,7 @@ func (b *inbox) hasReady() bool {
 }
 
 // take returns the next checked message, one per peer in turn.
-func (b *inbox) take() (consensus.Message, uint64, bool) {
+func (b *inbox) takeWithOrigin() (consensus.Message, uint64, *transport.WriteSession, transport.ReceiveOrigin, bool) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	n := len(b.order)
@@ -401,10 +422,10 @@ func (b *inbox) take() (consensus.Message, uint64, bool) {
 				continue
 			}
 			delete(b.slots, k)
-			return consensus.Message{Code: codec.Code(s.in.Code), Payload: s.in.Payload, Peer: s.in.Peer, RecvMono: s.in.RecvMono}, s.in.Capture, true
+			return consensus.Message{Code: codec.Code(s.in.Code), Payload: s.in.Payload, Peer: s.in.Peer, RecvMono: s.in.RecvMono}, s.in.Capture, s.in.Stream, s.in.Origin, true
 		}
 	}
-	return consensus.Message{}, 0, false
+	return consensus.Message{}, 0, nil, transport.ReceiveOrigin{}, false
 }
 
 // InboundBytes returns the payload bytes waiting in the per-peer receive

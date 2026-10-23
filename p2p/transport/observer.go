@@ -140,3 +140,25 @@ func ReportReceived(o FrameObserver, peer types.Address, code uint64, size int, 
 	}
 	o.Received(peer, code, size, payload, offer)
 }
+
+// CaptureSourceObserver exposes the immutable writer run of its own capture
+// numbers. A receiver must not ask a later/current recorder for this identity.
+// The run is observation provenance only, never validator or cache authority.
+type CaptureSourceObserver interface {
+	CaptureObserver
+	CaptureRun() string
+}
+
+// CapturedOrigin binds a number obtained from this original observer. Missing
+// source capability remains unavailable and never falls back to another run.
+func CapturedOrigin(o FrameObserver, capture uint64) ReceiveOrigin {
+	source, ok := o.(CaptureSourceObserver)
+	if !ok || capture == 0 {
+		return ReceiveOrigin{}
+	}
+	run := source.CaptureRun()
+	if run == "" {
+		return ReceiveOrigin{}
+	}
+	return ReceiveOrigin{WriterRun: run, CaptureID: capture}
+}

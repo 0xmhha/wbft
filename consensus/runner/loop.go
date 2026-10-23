@@ -142,8 +142,8 @@ func (r *Runner) next() (queued, bool) {
 		}
 	}
 	if hasPeer {
-		if m, capture, ok := r.inbox.take(); ok {
-			return queued{in: m, via: viaPeer, capture: capture}, true
+		if m, capture, stream, origin, ok := r.inbox.takeWithOrigin(); ok {
+			return queued{in: m, via: viaPeer, capture: capture, stream: stream, origin: origin}, true
 		}
 	}
 	return queued{}, false
@@ -172,16 +172,24 @@ func (r *Runner) processOne() bool {
 
 // stepCtx carries what the output execution of one step needs.
 type stepCtx struct {
-	q     queued
-	step  uint64
-	outs  []consensus.Output
-	env   []envAnswer
-	seqIn types.Height
+	q                           queued
+	step                        uint64
+	outs                        []consensus.Output
+	env                         []envAnswer
+	seqIn                       types.Height
+	receiveBefore, receiveAfter uint64
 }
 
 // handle processes one input: WAL record, core step, outputs, end-of-height
 // record, journal record and snapshot.
 func (r *Runner) handle(q queued) {
+	ticket, received, duplicate := r.beginReceiveCheck(q)
+	if duplicate {
+		return
+	}
+	if r.receiveCache != nil {
+		defer r.receiveCache.Cancel(ticket)
+	}
 	if q.deferred != nil {
 		defer func() { p := r.nextHeight; p.mu.Lock(); p.removeLocked(q.deferred); p.mu.Unlock() }()
 	}
@@ -220,11 +228,22 @@ func (r *Runner) handle(q queued) {
 		}
 	}
 	before := r.core.Snapshot()
+	var receiveBefore uint64
+	if r.d.CoreSteps != nil {
+		receiveBefore = r.currentReceiveScopeObservation()
+	}
 	gens := r.core.AllTimerGens()
 	r.env.begin(true)
 	outs := r.core.Step(r.env, q.in)
 	answers := r.env.end()
+	if r.receiveCache != nil {
+		r.completeReceiveCheck(ticket, received, outs)
+		r.updateReceiveContext(r.core.Snapshot())
+	}
 	sc := &stepCtx{q: q, step: step, outs: outs, env: answers, seqIn: before.View.Sequence}
+	if r.d.CoreSteps != nil {
+		sc.receiveBefore, sc.receiveAfter = receiveBefore, r.currentReceiveScopeObservation()
+	}
 	r.execute(sc)
 	if r.Halted() != nil {
 		return
@@ -235,6 +254,7 @@ func (r *Runner) handle(q queued) {
 		r.endHeight(after, gens)
 	}
 	r.journalStep(sc, kind, body, after)
+	r.observeCoreStep(sc, kind, body, before, after)
 }
 
 // endHeight writes the end-of-height record of the head the core left

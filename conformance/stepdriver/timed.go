@@ -194,7 +194,7 @@ func timedEntries(j JournalReader, pool *AnswerPool, observed *observedTimers) (
 			}
 			writer = seg.Run
 			identity = seg.Core
-			if err := identity.NextHeight.Validate(); err != nil {
+			if err := identity.ValidateRuntimeProfiles(); err != nil {
 				return nil, err
 			}
 		}

@@ -65,3 +65,49 @@ requires a separate comparison to retained raw bytes. Both export passes
 must read the identical record stream and positions; an actively changing or
 damaged export is not complete evidence. Journals without the capability
 preserve their previous R01 output and do not gain inferred scheduler clocks.
+
+
+# Completed-write cache transition checks
+
+`wbft-journal check-write-cache --dir DIR --max-records 100000 --max-ledgers 32 --max-reordered 256`
+checks retained `accepted_completed_v1` write-ledger observations. The three
+positive limits are explicit offline inspection bounds; the example is not a
+node operating budget. The reader retains declaration, gap and write-cache
+metadata, discarding unrelated payload records after decoding them.
+
+The checker rebuilds pending ownership and the code-aware address/message
+LRUs independently of the runtime ledger. It follows original writer runs,
+ledger and request numbers, restores numbered callback order within the given
+buffer bound, and distinguishes missing evidence from contradictory evidence.
+It does not infer a successful write from a queue acknowledgement. Missing
+profile declarations, cache gaps, missing transitions and inspection limits
+produce `status: unavailable` and exit 69. Contradictions exit 1; usage or I/O
+errors exit 2. Transition consistency exits 0 with `status: consistent`.
+
+`physical_status` remains `unavailable`: this command does not yet bind the
+trace to independent physical stream/write records or direct core ACCEPT
+sources, and does not establish remote delivery or functional runtime replay.
+The node's journal restriction and replay capability refusal remain in place.
+
+
+# Accepted-receive cache transition checks
+
+`wbft-journal check-receive-cache --dir DIR --max-records 100000 --max-ledgers 32 --max-reordered 256`
+rebuilds scoped known entries, peer recent entries and independent pending
+checks. Unverified pending copies do not authenticate each other. The checker
+uses its own ordered-slice LRUs and compares immutable context metadata for
+each original writer/scope. Missing capture or context metadata stays missing.
+The supplied limits bound offline inspection; they are not node operating,
+payload or heap budgets. Unrelated payload records are discarded after decode.
+
+Both cache commands use exit 0 for transition consistency, 69 for unavailable
+evidence or inspection limits, 1 for retained contradictions, and 2 for usage
+or I/O errors. Receive gaps and missing operation numbers are unavailable.
+A different view, state or authority digest for the same frozen scope is a
+contradiction. Decimal views and counters are preserved without floating point.
+
+`physical_status` remains `unavailable`. This command does not authenticate
+context hashes against original authority history, check the actual core
+step/output and signatures, or resolve captures against physical frame bytes.
+Its result is not a functional runtime replay or a completed cache-policy
+acceptance. The node journal restriction remains in place.

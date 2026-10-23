@@ -143,6 +143,10 @@ type segStats struct {
 // starts in a new segment; damaged segments of an earlier run are moved
 // aside as package wal does.
 func Open(opt Options, id Identity) (*FileWriter, error) {
+	if id.Core.CachePolicy != nil {
+		options := *id.Core.CachePolicy
+		id.Core.CachePolicy = &options
+	}
 	if opt.Duplicates != DupAll {
 		return nil, ErrUnsupported
 	}
@@ -285,6 +289,14 @@ func monoOf(r Record) time.Duration {
 		return b.Mono
 	case *StepRec:
 		return b.Mono
+	case *WriteCacheRec:
+		return b.Mono
+	case *ReceiveCacheRec:
+		return b.Mono
+	case *SessionRec:
+		return b.Mono
+	case *CoreStepRec:
+		return time.Duration(b.Observed.Mono)
 	case *SyncRec:
 		return b.Mono
 	}
@@ -377,6 +389,11 @@ func (w *FileWriter) write(r Record) {
 		} else {
 			delete(w.attached, b.PeerIdx)
 		}
+	case *CoreStepRec:
+		if w.stats.first == 0 {
+			w.stats.first = b.Observed.WallNs
+		}
+		w.stats.last = b.Observed.WallNs
 	case *StepRec:
 		if w.stats.first == 0 {
 			w.stats.first = b.WallNs

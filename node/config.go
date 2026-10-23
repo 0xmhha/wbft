@@ -21,6 +21,10 @@ import (
 
 // Config configures a Node.
 type Config struct {
+	// CachePolicy enables code-aware accepted-input and actual-write caches.
+	// Nil preserves the original policy. The compatible journal profile is
+	// not available yet, so this runtime API requires Journal.Disabled.
+	CachePolicy *transport.CachePolicyLimits `json:",omitempty"`
 	// DataDir holds the durable state of the node: the write-ahead log in
 	// wal/, the sign state in privval/state and the message journal in
 	// journal/.

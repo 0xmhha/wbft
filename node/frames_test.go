@@ -191,3 +191,42 @@ func TestFrameRecorderBindsCaptureWithoutChangingLegacyObserver(t *testing.T) {
 		t.Fatal(bound, legacy)
 	}
 }
+
+func TestFrameCaptureOriginKeepsOriginalWriterRun(t *testing.T) {
+	fs := fsys.NewMem()
+	first, err := journal.Open(journal.Options{FS: fs, Dir: "/capture-origin", Synchronous: true}, journal.Identity{Run: "first-source"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = first.Close() })
+	second, err := journal.Open(journal.Options{FS: fs, Dir: "/other-origin", Synchronous: true}, journal.Identity{Run: "second-source"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = second.Close() })
+	old := newFrameRecorder(first, fixedClock{}, 0)
+	oldCapture := transport.BeginCapture(old)
+	current := newFrameRecorder(second, fixedClock{}, 0)
+	newCapture := transport.BeginCapture(current)
+	original := transport.CapturedOrigin(old, oldCapture)
+	replacement := transport.CapturedOrigin(current, newCapture)
+	if oldCapture != newCapture || original.WriterRun != "first-source" || replacement.WriterRun != "second-source" || original.CaptureID != oldCapture {
+		t.Fatal("capture provenance rebound", original, replacement)
+	}
+	if transport.CapturedOrigin(old, 0) != (transport.ReceiveOrigin{}) {
+		t.Fatal("missing capture inferred")
+	}
+	unknown := newFrameRecorder(new(memJournal), fixedClock{}, 0)
+	if transport.CapturedOrigin(unknown, transport.BeginCapture(unknown)) != (transport.ReceiveOrigin{}) {
+		t.Fatal("missing writer identity inferred")
+	}
+}
+
+// This is a local metadata-counter boundary, not a transport fault injection.
+func TestFrameCaptureOriginNeverReusesExhaustedNumbers(t *testing.T) {
+	rec := newFrameRecorder(new(memJournal), fixedClock{}, 0)
+	rec.capture.Store(^uint64(0) - 1)
+	if rec.Capture() != ^uint64(0) || rec.Capture() != 0 || rec.Capture() != 0 {
+		t.Fatal("capture numbering wrapped or resumed after exhaustion")
+	}
+}

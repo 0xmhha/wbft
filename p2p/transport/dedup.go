@@ -49,18 +49,21 @@ type DedupOptions struct {
 	// Suppressed, when set, is called for each send left out because the
 	// peer's recent cache holds the message (wbft_send_suppressed_total).
 	Suppressed func(cause event.SendCause)
+	// WriteCompleted observes an actual successful write retained by the new
+	// recent cache, after its mutex is released. It must return promptly.
+	WriteCompleted func(code uint64)
 	// Inbound, when set, is called for each received message SeenInbound
 	// checks, with whether its key was in the known cache and in the
 	// recent cache of peer before the check (R-01 frame.dedup).
 	Inbound func(peer types.Address, known, peerRecent bool)
 
-	// The fields below are reserved for optional behaviours of a later
-	// milestone and must be left at their zero values.
-
-	// KeyWithCode puts the message code into the cache key.
-	KeyWithCode bool
-	// RecordAfterSend records a key for a peer only after a successful send.
+	// KeyWithCode and RecordAfterSend require CompletedWrites with explicit
+	// limits and a functional WriteSender. Legacy recording profiles cannot
+	// represent this mode and are rejected until a compatible profile exists.
+	KeyWithCode     bool
 	RecordAfterSend bool
+	CompletedWrites *WriteLedgerOptions
+	// The fields below remain reserved and must be left at zero.
 	// Observers are non-validator peers that also receive gossip.
 	Observers []types.Address
 }
@@ -84,18 +87,44 @@ type Dedup struct {
 	opt                          DedupOptions
 	recent                       *lru[types.Address, *lru[types.Hash, struct{}]]
 	known                        *lru[types.Hash, struct{}]
+	completedWrites              *WriteLedger
+	writeSender                  WriteSender
 }
 
 // NewDedup returns a Dedup over t.
 func NewDedup(t Transport, opt DedupOptions) (*Dedup, error) {
-	if opt.KeyWithCode || opt.RecordAfterSend || len(opt.Observers) > 0 {
+	if len(opt.Observers) > 0 || opt.CompletedWrites == nil && (opt.KeyWithCode || opt.RecordAfterSend) {
 		return nil, ErrReservedOption
 	}
+	var completed *WriteLedger
+	var sender WriteSender
+	if limits := opt.CompletedWrites; limits != nil {
+		if !opt.KeyWithCode || !opt.RecordAfterSend || !limits.KeyWithCode {
+			return nil, errors.New("transport: completed writes require code-aware keys and explicit write registration")
+		}
+		var ok bool
+		sender, ok = t.(WriteSender)
+		if !ok {
+			return nil, errors.New("transport: actual write completion is unavailable")
+		}
+		if _, observed := t.(CacheObserver); observed || opt.Inbound != nil {
+			return nil, errors.New("transport: completed-write cache observer profile is unavailable")
+		}
+		copyLimits := *limits
+		opt.CompletedWrites = &copyLimits
+		var err error
+		completed, err = NewWriteLedger(copyLimits)
+		if err != nil {
+			return nil, err
+		}
+	}
 	d := &Dedup{
-		t:      t,
-		opt:    opt,
-		recent: newLRU[types.Address, *lru[types.Hash, struct{}]](InmemoryPeers),
-		known:  newLRU[types.Hash, struct{}](InmemoryMessages),
+		t:               t,
+		opt:             opt,
+		recent:          newLRU[types.Address, *lru[types.Hash, struct{}]](InmemoryPeers),
+		known:           newLRU[types.Hash, struct{}](InmemoryMessages),
+		completedWrites: completed,
+		writeSender:     sender,
 	}
 	if observer, ok := t.(CacheObserver); ok {
 		d.cacheObserver = observer
@@ -122,6 +151,10 @@ func (d *Dedup) peerCache(peer types.Address) *lru[types.Hash, struct{}] {
 //
 // Spec: WBFT-NET-023, WBFT-NET-024
 func (d *Dedup) SeenInbound(peer types.Address, code uint64, payload []byte) (dup bool) {
+	if d.completedWrites != nil {
+		// The accepted-input receiver supplies the completed receive proof.
+		return false
+	}
 	_ = code // the reference key has no code
 	key := codec.DedupKey(payload)
 	d.mu.Lock()
@@ -168,6 +201,9 @@ func (d *Dedup) Gossip(vs *validator.Set, code uint64, payload []byte, cause eve
 // GossipTargets returns the actual attached-validator candidate set and cache
 // exclusions from this call. Targets are send attempts, not delivery receipts.
 func (d *Dedup) GossipTargets(vs *validator.Set, code uint64, payload []byte, cause event.SendCause) GossipTargets {
+	if d.completedWrites != nil {
+		return d.gossipCompleted(vs, code, payload, cause)
+	}
 	plan := GossipTargets{Available: vs != nil}
 	key := codec.DedupKey(payload)
 	var suppressed []types.Address
@@ -238,6 +274,10 @@ func (d *Dedup) GossipTargets(vs *validator.Set, code uint64, payload []byte, ca
 // Known reports whether the key of payload is in the known cache, without
 // refreshing it.
 func (d *Dedup) Known(payload []byte) bool {
+	if d.completedWrites != nil {
+		// This legacy query has no message-code domain and is unavailable.
+		return false
+	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	return d.known.Contains(codec.DedupKey(payload))
@@ -246,6 +286,10 @@ func (d *Dedup) Known(payload []byte) bool {
 // SentOrReceived reports whether the key of payload is in the recent cache of
 // peer, without refreshing it.
 func (d *Dedup) SentOrReceived(peer types.Address, payload []byte) bool {
+	if d.completedWrites != nil {
+		// Use SentOrReceivedCode in code-aware completion mode.
+		return false
+	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	m, ok := d.recent.items[peer]
@@ -260,4 +304,8 @@ func (d *Dedup) SentOrReceived(peer types.Address, payload []byte) bool {
 type GossipTargets struct {
 	Available                       bool
 	Candidates, Targets, Suppressed []types.Address
+	// Pending and Limited are not successful recent entries or send attempts.
+	Pending     []types.Address `json:",omitempty"`
+	Limited     []types.Address `json:",omitempty"`
+	Unavailable []types.Address `json:",omitempty"`
 }

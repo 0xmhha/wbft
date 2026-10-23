@@ -328,7 +328,10 @@ type tnode struct {
 	log    *wal.Log
 	opts   consensus.Options
 	// noJournal boots the runner without a message journal.
-	noJournal bool
+	noJournal    bool
+	receiveCache *transport.ReceiveLedgerOptions
+	coreSteps    CoreStepObserver
+	timerSources TimerSourceObserver
 	// timerTrace enables measured scheduler records in the test journal.
 	timerTrace bool
 	// refused is the codes of the signatures privval refused (Deps.Refused).
@@ -384,12 +387,13 @@ func (n *tnode) boot() {
 	}
 	n.events = &eventLog{}
 	d := Deps{Chain: n.chain, App: n.app, Transport: dd, Net: n.net,
+		CoreSteps: n.coreSteps, TimerSources: n.timerSources,
 		Signer: s, WAL: log, Clock: n.clock, Events: n.events, Journal: jw, Rand: rand.New(rand.NewPCG(1, 2)).IntN,
 		Refused: func(code uint64) { n.refused = append(n.refused, code) }}
 	if n.noJournal {
 		d.Journal = nil
 	}
-	r, err := New(Config{Core: n.opts, ReplayWAL: true, Manual: true}, d)
+	r, err := New(Config{Core: n.opts, ReplayWAL: true, Manual: true, ReceiveCache: n.receiveCache}, d)
 	if err != nil {
 		t.Fatal(err)
 	}

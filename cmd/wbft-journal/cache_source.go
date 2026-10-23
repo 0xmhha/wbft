@@ -38,7 +38,31 @@ func (w *r01Writer) indexCache(rec journal.Record, pos wal.Position) {
 	if w.cacheErr != nil {
 		return
 	}
+	if _, write := rec.Body.(*journal.WriteCacheRec); write {
+		w.cacheErr = fmt.Errorf("completed-write cache observations are unavailable in R01 exports")
+		return
+	}
+	if _, ok := rec.Body.(*journal.ReceiveCacheRec); ok {
+		w.cacheErr = fmt.Errorf("accepted-receive cache observations are unavailable in R01 exports")
+		return
+	}
+	if _, ok := rec.Body.(*journal.CoreStepRec); ok {
+		w.cacheErr = fmt.Errorf("core step sources are unavailable in R01 exports")
+		return
+	}
+	if _, ok := rec.Body.(*journal.SessionRec); ok {
+		w.cacheErr = fmt.Errorf("session observations are unavailable in R01 exports")
+		return
+	}
+	if m, ok := rec.Body.(*journal.MsgRec); ok && (m.Session != nil || m.WriteAttempt != nil) {
+		w.cacheErr = fmt.Errorf("session frame sources are unavailable in R01 exports")
+		return
+	}
 	if s, ok := rec.Body.(*journal.SegmentRec); ok {
+		if s.Core.CachePolicy != nil {
+			w.cacheErr = fmt.Errorf("accepted/completed cache profile is unavailable in R01 exports")
+			return
+		}
 		if w.cache == nil {
 			w.cache = map[string]*cacheRun{}
 		}

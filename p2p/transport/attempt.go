@@ -20,6 +20,48 @@ type SendAttempt struct {
 	owner                      *AttemptOwner
 	Sequence, Cache, Operation uint64
 	Cause                      event.SendCause
+	writeSource                WriteAttemptSource
+}
+
+// WriteAttemptSource is a diagnostic reference to the original reservation.
+// Its domain is distinct from the legacy before-send cache coordinates.
+type WriteAttemptSource struct {
+	WriterRun       string
+	Ledger, Request uint64
+}
+
+// NewWriteSendAttempt freezes only an actually traced ticket's original owner
+// and writer. A different/current recorder cannot claim an old reservation.
+// Missing provenance stays unavailable; the ticket still works functionally.
+func NewWriteSendAttempt(owner *AttemptOwner, sequence uint64, ticket WriteTicket, cause event.SendCause) SendAttempt {
+	r := ticket.reservation
+	if owner == nil || sequence == 0 || r == nil || r.owner == nil || r.observation == 0 {
+		return SendAttempt{}
+	}
+	l := r.owner
+	if l.traceOwner != owner || l.traceRun == "" || l.observation == 0 {
+		return SendAttempt{}
+	}
+	return SendAttempt{owner: owner, Sequence: sequence, Cause: cause,
+		writeSource: WriteAttemptSource{WriterRun: l.traceRun, Ledger: l.observation, Request: r.observation}}
+}
+
+func (a SendAttempt) valid() bool {
+	if a.owner == nil || a.Sequence == 0 || (a.Cache == 0) != (a.Operation == 0) {
+		return false
+	}
+	if a.writeSource == (WriteAttemptSource{}) {
+		return true
+	}
+	return a.Cache == 0 && a.Operation == 0 && a.writeSource.WriterRun != "" && a.writeSource.Ledger != 0 && a.writeSource.Request != 0
+}
+
+// WriteSource does not infer a reservation from peer, payload or later state.
+func (a SendAttempt) WriteSource() (WriteAttemptSource, bool) {
+	if !a.valid() || a.writeSource == (WriteAttemptSource{}) {
+		return WriteAttemptSource{}, false
+	}
+	return a.writeSource, true
 }
 
 func NewSendAttempt(owner *AttemptOwner, sequence, cache, operation uint64, cause event.SendCause) SendAttempt {
@@ -30,7 +72,7 @@ func NewSendAttempt(owner *AttemptOwner, sequence, cache, operation uint64, caus
 }
 
 func (a SendAttempt) OwnedBy(owner *AttemptOwner) bool {
-	return owner != nil && a.owner == owner && a.Sequence != 0 && (a.Cache == 0) == (a.Operation == 0)
+	return owner != nil && a.owner == owner && a.valid()
 }
 
 // AttemptSender preserves send metadata through the actual adapter queue.
@@ -38,6 +80,12 @@ func (a SendAttempt) OwnedBy(owner *AttemptOwner) bool {
 // and erase the attempt when that generation changes before its callback.
 type AttemptSender interface {
 	SendAttempt(peers []types.Address, code uint64, payload []byte, attempt SendAttempt) []SendResult
+}
+
+// WriteAttemptFactory is optional recording metadata for the exact ticket the
+// completed-write ledger just reserved. It cannot change functional ownership.
+type WriteAttemptFactory interface {
+	WriteAttempt(WriteTicket, event.SendCause) SendAttempt
 }
 
 // AttemptObserver receives an exact queue attempt or its zero value when

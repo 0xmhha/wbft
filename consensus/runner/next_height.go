@@ -59,6 +59,7 @@ const (
 // substitutes a capture in the current journal run for a capture in an older
 // run. Missing journal bytes do not change functional admission or replay.
 type deferredRecord struct {
+	stream     *transport.WriteSession // runtime-only; no stream authority is restored from WAL
 	ID         uint64
 	Code       uint64
 	Payload    []byte
@@ -123,7 +124,7 @@ func (p *nextHeightPool) offer(in transport.Inbound, run string) bool {
 		return false
 	}
 	p.next++
-	d := deferredRecord{ID: p.next, Code: in.Code, Payload: bytes.Clone(in.Payload), Peer: in.Peer, RecvMono: uint64(in.RecvMono), CaptureRun: run, Capture: in.Capture}
+	d := deferredRecord{ID: p.next, Code: in.Code, Payload: bytes.Clone(in.Payload), Peer: in.Peer, RecvMono: uint64(in.RecvMono), CaptureRun: run, Capture: in.Capture, stream: in.Stream}
 	if run == "" || in.Capture == 0 {
 		d.CaptureRun, d.Capture = "", 0
 	}

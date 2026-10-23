@@ -12,7 +12,10 @@
 // heights, with a manifest (bundle.go). export --format r01 writes the R-01
 // frame dump that wbft-inspector reads into the directory OUT (export.go).
 //
-// Every command prints one JSON object. verify exits with 1 when it finds a
+// Every command prints one JSON object. Cache/source checks exit with 69 when
+// evidence is unavailable and 1 when it contradicts itself. A source-check
+// success establishes retained local write-source consistency only, never
+// complete physical/core reconstruction or remote delivery. verify exits with 1 when it finds a
 // problem; every command exits with 2 on a usage or I/O error.
 package main
 
@@ -37,7 +40,7 @@ func main() {
 	os.Exit(run(os.Args[1:], fsys.OS{}, os.Stdout, os.Stderr))
 }
 
-const usage = "usage: wbft-journal stat|verify|prune|export --dir DIR [flags]"
+const usage = "usage: wbft-journal stat|verify|prune|export|check-write-cache|check-receive-cache|check-write-io --dir DIR [flags]"
 
 func run(args []string, fs fsys.FS, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
@@ -55,6 +58,12 @@ func run(args []string, fs fsys.FS, stdout, stderr io.Writer) int {
 	warmup := set.Uint64("warmup", journal.DefaultBundleWarmup, "export bundle: heights before --from to include")
 	from := set.String("from", "", "export: first height (decimal) of the records")
 	to := set.String("to", "", "export: last height (decimal) of the records")
+	maxRecords := set.Uint64("max-records", 0, "cache checks: required positive inspection record limit")
+	maxLedgers := set.Uint64("max-ledgers", 0, "cache checks: required positive retained ledger limit")
+	maxReordered := set.Uint64("max-reordered", 0, "cache checks: required positive per-ledger ordering buffer limit")
+	maxSessions := set.Uint64("max-sessions", 0, "write I/O check: required positive session index limit")
+	maxRequests := set.Uint64("max-requests", 0, "write I/O check: required positive request index limit")
+	maxFrames := set.Uint64("max-frames", 0, "write I/O check: required positive retained source-frame limit")
 	if err := set.Parse(args[1:]); err != nil {
 		return 2
 	}
@@ -75,6 +84,48 @@ func run(args []string, fs fsys.FS, stdout, stderr io.Writer) int {
 			code = 1
 		}
 		res = v
+	case "check-write-cache":
+		if *maxRecords == 0 || *maxLedgers == 0 || *maxReordered == 0 {
+			err = errors.New("check-write-cache: --max-records, --max-ledgers and --max-reordered must be positive")
+			break
+		}
+		var check journal.WriteCacheCheck
+		check, err = checkWriteCache(fs, *dir, journal.WriteCacheCheckLimits{Records: *maxRecords, Ledgers: *maxLedgers, Reordered: *maxReordered})
+		if errors.Is(err, journal.ErrWriteCacheHistory) {
+			code = 1
+			err = nil
+		} else if err == nil && check.Status == "unavailable" {
+			code = 69
+		}
+		res = check
+	case "check-receive-cache":
+		if *maxRecords == 0 || *maxLedgers == 0 || *maxReordered == 0 {
+			err = errors.New("check-receive-cache: --max-records, --max-ledgers and --max-reordered must be positive")
+			break
+		}
+		var check journal.ReceiveCacheCheck
+		check, err = checkReceiveCache(fs, *dir, journal.ReceiveCacheCheckLimits{Records: *maxRecords, Ledgers: *maxLedgers, Reordered: *maxReordered})
+		if errors.Is(err, journal.ErrReceiveCacheHistory) {
+			code = 1
+			err = nil
+		} else if err == nil && check.Status == "unavailable" {
+			code = 69
+		}
+		res = check
+	case "check-write-io":
+		if *maxRecords == 0 || *maxLedgers == 0 || *maxReordered == 0 || *maxSessions == 0 || *maxRequests == 0 || *maxFrames == 0 {
+			err = errors.New("check-write-io: --max-records, --max-ledgers, --max-reordered, --max-sessions, --max-requests and --max-frames must be positive")
+			break
+		}
+		var check journal.WriteIOCheck
+		check, err = checkWriteIO(fs, *dir, journal.WriteIOCheckLimits{Records: *maxRecords, Ledgers: *maxLedgers, Reordered: *maxReordered, Sessions: *maxSessions, Requests: *maxRequests, Frames: *maxFrames})
+		if errors.Is(err, journal.ErrWriteIOSource) {
+			code = 1
+			err = nil
+		} else if err == nil && check.Status == "unavailable" {
+			code = 69
+		}
+		res = check
 	case "prune":
 		res, err = prune(fs, *dir, *keep, *maxBytes, *head)
 	case "export":
