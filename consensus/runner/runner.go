@@ -162,6 +162,8 @@ type Deps struct {
 	TimerSources TimerSourceObserver
 	// AppQueueSources observes detached application-input queue mutations.
 	AppQueueSources AppQueueSourceObserver
+	// FinalizeSources observes detached commit-queue and application-call boundaries.
+	FinalizeSources FinalizeSourceObserver
 	// Synchronising reports whether the application is synchronising the
 	// chain; consensus messages that arrive while the engine is stopped are
 	// then dropped instead of closing the connection.
@@ -274,6 +276,10 @@ type Runner struct {
 	receiveCache   *transport.ReceiveLedger
 	receiveContext atomic.Pointer[receiveContext]
 
+	finalizeSourceMu        sync.Mutex
+	finalizeSourceSequence  uint64
+	finalizeSourceExhausted bool
+
 	commitMu            sync.Mutex // runner.commit.mu
 	commitQ             []commitJob
 	commitCond          *sync.Cond
@@ -296,9 +302,10 @@ type ownKey struct {
 }
 
 type commitJob struct {
-	block *types.Block
-	round types.Round
-	at    time.Duration
+	block  *types.Block
+	round  types.Round
+	at     time.Duration
+	source finalizeSourceOwner
 }
 
 // New returns a stopped runner.

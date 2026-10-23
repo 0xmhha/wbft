@@ -345,7 +345,7 @@ func (r *Runner) execute(sc *stepCtx) {
 				Fields: map[string]any{"round": o.Round.String(), "wait_ms": wait.Milliseconds()}}, &sc.step)
 			r.d.App.ReadyToBuild(o, wait, r.buildDone)
 		case consensus.Commit:
-			r.commit(sc, o)
+			r.commit(sc, o, uint64(index)+1)
 		case consensus.Outcome:
 			rec := o.Record()
 			r.emit(rec, &sc.step)
@@ -461,7 +461,7 @@ func sendRecord(code uint64, payload []byte, cause event.SendCause, view *types.
 
 // commit logs the commit request and hands the block to the commit
 // goroutine.
-func (r *Runner) commit(sc *stepCtx, c consensus.Commit) {
+func (r *Runner) commit(sc *stepCtx, c consensus.Commit, output uint64) {
 	faultpoint.Hit(r.d.Faults, faultpoint.CommitBefore)
 	if r.d.WAL != nil {
 		rec, err := encodeCommit(c.Block, c.Round)
@@ -479,10 +479,21 @@ func (r *Runner) commit(sc *stepCtx, c consensus.Commit) {
 	r.emit(event.Record{Kind: event.FinalizeHandover, Fields: map[string]any{
 		"number": c.Block.Header.Number.String(), "hash": hexHash(codec.BlockHash(c.Block.Header)), "round": c.Round.String(),
 		"prepared_sealers": prep, "committed_sealers": com}}, &sc.step)
+	j := commitJob{block: c.Block, round: c.Round}
+	if r.d.FinalizeSources != nil {
+		j.source = finalizeSourceOwner{engine: r.engineRun, step: sc.step, output: output}
+	}
 	r.commitMu.Lock()
-	r.commitQ = append(r.commitQ, commitJob{block: c.Block, round: c.Round, at: r.d.Clock.Mono()})
+	j.at = r.d.Clock.Mono()
+	before := len(r.commitQ)
+	r.commitQ = append(r.commitQ, j)
+	observation := r.finalizeSource("enqueue", j, before, len(r.commitQ), false, "", nil)
+	if observation != nil {
+		r.commitQ[len(r.commitQ)-1].source.task = observation.Task
+	}
 	r.commitCond.Signal()
 	r.commitMu.Unlock()
+	r.publishFinalize(observation)
 }
 
 func sealers(h *types.Header) (prepared, committed []uint32) {
@@ -510,8 +521,11 @@ func (r *Runner) commitOne() bool {
 		return false
 	}
 	j := r.commitQ[0]
+	before := len(r.commitQ)
 	r.commitQ = r.commitQ[1:]
+	observation := r.finalizeSource("dequeue", j, before, len(r.commitQ), false, "", nil)
 	r.commitMu.Unlock()
+	r.publishFinalize(observation)
 	r.finalize(j)
 	return true
 }
@@ -530,14 +544,18 @@ func (r *Runner) commitLoop() {
 			r.commitCond.Wait()
 		}
 		j := r.commitQ[0]
+		before := len(r.commitQ)
 		r.commitQ = r.commitQ[1:]
+		observation := r.finalizeSource("dequeue", j, before, len(r.commitQ), false, "", nil)
 		r.commitMu.Unlock()
+		r.publishFinalize(observation)
 		r.finalize(j)
 	}
 }
 
 // finalize calls the application and queues the result for the core.
 func (r *Runner) finalize(j commitJob) {
+	r.publishFinalize(r.finalizeSource("enter", j, 0, 0, false, "", nil))
 	if r.cfg.Manual {
 		if app, ok := r.d.App.(ManualFinalizer); ok {
 			r.manualCommitPending.Store(true)
@@ -550,6 +568,7 @@ func (r *Runner) finalize(j commitJob) {
 }
 
 func (r *Runner) finalizeDone(j commitJob, err error) {
+	r.publishFinalize(r.finalizeSource("return", j, 0, 0, err != nil, "", nil))
 	hash := codec.BlockHash(j.block.Header)
 	f := map[string]any{"number": j.block.Header.Number.String(), "hash": hexHash(hash), "ok": err == nil,
 		"duration_ms": (r.d.Clock.Mono() - j.at).Milliseconds()}
@@ -557,14 +576,17 @@ func (r *Runner) finalizeDone(j commitJob, err error) {
 		f["error_class"] = err.Error()
 	}
 	r.emit(event.Record{Kind: event.CommitResult, Fields: f}, nil)
+	queueRun := r.finalizeQueueRun()
 	r.appMu.Lock()
 	result := consensus.CommitResult{Hash: hash, Err: err}
 	if r.cfg.Core.Improvements.Has(consensus.WatchCommittedImport) || r.cfg.Core.Improvements.Has(consensus.AdvanceOnCommitFailure) {
 		result.View = &types.View{Sequence: j.block.Header.Number, Round: j.round}
 	}
 	observation := r.appendAppLocked(result)
+	notification := r.finalizeSource("notify", j, 0, 0, err != nil, queueRun, observation)
 	r.appMu.Unlock()
 	r.publishAppQueue(observation)
+	r.publishFinalize(notification)
 	r.wake()
 }
 
