@@ -141,7 +141,7 @@ func TestReceiveCacheRecordR01ProjectionUnavailableWithoutProfile(t *testing.T) 
 
 func TestSessionSourceR01ProjectionUnavailableWithoutProfile(t *testing.T) {
 	for _, legacy := range []uint64{0, journal.CacheTraceVersion} {
-		for _, domain := range []string{"lifetime", "frame", "write_attempt", "core_step"} {
+		for _, domain := range []string{"lifetime", "frame", "write_attempt", "core_step", "app_queue"} {
 			t.Run(fmt.Sprintf("%s/%d", domain, legacy), func(t *testing.T) {
 				fs := fsys.NewMem()
 				writer, err := journal.Open(journal.Options{FS: fs, Dir: "/session-source", Synchronous: true}, journal.Identity{Run: "current-writer", Core: journal.CoreOptions{CacheTrace: legacy}})
@@ -152,6 +152,12 @@ func TestSessionSourceR01ProjectionUnavailableWithoutProfile(t *testing.T) {
 				switch domain {
 				case "lifetime":
 					writer.Put(journal.Record{Body: &journal.SessionRec{Session: ref, Event: journal.SessionObserved, Active: true}})
+				case "app_queue":
+					input, e := inputlog.Encode(consensus.PeerConnected{Addr: types.Address{3}})
+					if e != nil {
+						t.Fatal(e)
+					}
+					writer.Put(journal.Record{Body: &journal.AppQueueRec{Version: journal.AppQueueSourceVersion, Sequence: 1, Request: 1, Action: "append", InputKind: inputlog.KindPeerConnected, Input: input, After: 1}})
 				case "core_step":
 					input, e := inputlog.Encode(consensus.Start{})
 					if e != nil {
@@ -177,6 +183,9 @@ func TestSessionSourceR01ProjectionUnavailableWithoutProfile(t *testing.T) {
 				expected := "session"
 				if domain == "core_step" {
 					expected = "core step sources"
+				}
+				if domain == "app_queue" {
+					expected = "application queue sources"
 				}
 				if _, err := exportR01(fs, "/session-source", "/session-out", "", ""); err == nil || !strings.Contains(err.Error(), expected) {
 					t.Fatal("session sources projected with legacy semantics", err)
