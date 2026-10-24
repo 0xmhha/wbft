@@ -11,8 +11,8 @@
 #
 # Package groups used below:
 #   core: consensus, consensus/inputlog
-#   pure: crypto/keccak, internal/refsort, types, codec/rlp, codec,
-#         crypto/ecdsa, crypto/bls, chain/validator, chain/epoch, chain/header
+#   pure: crypto/keccak, internal/refsort, types, codec/rlp, codec/window, codec,
+#         crypto/ecdsa, crypto/bls, chain/validator, chain/epoch, chain/header, chain/window
 #
 # File globs match absolute paths, so each pattern is anchored by the
 # package directory ("**/consensus/*.go" matches consensus/ but not
@@ -121,6 +121,7 @@ linters:
         header-light-verifier:
           files:
             - "**/chain/header/*.go"
+            - "**/chain/window/*.go"
           deny:
             - pkg: github.com/0xmhha/wbft/consensus
               desc: "header must not import consensus (it is usable without the consensus core)"
@@ -138,9 +139,11 @@ linters:
             - "**/types/*.go"
             - "**/codec/*.go"
             - "**/codec/rlp/*.go"
+            - "**/codec/window/*.go"
             - "**/chain/validator/*.go"
             - "**/chain/epoch/*.go"
             - "**/chain/header/*.go"
+            - "**/chain/window/*.go"
           deny:
             - pkg: github.com/0xmhha/wbft/consensus
               desc: "pure modules must not import the consensus core"
@@ -194,9 +197,11 @@ linters:
             - "**/types/*.go"
             - "**/codec/*.go"
             - "**/codec/rlp/*.go"
+            - "**/codec/window/*.go"
             - "**/chain/validator/*.go"
             - "**/chain/epoch/*.go"
             - "**/chain/header/*.go"
+            - "**/chain/window/*.go"
             - "!$test"
           deny:
             - pkg: math/rand
@@ -250,7 +255,7 @@ linters:
     rules:
       # forbidigo applies to the non-test files of the core and pure packages.
       - linters: [forbidigo]
-        path-except: '^(consensus|consensus/inputlog|crypto/keccak|crypto/ecdsa|crypto/bls|internal/refsort|types|codec|codec/rlp|chain/validator|chain/epoch|chain/header)/[^/]+\.go$'
+        path-except: '^(consensus|consensus/inputlog|crypto/keccak|crypto/ecdsa|crypto/bls|internal/refsort|types|codec|codec/rlp|codec/window|chain/validator|chain/epoch|chain/header|chain/window)/[^/]+\.go$'
       - linters: [forbidigo]
         path: '_test\.go$'
       # internal/refsort keeps the function bodies of the copied sort
