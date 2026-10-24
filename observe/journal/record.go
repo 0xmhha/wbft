@@ -37,6 +37,8 @@ const (
 	KindAppQueue     Kind = 15 // detached application-input queue mutex mutations
 	KindFinalize     Kind = 16 // detached commit queue and application call boundaries
 	KindInbox        Kind = 17 // detached inbox queue and slot sources
+	KindInternal     Kind = 18 // detached internal queue source and dispatch boundaries
+	KindSelection    Kind = 19 // original conditional probes and selected input dispatch
 )
 
 func (k Kind) String() string {
@@ -73,6 +75,10 @@ func (k Kind) String() string {
 		return "app_queue_source"
 	case KindInbox:
 		return "inbox"
+	case KindInternal:
+		return "internal_source"
+	case KindSelection:
+		return "input_selection_source"
 	case KindFinalize:
 		return "finalize_source"
 	}
@@ -81,7 +87,7 @@ func (k Kind) String() string {
 
 // Record is one journal record. Body is one of *SegmentRec, *PeerRec,
 // *MsgRec, *OutcomeRec, *SuppressedRec, *StepRec, *GapRec, *TimerRec, *CacheRec,
-// *WriteCacheRec, *ReceiveCacheRec, *SessionRec, *CoreStepRec, *AppQueueRec, *FinalizeRec, *InboxRec, or *SyncRec. JSeq is assigned
+// *WriteCacheRec, *ReceiveCacheRec, *SessionRec, *CoreStepRec, *AppQueueRec, *FinalizeRec, *InboxRec, *InternalRec, *SelectionRec, or *SyncRec. JSeq is assigned
 // by the writer: it increases by one per written record within a run.
 type Record struct {
 	Kind Kind
@@ -636,6 +642,10 @@ func encodeBody(r Record, jseq uint64) ([]byte, error) {
 		return encodeAppQueueRec(b, jseq)
 	case *InboxRec:
 		return encodeInboxRec(b, jseq)
+	case *InternalRec:
+		return encodeInternalRec(b, jseq)
+	case *SelectionRec:
+		return encodeSelectionRec(b, jseq)
 	case *FinalizeRec:
 		return encodeFinalizeRec(b, jseq)
 	case *SyncRec:
@@ -819,6 +829,10 @@ func decodeBody(k Kind, body []byte) (Record, error) {
 		return decodeAppQueueRec(body)
 	case KindInbox:
 		return decodeInboxRec(body)
+	case KindInternal:
+		return decodeInternalRec(body)
+	case KindSelection:
+		return decodeSelectionRec(body)
 	case KindFinalize:
 		return decodeFinalizeRec(body)
 	case KindSync:
@@ -869,6 +883,10 @@ func kindOf(body any) (Kind, bool) {
 		return KindAppQueue, true
 	case *InboxRec:
 		return KindInbox, true
+	case *InternalRec:
+		return KindInternal, true
+	case *SelectionRec:
+		return KindSelection, true
 	case *FinalizeRec:
 		return KindFinalize, true
 	case *SyncRec:
@@ -922,6 +940,10 @@ func size(r Record) int64 {
 		return n
 	case *AppQueueRec:
 		return 256 + int64(len(b.Input)+len(b.InputKind)+len(b.Action)+len(b.Unavailable))
+	case *SelectionRec:
+		return 512 + int64(len(b.Input)+len(b.InputKind)+len(b.Action)+len(b.Lane)+len(b.NextHeight)+len(b.Unavailable)+len(b.Internal.State)+len(b.App.State)+len(b.Timer.State)+len(b.Inbox.State))
+	case *InternalRec:
+		return 256 + int64(len(b.Input)+len(b.Action)+len(b.Origin)+len(b.InputKind)+len(b.Unavailable))
 	case *InboxRec:
 		return 768 + int64(len(b.Payload)+len(b.Action)+len(b.Result)+len(b.Origin.WriterRun)+len(b.StreamRun)+len(b.ViewSequence)+len(b.ViewRound)+len(b.SnapshotPhase)+len(b.Unavailable)+20*(len(b.Order)+len(b.Candidates)))
 	case *FinalizeRec:

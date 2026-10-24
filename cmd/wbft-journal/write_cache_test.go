@@ -141,7 +141,7 @@ func TestReceiveCacheRecordR01ProjectionUnavailableWithoutProfile(t *testing.T) 
 
 func TestSessionSourceR01ProjectionUnavailableWithoutProfile(t *testing.T) {
 	for _, legacy := range []uint64{0, journal.CacheTraceVersion} {
-		for _, domain := range []string{"lifetime", "frame", "write_attempt", "core_step", "app_queue", "finalize", "inbox"} {
+		for _, domain := range []string{"lifetime", "frame", "write_attempt", "core_step", "app_queue", "finalize", "inbox", "internal", "selection"} {
 			t.Run(fmt.Sprintf("%s/%d", domain, legacy), func(t *testing.T) {
 				fs := fsys.NewMem()
 				writer, err := journal.Open(journal.Options{FS: fs, Dir: "/session-source", Synchronous: true}, journal.Identity{Run: "current-writer", Core: journal.CoreOptions{CacheTrace: legacy}})
@@ -152,6 +152,10 @@ func TestSessionSourceR01ProjectionUnavailableWithoutProfile(t *testing.T) {
 				switch domain {
 				case "lifetime":
 					writer.Put(journal.Record{Body: &journal.SessionRec{Session: ref, Event: journal.SessionObserved, Active: true}})
+				case "selection":
+					writer.Put(journal.Record{Body: &journal.SelectionRec{Version: journal.SelectionSourceVersion, Sequence: 1, Selection: 1, EngineRun: 1, Step: 1, Action: "select", Lane: "none", Internal: journal.InputProbe{State: "empty"}, App: journal.InputProbe{State: "empty"}, Timer: journal.InputProbe{State: "empty"}, Inbox: journal.InputProbe{State: "empty"}, NextHeight: "disabled"}})
+				case "internal":
+					writer.Put(journal.Record{Body: &journal.InternalRec{Version: journal.InternalSourceVersion, Sequence: 1, EngineRun: 1, Action: "reset"}})
 				case "inbox":
 					writer.Put(journal.Record{Body: &journal.InboxRec{Version: journal.InboxSourceVersion, Sequence: 1, EngineRun: 1, Step: 1, Action: "clear"}})
 				case "finalize":
@@ -187,6 +191,12 @@ func TestSessionSourceR01ProjectionUnavailableWithoutProfile(t *testing.T) {
 				expected := "session"
 				if domain == "core_step" {
 					expected = "core step sources"
+				}
+				if domain == "selection" {
+					expected = "input selection sources"
+				}
+				if domain == "internal" {
+					expected = "internal sources"
 				}
 				if domain == "inbox" {
 					expected = "inbox sources"

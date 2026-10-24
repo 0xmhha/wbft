@@ -465,15 +465,21 @@ func (r *Runner) prefilter(in transport.Inbound, v *consensus.Verified, outcome 
 	}
 }
 
-func (b *inbox) hasReady() bool {
+func (b *inbox) readySource(observe bool) (bool, journal.InputProbe) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	for _, a := range b.order {
 		if len(b.peers[a].ready) > 0 {
-			return true
+			if observe {
+				return true, inputProbe(true, b.sourceSequence, uint64(b.r.d.Clock.Mono()))
+			}
+			return true, journal.InputProbe{}
 		}
 	}
-	return false
+	if observe {
+		return false, inputProbe(false, b.sourceSequence, uint64(b.r.d.Clock.Mono()))
+	}
+	return false, journal.InputProbe{}
 }
 
 // take returns the next checked message, one per peer in turn.
@@ -509,6 +515,9 @@ func (b *inbox) takeQueued() (queued, bool) {
 				}
 			}
 			q := queued{in: consensus.Message{Code: codec.Code(s.in.Code), Payload: s.in.Payload, Peer: s.in.Peer, RecvMono: s.in.RecvMono}, via: viaPeer, capture: s.in.Capture, stream: s.in.Stream, origin: s.in.Origin, inboxSource: s.request}
+			if observation != nil {
+				q.selectionLaneSource = observation.Sequence
+			}
 			b.mu.Unlock()
 			b.publishInbox(observation)
 			return q, true

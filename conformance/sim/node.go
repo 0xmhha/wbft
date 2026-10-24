@@ -254,6 +254,8 @@ func (n *node) start() {
 	var appQueueSources runner.AppQueueSourceObserver
 	var finalizeSources runner.FinalizeSourceObserver
 	var inboxSources runner.InboxSourceObserver
+	var internalSources runner.InternalSourceObserver
+	var selectionSources runner.SelectionSourceObserver
 	if p := n.spec.AcceptedCache; p != nil {
 		write := p.Limits.WriteOptions()
 		write.Trace = n.sources
@@ -262,6 +264,8 @@ func (n *node) start() {
 		receive.Trace = n.sources
 		receiveOptions = &receive
 		functionalJournal, coreSources, timerSources, appQueueSources, finalizeSources, inboxSources = nil, n.sources, n.sources, n.sources, n.sources, n.sources
+		internalSources = n.sources
+		selectionSources = n.sources
 	}
 	dedup, err := transport.NewDedup(net, dedupOptions)
 	if err != nil {
@@ -275,7 +279,7 @@ func (n *node) start() {
 	processing, workers := n.processingModel()
 	r, err := runner.New(runner.Config{Core: opts, ReplayWAL: n.spec.ReplayWAL, Manual: true, Workers: workers, NextHeight: n.spec.NextHeight, ReceiveCache: receiveOptions},
 		runner.Deps{Chain: n.app, App: application, Transport: dedup, Net: net, Signer: recSigner{signer, n}, WAL: log,
-			Clock: n.clock, Events: countingSink{n.ev, n.s}, Journal: functionalJournal, CoreSteps: coreSources, TimerSources: timerSources, AppQueueSources: appQueueSources, FinalizeSources: finalizeSources, InboxSources: inboxSources, Rand: n.rng.IntN, Faults: fh, Logger: n.s.logger(logcat.ConsensusRound), ModuleLogger: n.s.moduleLogger(), ManualProcessing: processing})
+			Clock: n.clock, Events: countingSink{n.ev, n.s}, Journal: functionalJournal, CoreSteps: coreSources, TimerSources: timerSources, AppQueueSources: appQueueSources, FinalizeSources: finalizeSources, InboxSources: inboxSources, InternalSources: internalSources, SelectionSources: selectionSources, Rand: n.rng.IntN, Faults: fh, Logger: n.s.logger(logcat.ConsensusRound), ModuleLogger: n.s.moduleLogger(), ManualProcessing: processing})
 	if err != nil {
 		fail(err)
 		return
