@@ -43,6 +43,10 @@ type appCoreKey struct {
 // inputs after independently executing the core. It does not execute an app,
 // validate inbox/commit queues, restore WAL state or prove a closed schedule.
 func CheckAppQueueSources(records []Record, limits AppQueueLimits) (AppQueueCheck, error) {
+	return checkAppQueueSources(records, limits, false)
+}
+
+func checkAppQueueSources(records []Record, limits AppQueueLimits, restored bool) (AppQueueCheck, error) {
 	report := AppQueueCheck{Status: "unavailable", Scope: "application_input_queue_on_bound_core_sources", PhysicalStatus: "unavailable", ScheduleStatus: "unavailable"}
 	unavailable := func(reason string) (AppQueueCheck, error) {
 		report.Status, report.Reason = "unavailable", reason
@@ -58,7 +62,7 @@ func CheckAppQueueSources(records []Record, limits AppQueueLimits) (AppQueueChec
 	steps := map[appCoreKey]*CoreStepRec{}
 	wanted := map[appCoreKey]bool{}
 	stops := map[appCoreKey]bool{}
-	base, _, err := inspectCoreSourceOutputs(records, limits.Core, func(writer string, source *CoreStepRec, _ []consensus.Output) {
+	base, _, err := inspectApplicationCoreOutputs(records, limits.Core, restored, func(writer string, source *CoreStepRec, _ []consensus.Output) {
 		key := appCoreKey{writer, source.EngineRun, source.Step}
 		steps[key] = source
 		if source.Via == "app" {

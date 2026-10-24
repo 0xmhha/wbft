@@ -65,6 +65,10 @@ type finalizePending struct {
 // coordinates. It checks diagnostic consistency, not application state execution
 // or a closed runtime schedule. A finite horizon may retain unfinished tasks.
 func CheckFinalizeSources(records []Record, limits FinalizeLimits) (FinalizeCheck, error) {
+	return checkFinalizeSources(records, limits, false)
+}
+
+func checkFinalizeSources(records []Record, limits FinalizeLimits, restored bool) (FinalizeCheck, error) {
 	report := FinalizeCheck{Status: "unavailable", Scope: "commit_queue_application_call_and_result_sources", PhysicalStatus: "unavailable", ScheduleStatus: "unavailable"}
 	unavailable := func(reason string) (FinalizeCheck, error) {
 		report.Status, report.Reason = "unavailable", reason
@@ -77,7 +81,7 @@ func CheckFinalizeSources(records []Record, limits FinalizeLimits) (FinalizeChec
 	if limits.Operations == 0 || limits.Tasks == 0 || limits.Bytes == 0 {
 		return unavailable("inspection_limits_required")
 	}
-	queue, err := CheckAppQueueSources(records, limits.Queue)
+	queue, err := checkAppQueueSources(records, limits.Queue, restored)
 	if err != nil {
 		return inconsistent("queue_" + queue.Reason)
 	}
@@ -93,7 +97,7 @@ func CheckFinalizeSources(records []Record, limits FinalizeLimits) (FinalizeChec
 	outputs := map[finalizeOutputKey]*finalizeExpected{}
 	var span uint64
 	issue := ""
-	core, _, err := inspectCoreSourceOutputs(records, limits.Queue.Core, func(writer string, source *CoreStepRec, outs []consensus.Output) {
+	core, _, err := inspectApplicationCoreOutputs(records, limits.Queue.Core, restored, func(writer string, source *CoreStepRec, outs []consensus.Output) {
 		if issue != "" {
 			return
 		}

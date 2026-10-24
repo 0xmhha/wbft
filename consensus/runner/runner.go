@@ -303,6 +303,7 @@ type Runner struct {
 	receiveContext atomic.Pointer[receiveContext]
 
 	finalizeSourceMu        sync.Mutex
+	finalizeNamespace       string
 	finalizeSourceSequence  uint64
 	finalizeSourceExhausted bool
 
@@ -402,6 +403,9 @@ func New(cfg Config, d Deps) (*Runner, error) {
 		lg = slog.New(slog.DiscardHandler)
 	}
 	r := &Runner{cfg: cfg, d: d, log: lg, notify: make(chan struct{}, 1), floorSkip: map[string]bool{}}
+	if source, ok := d.FinalizeSources.(interface{ CaptureRun() string }); ok {
+		r.finalizeNamespace = source.CaptureRun()
+	}
 	if source, ok := d.WALReadSources.(interface{ CaptureRun() string }); ok {
 		r.walReadNamespace = source.CaptureRun()
 	}
