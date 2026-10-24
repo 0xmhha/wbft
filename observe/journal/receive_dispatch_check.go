@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"sort"
 
 	"github.com/0xmhha/wbft/codec"
 	"github.com/0xmhha/wbft/consensus"
@@ -33,6 +34,8 @@ type ReceiveDispatchCheck struct {
 }
 
 var ErrReceiveDispatchSource = errors.New("journal: inconsistent receive dispatch source")
+
+type receivePreparationFloor struct{ sequence, engine, step uint64 }
 
 type receivePreparationKey struct {
 	writer           string
@@ -118,6 +121,7 @@ func CheckReceiveDispatchSources(records []Record, limits ReceiveDispatchLimits)
 	var selectionCount, internalCount, inboxCount uint64
 	groups := map[string][]*ReceiveDispatchRec{}
 	registrations := map[receiveSourceOutputKey]bool{}
+	registrationFloors := map[receivePreparationKey][]receivePreparationFloor{}
 	writer := ""
 	var operations, span uint64
 	for _, record := range records {
@@ -190,6 +194,8 @@ func CheckReceiveDispatchSources(records []Record, limits ReceiveDispatchLimits)
 				return inconsistent("receive_registration_source_reused")
 			}
 			registrations[key] = true
+			ledgerKey := receivePreparationKey{writer: writer, ledger: t.Ledger}
+			registrationFloors[ledgerKey] = append(registrationFloors[ledgerKey], receivePreparationFloor{t.Sequence, a.engine, a.step})
 			if t.Source.Via != "self" {
 				continue
 			}
@@ -224,6 +230,28 @@ func CheckReceiveDispatchSources(records []Record, limits ReceiveDispatchLimits)
 			}
 			operations++
 			groups[writer] = append(groups[writer], r)
+		}
+	}
+	// Each registered ACCEPT necessarily ran before a later lookup in this
+	// original ledger. Prefix maxima preserve that causal floor even when clocks
+	// are equal; they do not impose order on independent asynchronous observers.
+	for _, floors := range registrationFloors { //wbft:unordered each ledger prefix is independent
+		slices.SortFunc(floors, func(a, b receivePreparationFloor) int {
+			if a.sequence < b.sequence {
+				return -1
+			}
+			if a.sequence > b.sequence {
+				return 1
+			}
+			return 0
+		})
+		var engine, step uint64
+		for i := range floors {
+			f := floors[i]
+			if f.engine > engine || f.engine == engine && f.step > step {
+				engine, step = f.engine, f.step
+			}
+			floors[i].engine, floors[i].step = engine, step
 		}
 	}
 	if operations == 0 {
@@ -267,6 +295,15 @@ func CheckReceiveDispatchSources(records []Record, limits ReceiveDispatchLimits)
 					return unavailable("original_preparation_missing")
 				}
 				lookup := lookupRecord.Transition
+				floors := registrationFloors[receivePreparationKey{writer: r.Source.WriterRun, ledger: r.Source.Ledger}]
+				i := sort.Search(len(floors), func(i int) bool { return floors[i].sequence >= r.Source.Sequence })
+				if i > 0 {
+					f := floors[i-1]
+					if r.EngineRun < f.engine || r.EngineRun == f.engine && r.BeforeStep < f.step {
+						return inconsistent("preparation_precedes_registered_core_accept")
+					}
+				}
+
 				selectionKey := finalizeQueueKey{name, r.Selection}
 				selection := selectionsByID[selectionKey]
 				if selection == nil {

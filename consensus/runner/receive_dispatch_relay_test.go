@@ -187,12 +187,38 @@ func TestReceiveDispatchKnownFromActualHonestRelayBeforeSelfDelivery(t *testing.
 
 	// All actors and logs are stopped before contradictory copies are inspected.
 	// These changes never enter a node, transport, signer, clock or timer.
-	for _, mode := range []string{"lookup", "namespace", "scope", "context", "decision", "selection", "inbox", "internal", "input", "completion", "discard_step", "discard_input", "duplicate", "missing", "version", "unavailable", "operations", "bytes", "gap"} {
+	for _, mode := range []string{"stale_core", "lookup", "namespace", "scope", "context", "decision", "selection", "inbox", "internal", "input", "completion", "discard_step", "discard_input", "duplicate", "missing", "version", "unavailable", "operations", "bytes", "gap"} {
 		t.Run(mode, func(t *testing.T) {
 			copied := slices.Clone(records)
 			limits := bounds
 			want := "inconsistent"
 			switch mode {
+			case "stale_core":
+				var selection, before uint64
+				for _, rec := range copied {
+					if r, ok := rec.Body.(*journal.ReceiveDispatchRec); ok && r.Action == "discard" {
+						selection, before = r.Selection, r.BeforeStep
+					}
+				}
+				if selection == 0 || before < 2 {
+					t.Fatal("normal known source missing")
+				}
+				for i, rec := range copied {
+					switch r := rec.Body.(type) {
+					case *journal.ReceiveDispatchRec:
+						if r.Selection == selection {
+							c := *r
+							c.BeforeStep = before - 1
+							copied[i].Body = &c
+						}
+					case *journal.SelectionRec:
+						if r.Action == "select" && r.Selection == selection {
+							c := *r
+							c.Step = before - 1
+							copied[i].Body = &c
+						}
+					}
+				}
 			case "operations":
 				limits.Operations = 1
 				want = "unavailable"
