@@ -590,8 +590,30 @@ func CheckRestoredCoreSources(records []Record, limits CoreSourceLimits) (Restor
 	}
 	seen := map[coreSourceRunKey]bool{}
 	fresh := map[coreSourceRunKey]bool{}
+	freshGenerations := map[coreSourceRunKey][]uint64{}
+	freshBroadcast := map[coreSourceRunKey]bool{}
 	contradiction := ""
-	core, _, err := inspectCoreSourceStatesRestored(records, limits, nil, func(writer string, s *CoreStepRec, snapshot *consensus.Snapshot) {
+	core, _, err := inspectCoreSourceStatesRestored(records, limits, func(writer string, s *CoreStepRec, outputs []consensus.Output) {
+		if s.Step != 1 || s.ReplayedPrefix {
+			return
+		}
+		gens := make([]uint64, 4)
+		for _, out := range outputs {
+			switch o := out.(type) {
+			case consensus.ArmTimer:
+				if uint64(o.Kind) >= 4 {
+					contradiction = "fresh_timer_kind_changed"
+					return
+				}
+				gens[o.Kind] = o.Gen
+			case consensus.Broadcast:
+				// Signing and accepted outbound ownership need separate evidence;
+				// never synthesize a signed own payload from recorded output bytes.
+				freshBroadcast[coreSourceRunKey{writer, s.EngineRun}] = true
+			}
+		}
+		freshGenerations[coreSourceRunKey{writer, s.EngineRun}] = gens
+	}, func(writer string, s *CoreStepRec, snapshot *consensus.Snapshot) {
 		key := coreSourceRunKey{writer, s.EngineRun}
 		seen[key] = true
 		if s.Step != 1 || s.ReplayedPrefix {
@@ -631,6 +653,17 @@ func CheckRestoredCoreSources(records []Record, limits CoreSourceLimits) (Restor
 			core.Status, core.Reason = "unavailable", "fresh_start_source_missing"
 			return restore, core, nil
 		}
+		if t.Replayed == 0 && !slices.Equal(t.Generations, freshGenerations[key]) {
+			core.Status, core.Reason = "inconsistent", "fresh_generations_changed"
+			return restore, core, fmt.Errorf("%w: %s", ErrRestoreSource, core.Reason)
+		}
+		if t.Replayed == 0 && !freshBroadcast[key] && len(t.Own) != 0 {
+			core.Status, core.Reason = "inconsistent", "fresh_own_changed"
+			return restore, core, fmt.Errorf("%w: %s", ErrRestoreSource, core.Reason)
+		}
+	}
+	if len(freshBroadcast) > 0 {
+		core.Status, core.Reason = "unavailable", "fresh_broadcast_installation_not_supported"
 	}
 	return restore, core, nil
 }

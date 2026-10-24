@@ -639,7 +639,7 @@ func (r *Runner) finalize(j commitJob) {
 			return
 		}
 	}
-	r.finalizeDone(j, r.d.App.FinalizeBlock(j.block, j.round))
+	r.finalizeDone(j, r.callFinalize(j))
 }
 
 func (r *Runner) finalizeDone(j commitJob, err error) {

@@ -29,6 +29,8 @@ type restoreTimerExpected struct {
 	input    []byte
 	duration time.Duration
 	seen     bool
+	arm      *TimerRec
+	queued   bool
 }
 type restoreInternalExpected struct {
 	seed     restoredCoreSeed
@@ -172,7 +174,7 @@ func checkRestoreEffects(records []Record, limits CoreSourceLimits, seeds map[co
 			if !validTimerRec(r) {
 				return bad("invalid_restore_timer")
 			}
-			if r.Action != "arm" {
+			if r.Action != "arm" && r.Action != "queued" {
 				return bad("unexpected_restore_timer_operation")
 			}
 			in, e := inputlog.Decode(inputlog.KindTimeout, r.Input, nil)
@@ -183,6 +185,18 @@ func checkRestoreEffects(records []Record, limits CoreSourceLimits, seeds map[co
 			proof := timers[restoreTimerKey{coreSourceRunKey{writer, r.EngineRun}, timeout.Kind}]
 			if proof == nil {
 				return bad("restore_timer_owner_changed")
+			}
+			// An actual callback retains its original arm owner, including the
+			// restore source tag. It can arrive after installation; it is not
+			// another restore-time arm. Bind only this retained expiry to its
+			// verified arm, without claiming a complete scheduler lifecycle.
+			if r.Action == "queued" {
+				arm := proof.arm
+				if arm == nil || proof.queued || r.Sequence <= arm.Sequence || r.Step != 0 || r.Output != 0 || r.ArmEngineRun != arm.ArmEngineRun || r.ArmStep != 0 || r.ArmOutput != 0 || !bytes.Equal(r.Input, proof.input) || r.EntryMono != arm.EntryMono || r.Deadline != arm.Deadline || r.Mono < arm.Mono || r.Mono < r.Deadline {
+					return bad("restore_timer_expiry_changed")
+				}
+				proof.queued = true
+				continue
 			}
 			if proof.seen || r.Step != 0 || r.Output != 0 || r.ArmEngineRun != r.EngineRun || r.ArmStep != 0 || r.ArmOutput != 0 || !bytes.Equal(r.Input, proof.input) {
 				return bad("restore_timer_value_changed")
@@ -197,6 +211,7 @@ func checkRestoreEffects(records []Record, limits CoreSourceLimits, seeds map[co
 				return bad("restore_timer_deadline_changed")
 			}
 			proof.seen = true
+			proof.arm = r
 			report.Arms++
 		case *InternalRec:
 			operations++

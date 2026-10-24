@@ -3,9 +3,11 @@ package runner
 import (
 	"bytes"
 
+	"github.com/0xmhha/wbft/app"
 	"github.com/0xmhha/wbft/consensus"
 	"github.com/0xmhha/wbft/consensus/inputlog"
 	"github.com/0xmhha/wbft/observe/journal"
+	"github.com/0xmhha/wbft/types"
 )
 
 // FinalizeSourceObserver receives detached call-boundary metadata after all
@@ -15,6 +17,25 @@ import (
 type FinalizeSourceObserver interface{ ObserveFinalizeSource(journal.FinalizeRec) }
 
 type finalizeSourceOwner struct{ engine, step, output, task uint64 }
+
+// SourceFinalizer is an optional application bridge for original task ownership.
+// The ordinary App and manual completion contracts remain unchanged. A bridge
+// must preserve the original request and context, including cancellation.
+type SourceFinalizer interface {
+	FinalizeBlockWithSource(*types.Block, types.Round, app.FinalizeSource) error
+}
+
+func (r *Runner) callFinalize(j commitJob) error {
+	if r.d.FinalizeSources != nil {
+		if target, ok := r.d.App.(SourceFinalizer); ok {
+			s := j.source
+			return target.FinalizeBlockWithSource(j.block, j.round, app.FinalizeSource{
+				Run: r.finalizeNamespace, Engine: s.engine, Step: s.step, Output: s.output, Task: s.task,
+			})
+		}
+	}
+	return r.d.App.FinalizeBlock(j.block, j.round)
+}
 
 // finalizeSource records a measured boundary without consulting the currently
 // running engine. Only enqueue establishes the original immutable task owner.

@@ -66,25 +66,26 @@ type Node struct {
 
 	// ctl serialises Start and Stop; mu guards the fields below for short
 	// reads and is never held while the application is called.
-	ctl      sync.Mutex
-	mu       sync.Mutex
-	state    lifeState
-	ctx      context.Context
-	cancel   context.CancelFunc
-	chainCfg *types.Config
-	info     app.InfoResponse
-	signer   *privval.FileSigner
-	wal      *wal.Log
-	journal  *journal.FileWriter // nil without a journal
-	ev       *event.Writer
-	evq      *eventQueue // the writer of ev's records
-	evid     *evidence.Store
-	rej      *rejection.Store
-	part     *participation.Recorder // nil when disabled
-	paths    *headPaths              // the paths of recent heads (wbft_headerCopy)
-	metrics  *metrics.Registry
-	levels   *logcat.Levels // log levels by module
-	logBase  slog.Handler   // where the modules' log lines go
+	ctl        sync.Mutex
+	mu         sync.Mutex
+	state      lifeState
+	ctx        context.Context
+	cancel     context.CancelFunc
+	chainCfg   *types.Config
+	info       app.InfoResponse
+	signer     *privval.FileSigner
+	wal        *wal.Log
+	journal    *journal.FileWriter   // nil without a journal
+	diagnostic *sessionFrameRecorder // caller-owned writer; never a replay journal
+	ev         *event.Writer
+	evq        *eventQueue // the writer of ev's records
+	evid       *evidence.Store
+	rej        *rejection.Store
+	part       *participation.Recorder // nil when disabled
+	paths      *headPaths              // the paths of recent heads (wbft_headerCopy)
+	metrics    *metrics.Registry
+	levels     *logcat.Levels // log levels by module
+	logBase    slog.Handler   // where the modules' log lines go
 	// eventMetrics derives metrics from the event records.
 	eventMetrics *metrics.EventMetrics
 	walFsync     *metrics.Histogram // wbft_wal_fsync_seconds
@@ -122,6 +123,9 @@ const (
 
 // New returns a node that is not started.
 func New(cfg Config, d Deps) (*Node, error) {
+	if err := freezeDiagnostics(cfg, &d); err != nil {
+		return nil, err
+	}
 	if cfg.CachePolicy != nil {
 		limits := *cfg.CachePolicy
 		if err := limits.Validate(); err != nil {
@@ -339,6 +343,13 @@ func (n *Node) start(ctx context.Context) error {
 	}
 
 	// 3. Logs and sign state.
+	n.diagnostic = nil
+	if o := n.d.Diagnostics; o != nil {
+		if o.Writer.CaptureRun() != runID {
+			return refuse("diagnostic writer run changed")
+		}
+		n.diagnostic = newSessionFrameRecorder(o.Writer, n.clock, n.wireOffset())
+	}
 	if n.cfg.KeyFile != "" || n.d.key != nil {
 		if err := n.openSigner(head); err != nil {
 			return err
@@ -473,6 +484,11 @@ func (n *Node) start(ctx context.Context) error {
 			}
 			out = recordedTransport{Transport: n.d.Transport, rec: rec}
 		}
+		if rec := n.diagnostic; rec != nil {
+			rec.engine = n.engineState
+			n.d.Transport.(transport.Observed).SetFrameObserver(rec)
+			out = recordedWriteTransport{Transport: n.d.Transport, WriteSender: n.d.Transport.(transport.WriteSender), rec: rec}
+		}
 		suppressed := n.metrics.Counter("wbft_send_suppressed_total", "Sends left out because the peer's recent cache holds the message, by cause.", "cause")
 		if n.cfg.CachePolicy == nil {
 			hits := n.metrics.Counter("wbft_dedup_hits_total", "Received messages whose key was already in a dedup cache, by cache (known, peer_recent).", "cache")
@@ -492,6 +508,9 @@ func (n *Node) start(ctx context.Context) error {
 		options := transport.DedupOptions{Self: self, Suppressed: func(c event.SendCause) { suppressed.Inc(string(c)) }, Inbound: inbound}
 		if policy := n.cfg.CachePolicy; policy != nil {
 			write := policy.WriteOptions()
+			if n.diagnostic != nil {
+				write.Trace = n.diagnostic
+			}
 			options.KeyWithCode, options.RecordAfterSend, options.CompletedWrites = true, true, &write
 			options.Inbound = nil // a read-loop hit is not a later core ACCEPT
 			completed := n.metrics.Counter("wbft_cache_write_completed_total", "Successful local writes retained in the completed-write cache.", "code")
@@ -507,16 +526,26 @@ func (n *Node) start(ctx context.Context) error {
 	if n.ev != nil {
 		sink.next = n.ev
 	}
-	deps := runner.Deps{Chain: n.view, App: &appDriver{a: n.d.App, ctx: n.ctx, failed: n.svc.OnImportFailed, emit: n.buildEventEmitter(), buildIDs: &n.buildIDs}, Transport: dedup, Net: n.d.Transport,
+	driver := &appDriver{a: n.d.App, ctx: n.ctx, failed: n.svc.OnImportFailed, emit: n.buildEventEmitter(), buildIDs: &n.buildIDs, diagnostic: n.diagnostic}
+	if o := n.d.Diagnostics; o != nil {
+		driver.applicationBytes = o.ApplicationBytes
+	}
+	deps := runner.Deps{Chain: n.view, App: driver, Transport: dedup, Net: n.d.Transport,
 		Signer: n.signer, WAL: log, Clock: n.clock, Events: sink, Synchronising: n.synchronising,
 		Faults: n.d.faults, Logger: n.levels.Logger(logcat.ConsensusRound, n.logBase), ModuleLogger: n.Logger,
 		Refused: func(code uint64) { n.refusals.Inc(fmt.Sprintf("%#x", code)) }}
 	if jw != nil {
 		deps.Journal = jw
 	}
+	if n.diagnostic != nil {
+		n.diagnostic.connect(&deps, n.d.Diagnostics.WALRead)
+	}
 	config := runner.Config{Core: core, ReplayWAL: true, NextHeight: n.cfg.NextHeight}
 	if policy := n.cfg.CachePolicy; policy != nil {
 		receive := policy.ReceiveOptions()
+		if n.diagnostic != nil {
+			receive.Trace = n.diagnostic
+		}
 		config.ReceiveCache = &receive
 		accepted := n.metrics.Counter("wbft_cache_receive_accepted_total", "Message inputs accepted by the core and retained in the receive cache.", "code")
 		deps.ReceiveCacheRecorded = func(code uint64) { accepted.Inc(fmt.Sprintf("%#x", code)) }
@@ -794,7 +823,12 @@ func (n *Node) openSigner(head *types.Header) error {
 			return fmt.Errorf("node: key file: %w", err)
 		}
 	}
-	s, err := privval.NewKeySigner(n.fs, n.d.faults, key, filepath.Join(dir, stateFile))
+	options := privval.Options{FS: n.fs, Faults: n.d.faults}
+	if rec := n.diagnostic; rec != nil {
+		o := n.d.Diagnostics
+		options.Sources = &privval.SourceOptions{Namespace: rec.CaptureRun(), Records: o.SignerRecords, Bytes: o.SignerBytes, Observe: rec.observeSigner}
+	}
+	s, err := privval.NewKeySignerWithOptions(options, key, filepath.Join(dir, stateFile))
 	if err != nil {
 		return refuse("sign state: %v", err)
 	}

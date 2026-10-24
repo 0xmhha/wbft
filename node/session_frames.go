@@ -8,9 +8,12 @@ import (
 )
 
 // sessionFrameRecorder is the separate accepted/completed source recorder.
-// It is not installed by Node yet: independent physical checks and compatible
-// replay must precede activation. The default frameRecorder stays unchanged.
-type sessionFrameRecorder struct{ *frameRecorder }
+// Node installs it only for an explicit diagnostic writer. Compatible replay
+// remains unavailable. The default frameRecorder stays unchanged.
+type sessionFrameRecorder struct {
+	*frameRecorder
+	run string
+}
 
 var _ transport.SessionObserver = (*sessionFrameRecorder)(nil)
 var _ transport.SessionIOObserver = (*sessionFrameRecorder)(nil)
@@ -18,8 +21,11 @@ var _ transport.WriteTransitionObserver = (*sessionFrameRecorder)(nil)
 var _ transport.ReceiveTransitionObserver = (*sessionFrameRecorder)(nil)
 
 func newSessionFrameRecorder(writer journal.Writer, clock stampClock, offset uint64) *sessionFrameRecorder {
-	return &sessionFrameRecorder{newFrameRecorder(writer, clock, offset)}
+	base := newFrameRecorder(writer, clock, offset)
+	return &sessionFrameRecorder{frameRecorder: base, run: base.CaptureRun()}
 }
+
+func (f *sessionFrameRecorder) CaptureRun() string { return f.run }
 
 func observedSessionRef(target transport.WritePeer) *journal.SessionRef {
 	run, ordinal := target.Session.ObservationRun(), target.Session.ObservationID()

@@ -50,6 +50,10 @@ func (w *r01Writer) indexCache(rec journal.Record, pos wal.Position) {
 		w.cacheErr = fmt.Errorf("signer sources are unavailable in R01 exports")
 		return
 	}
+	if _, ok := rec.Body.(*journal.ApplicationRec); ok {
+		w.cacheErr = fmt.Errorf("application sources are unavailable in R01 exports")
+		return
+	}
 	if _, ok := rec.Body.(*journal.SignerCallRec); ok {
 		w.cacheErr = fmt.Errorf("signer call sources are unavailable in R01 exports")
 		return

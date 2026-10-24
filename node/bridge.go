@@ -18,6 +18,7 @@ import (
 	"github.com/0xmhha/wbft/consensus"
 	"github.com/0xmhha/wbft/consensus/runner"
 	"github.com/0xmhha/wbft/observe/event"
+	"github.com/0xmhha/wbft/observe/journal"
 	"github.com/0xmhha/wbft/observe/metrics"
 	"github.com/0xmhha/wbft/observe/rejection"
 	"github.com/0xmhha/wbft/types"
@@ -138,9 +139,11 @@ type appDriver struct {
 	// failed, when set, is told a decided block the application failed to
 	// import (an *app.ImportError from FinalizeBlock); the node records it
 	// as for OnImportFailed.
-	failed   func(app.ImportFailure)
-	emit     func(event.Record)
-	buildIDs *atomic.Uint64
+	failed           func(app.ImportFailure)
+	emit             func(event.Record)
+	buildIDs         *atomic.Uint64
+	diagnostic       *sessionFrameRecorder
+	applicationBytes uint64
 }
 
 var _ runner.App = (*appDriver)(nil)
@@ -175,7 +178,23 @@ func (d *appDriver) ReadyToBuild(req consensus.RequestBuild, wait time.Duration,
 }
 
 func (d *appDriver) FinalizeBlock(b *types.Block, round types.Round) error {
-	_, err := d.a.FinalizeBlock(d.ctx, app.FinalizeRequest{Block: b, Round: round})
+	return d.finalize(app.FinalizeRequest{Block: b, Round: round})
+}
+
+func (d *appDriver) FinalizeBlockWithSource(b *types.Block, round types.Round, source app.FinalizeSource) error {
+	return d.finalize(app.FinalizeRequest{Block: b, Round: round, Source: &source})
+}
+
+func (d *appDriver) finalize(req app.FinalizeRequest) error {
+	b := req.Block
+	var source *journal.ApplicationRec
+	if d.diagnostic != nil {
+		source = d.diagnostic.beginApplication(req, d.applicationBytes)
+	}
+	response, err := d.a.FinalizeBlock(d.ctx, req)
+	if source != nil {
+		d.diagnostic.finishApplication(source, response, err)
+	}
 	if ie := (*app.ImportError)(nil); d.failed != nil && errors.As(err, &ie) {
 		// An invalid block is recorded as bad by the application
 		// (WBFT-APP-090); another import failure is not.

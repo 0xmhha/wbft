@@ -44,6 +44,7 @@ const (
 	KindRestore         Kind = 22 // actual restore planning, attempts and installation
 	KindSigner          Kind = 23 // original public signer state and persistence operations
 	KindSignerCall      Kind = 24 // original runner signing and own-message WAL call
+	KindApplication     Kind = 25 // original application request and response boundary
 )
 
 func (k Kind) String() string {
@@ -88,6 +89,8 @@ func (k Kind) String() string {
 		return "signer_source"
 	case KindSignerCall:
 		return "signer_call_source"
+	case KindApplication:
+		return "application_source"
 	case KindRestore:
 		return "restore_source"
 	case KindWALRead:
@@ -102,7 +105,7 @@ func (k Kind) String() string {
 
 // Record is one journal record. Body is one of *SegmentRec, *PeerRec,
 // *MsgRec, *OutcomeRec, *SuppressedRec, *StepRec, *GapRec, *TimerRec, *CacheRec,
-// *WriteCacheRec, *ReceiveCacheRec, *SessionRec, *CoreStepRec, *AppQueueRec, *FinalizeRec, *InboxRec, *InternalRec, *SelectionRec, *ReceiveDispatchRec, *WALReadRec, *RestoreRec, *SignerRec, *SignerCallRec, or *SyncRec. JSeq is assigned
+// *WriteCacheRec, *ReceiveCacheRec, *SessionRec, *CoreStepRec, *AppQueueRec, *FinalizeRec, *InboxRec, *InternalRec, *SelectionRec, *ReceiveDispatchRec, *WALReadRec, *RestoreRec, *SignerRec, *SignerCallRec, *ApplicationRec, or *SyncRec. JSeq is assigned
 // by the writer: it increases by one per written record within a run.
 type Record struct {
 	Kind Kind
@@ -663,6 +666,8 @@ func encodeBody(r Record, jseq uint64) ([]byte, error) {
 		return encodeSelectionRec(b, jseq)
 	case *SignerRec:
 		return encodeSignerRec(b, jseq)
+	case *ApplicationRec:
+		return encodeApplicationRec(b, jseq)
 	case *SignerCallRec:
 		return encodeSignerCallRec(b, jseq)
 	case *RestoreRec:
@@ -860,6 +865,8 @@ func decodeBody(k Kind, body []byte) (Record, error) {
 		return decodeSelectionRec(body)
 	case KindSigner:
 		return decodeSignerRec(body)
+	case KindApplication:
+		return decodeApplicationRec(body)
 	case KindSignerCall:
 		return decodeSignerCallRec(body)
 	case KindRestore:
@@ -924,6 +931,8 @@ func kindOf(body any) (Kind, bool) {
 		return KindSelection, true
 	case *SignerRec:
 		return KindSigner, true
+	case *ApplicationRec:
+		return KindApplication, true
 	case *SignerCallRec:
 		return KindSignerCall, true
 	case *RestoreRec:
@@ -988,6 +997,8 @@ func size(r Record) int64 {
 	case *SignerRec:
 		s := b.Source
 		return int64(768 + len(s.Ref.Namespace) + len(s.BLSPublicKey) + len(s.Before) + len(s.After) + len(s.Request) + len(s.SealData) + len(s.Signature) + len(s.Seal) + len(s.Write) + len(s.Floor) + len(s.Action) + len(s.Result) + len(s.Unavailable))
+	case *ApplicationRec:
+		return int64(384 + len(b.Source.Run) + len(b.Arguments) + len(b.Result) + len(b.Unavailable))
 	case *SignerCallRec:
 		return int64(512 + len(b.Source.Namespace) + len(b.WAL.Namespace) + len(b.Request) + len(b.SealData) + len(b.Signature) + len(b.Seal) + len(b.Payload) + len(b.Result) + len(b.Unavailable))
 	case *RestoreRec:

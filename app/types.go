@@ -41,6 +41,18 @@ type FinalizeRequest struct {
 	Block *types.Block
 	// Round is the decided round; the header carries its low 32 bits.
 	Round types.Round
+	// Source optionally identifies the original observed runner task. It is
+	// diagnostic metadata, never permission to import or skip validation.
+	// A handshake or an unobserved caller leaves it nil.
+	Source *FinalizeSource
+}
+
+// FinalizeSource is frozen when the runner queues the original Commit output.
+// It describes ownership within a conditional diagnostic writer run, not an
+// independently verified application result or physical persistence.
+type FinalizeSource struct {
+	Run                        string
+	Engine, Step, Output, Task uint64
 }
 
 // FinalizeResponse is the result of FinalizeBlock.

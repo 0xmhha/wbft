@@ -135,7 +135,7 @@ func TestRestoreSourcesNormalGracefulRestartToFirstLiveStep(t *testing.T) {
 	if target == 0 || firstLive <= target {
 		t.Fatal("actual restore/live order missing", target, firstLive)
 	}
-	for _, mode := range []string{"boundary", "input", "read", "engine", "snapshot", "attempt_missing", "attempt_duplicate", "generation", "own", "timer", "after_live", "missing", "live_step", "live_marker", "installed_generation", "installed_own", "missing_all_restored_live", "cold_snapshot", "cold_height", "restore_arm_missing", "restore_arm_owner", "restore_deadline", "restore_append_missing", "restore_append_owner", "restore_pop_missing", "restore_dispatch_missing", "signer_initial_missing", "signer_call_missing", "signer_ref", "signer_request", "signer_signature", "signer_write", "signer_state", "signer_owner", "own_position", "own_log", "own_write_result", "signer_after_call", "zero_budget"} {
+	for _, mode := range []string{"boundary", "input", "read", "engine", "snapshot", "attempt_missing", "attempt_duplicate", "generation", "own", "timer", "after_live", "missing", "live_step", "live_marker", "installed_generation", "installed_own", "missing_all_restored_live", "cold_snapshot", "cold_height", "cold_generations", "cold_own", "restore_arm_missing", "restore_arm_owner", "restore_deadline", "restore_append_missing", "restore_append_owner", "restore_pop_missing", "restore_dispatch_missing", "signer_initial_missing", "signer_call_missing", "signer_ref", "signer_request", "signer_signature", "signer_write", "signer_state", "signer_owner", "own_position", "own_log", "own_write_result", "signer_after_call", "zero_budget"} {
 		t.Run(mode, func(t *testing.T) {
 			copied := slices.Clone(original)
 			var r journal.RestoreRec
@@ -200,13 +200,19 @@ func TestRestoreSourcesNormalGracefulRestartToFirstLiveStep(t *testing.T) {
 					filtered = append(filtered, rec)
 				}
 				copied = filtered
-			case "cold_snapshot", "cold_height":
+			case "cold_snapshot", "cold_height", "cold_generations", "cold_own":
 				for i, rec := range copied {
 					if cold, ok := rec.Body.(*journal.RestoreRec); ok && cold.Replayed == 0 {
 						c := *cold
-						if mode == "cold_snapshot" {
+						switch mode {
+						case "cold_generations":
+							c.Generations = slices.Clone(c.Generations)
+							c.Generations[0]++
+						case "cold_own":
+							c.Own = []journal.RestoreOwn{{Code: uint64(codec.CodePrepare), Payload: []byte{0xc0}}}
+						case "cold_snapshot":
 							c.Snapshot[0] ^= 1
-						} else {
+						default:
 							c.From = "11"
 						}
 						copied[i].Body = &c

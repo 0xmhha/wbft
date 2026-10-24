@@ -112,6 +112,9 @@ type MempoolConfig struct {
 
 // Deps are the collaborators of a Node.
 type Deps struct {
+	// Diagnostics forwards original source observations to a caller-owned
+	// diagnostic writer. It does not enable functional journal replay.
+	Diagnostics *DiagnosticOptions
 	// App is the application. Required.
 	App app.Application
 	// Authority gives the authority snapshot of the head at start-up and
