@@ -44,7 +44,7 @@ func TestInputSelectionsNormalConditionalProbesAndOfflineContradictions(t *testi
 		if n.i != 0 {
 			continue
 		}
-		for _, mode := range []string{"priority", "unperformed", "probe_state", "probe_source", "probe_time", "source", "input", "random", "dispatch", "owner", "sequence", "duplicate", "missing", "version", "unavailable", "operations", "sources", "span", "gap"} {
+		for _, mode := range []string{"priority", "unperformed", "probe_state", "probe_source", "pre_reset", "probe_time", "source", "input", "random", "dispatch", "owner", "sequence", "duplicate", "missing", "version", "unavailable", "operations", "sources", "span", "gap"} {
 			t.Run(mode, func(t *testing.T) {
 				copied := slices.Clone(records)
 				bounds := selectionSourceBounds()
@@ -88,6 +88,11 @@ func TestInputSelectionsNormalConditionalProbesAndOfflineContradictions(t *testi
 							continue
 						}
 						c.Internal.Sequence++
+					case "pre_reset":
+						if c.Action != "select" || c.EngineRun != 1 || c.Internal.State != "empty" || c.Internal.Sequence != 1 {
+							continue
+						}
+						c.Internal.Sequence = 0
 					case "probe_time":
 						if c.Action != "select" || c.Lane != "internal" {
 							continue

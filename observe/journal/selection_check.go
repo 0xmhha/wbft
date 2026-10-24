@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"sort"
 	"time"
 
 	"github.com/0xmhha/wbft/codec"
@@ -39,6 +40,7 @@ var ErrInputSelectionSource = errors.New("journal: inconsistent input selection 
 
 type selectionLaneKey struct{ writer, lane string }
 type selectionMutation struct {
+	serial                          bool // original loop mutation necessarily completed with its core step
 	sequence, mono, engine, step    uint64
 	request, ownerEngine, ownerStep uint64
 	action, inputKind               string
@@ -49,11 +51,25 @@ type selectionState struct {
 	ready bool
 	mono  uint64
 }
+type selectionFloor struct{ engine, step, sequence uint64 }
+
 type selectionLane struct {
+	floors []selectionFloor
 	states map[uint64]selectionState
 	pops   map[uint64]*selectionMutation
 	used   map[uint64]bool
 	last   uint64
+}
+
+// minimumSequence excludes reads before mutations that a completed source
+// step necessarily finished. It orders equal-time evidence without imposing a
+// total order on independent asynchronous callbacks or other lane mutexes.
+func (l *selectionLane) minimumSequence(engine, step uint64) uint64 {
+	i := sort.Search(len(l.floors), func(i int) bool { f := l.floors[i]; return f.engine > engine || f.engine == engine && f.step > step })
+	if i == 0 {
+		return 0
+	}
+	return l.floors[i-1].sequence
 }
 
 // selectedLane checks original short-circuit priority without inventing probes
@@ -203,16 +219,16 @@ func CheckInputSelections(records []Record, limits SelectionLimits) (SelectionCh
 				internalAppends[finalizeQueueKey{writer, r.Request}] = r
 			}
 			lane = "internal"
-			mutation = &selectionMutation{sequence: r.Sequence, mono: r.Mono, engine: r.EngineRun, step: r.Step, action: r.Action, inputKind: r.InputKind, input: r.Input, after: r.After, request: r.Request}
+			mutation = &selectionMutation{sequence: r.Sequence, mono: r.Mono, engine: r.EngineRun, step: r.Step, action: r.Action, inputKind: r.InputKind, input: r.Input, after: r.After, request: r.Request, serial: r.Action != "pop" && r.Action != "discard"}
 		case *AppQueueRec:
 			lane = "app"
-			mutation = &selectionMutation{sequence: r.Sequence, mono: uint64(r.Mono), engine: r.EngineRun, step: r.Step, action: r.Action, inputKind: r.InputKind, input: r.Input, after: r.After}
+			mutation = &selectionMutation{sequence: r.Sequence, mono: uint64(r.Mono), engine: r.EngineRun, step: r.Step, action: r.Action, inputKind: r.InputKind, input: r.Input, after: r.After, serial: r.EngineRun > 0 && r.Step > 0}
 		case *TimerRec:
 			lane = "timer"
-			mutation = &selectionMutation{sequence: r.Sequence, mono: uint64(r.Mono), engine: r.EngineRun, step: r.Step, action: r.Action, inputKind: inputlog.KindTimeout, input: r.Input, ownerEngine: r.ArmEngineRun, ownerStep: r.ArmStep}
+			mutation = &selectionMutation{sequence: r.Sequence, mono: uint64(r.Mono), engine: r.EngineRun, step: r.Step, action: r.Action, inputKind: inputlog.KindTimeout, input: r.Input, ownerEngine: r.ArmEngineRun, ownerStep: r.ArmStep, serial: r.Action != "queued" && (r.Source == "core" || r.Source == "dequeue" || r.Source == "lifecycle")}
 		case *InboxRec:
 			lane = "peer"
-			mutation = &selectionMutation{sequence: r.Sequence, mono: r.Mono, engine: r.EngineRun, step: r.Step, action: r.Action}
+			mutation = &selectionMutation{sequence: r.Sequence, mono: r.Mono, engine: r.EngineRun, step: r.Step, action: r.Action, serial: r.Action == "dispatch" || r.Action == "clear"}
 			if r.Action == "append" {
 				captures[finalizeQueueKey{writer, r.Request}] = r
 			}
@@ -326,12 +342,41 @@ func CheckInputSelections(records []Record, limits SelectionLimits) (SelectionCh
 				}
 			}
 			lane.states[m.sequence] = selectionState{count > 0, m.mono}
+			if m.serial {
+				lane.floors = append(lane.floors, selectionFloor{m.engine, m.step, m.sequence})
+			}
 			if m.action == "pop" || key.lane == "peer" && m.action == "take" {
 				if !charge(len(m.input)) {
 					return unavailable("selection_byte_limit")
 				}
 				lane.pops[m.sequence] = m
 			}
+		}
+		slices.SortFunc(lane.floors, func(a, b selectionFloor) int {
+			if a.engine < b.engine {
+				return -1
+			}
+			if a.engine > b.engine {
+				return 1
+			}
+			if a.step < b.step {
+				return -1
+			}
+			if a.step > b.step {
+				return 1
+			}
+			if a.sequence < b.sequence {
+				return -1
+			}
+			if a.sequence > b.sequence {
+				return 1
+			}
+			return 0
+		})
+		var floor uint64
+		for i := range lane.floors {
+			floor = max(floor, lane.floors[i].sequence)
+			lane.floors[i].sequence = floor
 		}
 		lanes[key] = lane
 	}
@@ -387,6 +432,9 @@ func CheckInputSelections(records []Record, limits SelectionLimits) (SelectionCh
 					lane := lanes[selectionLaneKey{name, item.name}]
 					if lane == nil {
 						return unavailable("selection_lane_source_missing")
+					}
+					if p.Sequence < lane.minimumSequence(r.EngineRun, r.Step) {
+						return inconsistent("selection_probe_precedes_completed_step")
 					}
 					state, found := lane.states[p.Sequence]
 					if !found {
