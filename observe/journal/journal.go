@@ -305,6 +305,14 @@ func monoOf(r Record) time.Duration {
 		return time.Duration(b.Mono)
 	case *SelectionRec:
 		return time.Duration(b.Mono)
+	case *SignerRec:
+		return time.Duration(b.Mono)
+	case *SignerCallRec:
+		return time.Duration(b.Mono)
+	case *RestoreRec:
+		return time.Duration(b.Mono)
+	case *WALReadRec:
+		return time.Duration(b.Mono)
 	case *ReceiveDispatchRec:
 		return time.Duration(b.Mono)
 	case *FinalizeRec:
@@ -416,6 +424,26 @@ func (w *FileWriter) write(r Record) {
 			w.stats.first = b.WallNs
 		}
 		w.stats.last = b.WallNs
+	case *SignerRec:
+		if w.stats.first == 0 {
+			w.stats.first = int64(b.WallNs)
+		}
+		w.stats.last = int64(b.WallNs)
+	case *SignerCallRec:
+		if w.stats.first == 0 {
+			w.stats.first = int64(b.WallNs)
+		}
+		w.stats.last = int64(b.WallNs)
+	case *RestoreRec:
+		if w.stats.first == 0 {
+			w.stats.first = int64(b.WallNs)
+		}
+		w.stats.last = int64(b.WallNs)
+	case *WALReadRec:
+		if w.stats.first == 0 {
+			w.stats.first = int64(b.WallNs)
+		}
+		w.stats.last = int64(b.WallNs)
 	case *ReceiveDispatchRec:
 		if w.stats.first == 0 {
 			w.stats.first = int64(b.WallNs)

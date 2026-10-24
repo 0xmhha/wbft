@@ -46,6 +46,22 @@ func (w *r01Writer) indexCache(rec journal.Record, pos wal.Position) {
 		w.cacheErr = fmt.Errorf("accepted-receive cache observations are unavailable in R01 exports")
 		return
 	}
+	if _, ok := rec.Body.(*journal.SignerRec); ok {
+		w.cacheErr = fmt.Errorf("signer sources are unavailable in R01 exports")
+		return
+	}
+	if _, ok := rec.Body.(*journal.SignerCallRec); ok {
+		w.cacheErr = fmt.Errorf("signer call sources are unavailable in R01 exports")
+		return
+	}
+	if _, ok := rec.Body.(*journal.RestoreRec); ok {
+		w.cacheErr = fmt.Errorf("restore sources are unavailable in R01 exports")
+		return
+	}
+	if _, ok := rec.Body.(*journal.WALReadRec); ok {
+		w.cacheErr = fmt.Errorf("WAL read sources are unavailable in R01 exports")
+		return
+	}
 	if _, ok := rec.Body.(*journal.ReceiveDispatchRec); ok {
 		w.cacheErr = fmt.Errorf("receive dispatch sources are unavailable in R01 exports")
 		return

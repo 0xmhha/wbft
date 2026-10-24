@@ -1,6 +1,7 @@
 package runner
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -410,13 +411,24 @@ func (r *Runner) execute(sc *stepCtx) {
 // broadcast signs, logs, sends and self-delivers an own message.
 func (r *Runner) broadcast(sc *stepCtx, b consensus.Broadcast) {
 	m := b.Msg
+	source := r.newSignerCall(sc, b)
+	defer r.finishSignerCall(source)
 	if r.d.Signer == nil {
+		if source != nil {
+			source.Result, source.Unavailable = "signer_missing", "source_missing"
+		}
 		r.appendInternal(consensus.BroadcastFailed{Code: m.Code, View: m.View}, "signer_missing", sc.output)
 		return
 	}
-	sig, err := r.d.Signer.SignVote(privval.VoteRequest{Msg: m, SealData: b.SealData, BadBlockReleased: b.BadBlockReleased})
+	sig, err := r.signVoteSource(privval.VoteRequest{Msg: m, SealData: b.SealData, BadBlockReleased: b.BadBlockReleased}, source)
 	if err != nil {
+		if source != nil {
+			source.Result = "refused"
+		}
 		if !privval.IsRefusal(err) {
+			if source != nil {
+				source.Result = "signer_error"
+			}
 			r.halt(err)
 			return
 		}
@@ -427,17 +439,34 @@ func (r *Runner) broadcast(sc *stepCtx, b consensus.Broadcast) {
 	c.Seal, c.Signature = sig.Seal, sig.Signature
 	payload, err := codec.EncodeMessage(&c)
 	if err != nil {
+		if source != nil {
+			source.Result, source.Unavailable = "outbound_error", "payload_encoding"
+		}
 		r.halt(err)
 		return
 	}
 	if err := transport.CheckOutbound(uint64(c.Code), payload); err != nil {
+		if source != nil {
+			source.Result = "outbound_error"
+		}
 		r.log.Error("own message not sendable", "code", c.Code, "err", err)
 		r.appendInternal(consensus.BroadcastFailed{Code: m.Code, View: m.View}, "outbound", sc.output)
 		return
 	}
 	faultpoint.Hit(r.d.Faults, faultpoint.WALBeforeOwnMsg)
 	if r.d.WAL != nil {
-		if _, err := r.d.WAL.AppendSync(encodeOwn(ownRec{Code: uint64(c.Code), Payload: payload})); err != nil {
+		position, err := r.d.WAL.AppendSync(encodeOwn(ownRec{Code: uint64(c.Code), Payload: payload}))
+		if source != nil {
+			source.Segment, source.Offset = position.Segment, uint64(position.Offset)
+			if err == nil {
+				source.WALWritten = 1
+				source.Payload = bytes.Clone(payload)
+			}
+		}
+		if err != nil {
+			if source != nil {
+				source.Result = "wal_error"
+			}
 			r.halt(err)
 			return
 		}
@@ -455,6 +484,9 @@ func (r *Runner) broadcast(sc *stepCtx, b consensus.Broadcast) {
 	r.sendEvent(sc, uint64(c.Code), payload, cause, &c.View)
 	r.lastOwn[ownKey{code: uint64(c.Code)}] = payload
 	r.appendInternal(consensus.Message{Code: c.Code, Payload: payload, Peer: r.cfg.Core.Self, RecvMono: r.d.Clock.Mono()}, "own", sc.output)
+	if source != nil {
+		source.Result = "sent"
+	}
 }
 
 // refused reports a privval refusal to the core as BroadcastFailed.

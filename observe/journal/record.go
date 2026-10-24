@@ -40,6 +40,10 @@ const (
 	KindInternal        Kind = 18 // detached internal queue source and dispatch boundaries
 	KindSelection       Kind = 19 // original conditional probes and selected input dispatch
 	KindReceiveDispatch Kind = 20 // original receive preparation and dispatch decisions
+	KindWALRead         Kind = 21 // original bounded WAL readable-prefix observations
+	KindRestore         Kind = 22 // actual restore planning, attempts and installation
+	KindSigner          Kind = 23 // original public signer state and persistence operations
+	KindSignerCall      Kind = 24 // original runner signing and own-message WAL call
 )
 
 func (k Kind) String() string {
@@ -80,6 +84,14 @@ func (k Kind) String() string {
 		return "internal_source"
 	case KindSelection:
 		return "input_selection_source"
+	case KindSigner:
+		return "signer_source"
+	case KindSignerCall:
+		return "signer_call_source"
+	case KindRestore:
+		return "restore_source"
+	case KindWALRead:
+		return "wal_read_source"
 	case KindReceiveDispatch:
 		return "receive_dispatch_source"
 	case KindFinalize:
@@ -90,7 +102,7 @@ func (k Kind) String() string {
 
 // Record is one journal record. Body is one of *SegmentRec, *PeerRec,
 // *MsgRec, *OutcomeRec, *SuppressedRec, *StepRec, *GapRec, *TimerRec, *CacheRec,
-// *WriteCacheRec, *ReceiveCacheRec, *SessionRec, *CoreStepRec, *AppQueueRec, *FinalizeRec, *InboxRec, *InternalRec, *SelectionRec, *ReceiveDispatchRec, or *SyncRec. JSeq is assigned
+// *WriteCacheRec, *ReceiveCacheRec, *SessionRec, *CoreStepRec, *AppQueueRec, *FinalizeRec, *InboxRec, *InternalRec, *SelectionRec, *ReceiveDispatchRec, *WALReadRec, *RestoreRec, *SignerRec, *SignerCallRec, or *SyncRec. JSeq is assigned
 // by the writer: it increases by one per written record within a run.
 type Record struct {
 	Kind Kind
@@ -649,6 +661,14 @@ func encodeBody(r Record, jseq uint64) ([]byte, error) {
 		return encodeInternalRec(b, jseq)
 	case *SelectionRec:
 		return encodeSelectionRec(b, jseq)
+	case *SignerRec:
+		return encodeSignerRec(b, jseq)
+	case *SignerCallRec:
+		return encodeSignerCallRec(b, jseq)
+	case *RestoreRec:
+		return encodeRestoreRec(b, jseq)
+	case *WALReadRec:
+		return encodeWALReadRec(b, jseq)
 	case *ReceiveDispatchRec:
 		return encodeReceiveDispatchRec(b, jseq)
 	case *FinalizeRec:
@@ -838,6 +858,14 @@ func decodeBody(k Kind, body []byte) (Record, error) {
 		return decodeInternalRec(body)
 	case KindSelection:
 		return decodeSelectionRec(body)
+	case KindSigner:
+		return decodeSignerRec(body)
+	case KindSignerCall:
+		return decodeSignerCallRec(body)
+	case KindRestore:
+		return decodeRestoreRec(body)
+	case KindWALRead:
+		return decodeWALReadRec(body)
 	case KindReceiveDispatch:
 		return decodeReceiveDispatchRec(body)
 	case KindFinalize:
@@ -894,6 +922,14 @@ func kindOf(body any) (Kind, bool) {
 		return KindInternal, true
 	case *SelectionRec:
 		return KindSelection, true
+	case *SignerRec:
+		return KindSigner, true
+	case *SignerCallRec:
+		return KindSignerCall, true
+	case *RestoreRec:
+		return KindRestore, true
+	case *WALReadRec:
+		return KindWALRead, true
 	case *ReceiveDispatchRec:
 		return KindReceiveDispatch, true
 	case *FinalizeRec:
@@ -949,6 +985,32 @@ func size(r Record) int64 {
 		return n
 	case *AppQueueRec:
 		return 256 + int64(len(b.Input)+len(b.InputKind)+len(b.Action)+len(b.Unavailable))
+	case *SignerRec:
+		s := b.Source
+		return int64(768 + len(s.Ref.Namespace) + len(s.BLSPublicKey) + len(s.Before) + len(s.After) + len(s.Request) + len(s.SealData) + len(s.Signature) + len(s.Seal) + len(s.Write) + len(s.Floor) + len(s.Action) + len(s.Result) + len(s.Unavailable))
+	case *SignerCallRec:
+		return int64(512 + len(b.Source.Namespace) + len(b.WAL.Namespace) + len(b.Request) + len(b.SealData) + len(b.Signature) + len(b.Seal) + len(b.Payload) + len(b.Result) + len(b.Unavailable))
+	case *RestoreRec:
+		n := int64(512 + 8*len(b.Generations) + len(b.Read.Namespace) + len(b.From) + len(b.Unavailable) + 8*len(b.Inputs))
+		for _, o := range b.Own {
+			n += 32 + int64(len(o.Payload))
+		}
+		for _, a := range b.Attempts {
+			n += 256 + 8*int64(len(a.Generations))
+			for _, o := range a.Own {
+				n += 32 + int64(len(o.Payload))
+			}
+			for _, t := range a.Timers {
+				n += 24 + int64(len(t))
+			}
+		}
+		return n
+	case *WALReadRec:
+		n := int64(512 + len(b.Source.Namespace) + len(b.Source.Error) + len(b.Source.Unavailable))
+		for _, f := range b.Source.Frames {
+			n += 32 + int64(len(f.Bytes))
+		}
+		return n
 	case *ReceiveDispatchRec:
 		return 512 + int64(len(b.Input)+len(b.InputKind)+len(b.Via)+len(b.Action)+len(b.Source.WriterRun)+len(b.StreamRun)+len(b.Origin.WriterRun)+len(b.Unavailable))
 	case *SelectionRec:

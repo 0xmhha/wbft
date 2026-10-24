@@ -338,6 +338,10 @@ type tnode struct {
 	internalSources        InternalSourceObserver
 	selectionSources       SelectionSourceObserver
 	receiveDispatchSources ReceiveDispatchSourceObserver
+	signerCalls            SignerCallObserver
+	signerSources          *privval.SourceOptions
+	walReadSources         WALReadSourceObserver
+	walReadSourceLimits    wal.ReadSourceLimits
 	// timerTrace enables measured scheduler records in the test journal.
 	timerTrace bool
 	// refused is the codes of the signatures privval refused (Deps.Refused).
@@ -369,7 +373,13 @@ func (n *tnode) boot() {
 	if err := n.fs.MkdirAll("/pv", 0o700); err != nil {
 		t.Fatal(err)
 	}
-	s, err := privval.NewKeySigner(n.fs, nil, n.k.secret[n.self], "/pv/state")
+	var s *privval.FileSigner
+	var err error
+	if n.signerSources == nil {
+		s, err = privval.NewKeySigner(n.fs, nil, n.k.secret[n.self], "/pv/state")
+	} else {
+		s, err = privval.NewKeySignerWithOptions(privval.Options{FS: n.fs, Sources: n.signerSources}, n.k.secret[n.self], "/pv/state")
+	}
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -393,7 +403,7 @@ func (n *tnode) boot() {
 	}
 	n.events = &eventLog{}
 	d := Deps{Chain: n.chain, App: n.app, Transport: dd, Net: n.net,
-		CoreSteps: n.coreSteps, TimerSources: n.timerSources, AppQueueSources: n.appQueueSources, FinalizeSources: n.finalizeSources, InboxSources: n.inboxSources, InternalSources: n.internalSources, SelectionSources: n.selectionSources, ReceiveDispatchSources: n.receiveDispatchSources,
+		SignerCalls: n.signerCalls, CoreSteps: n.coreSteps, TimerSources: n.timerSources, AppQueueSources: n.appQueueSources, FinalizeSources: n.finalizeSources, InboxSources: n.inboxSources, InternalSources: n.internalSources, SelectionSources: n.selectionSources, ReceiveDispatchSources: n.receiveDispatchSources, WALReadSources: n.walReadSources, WALReadSourceLimits: n.walReadSourceLimits,
 		Signer: s, WAL: log, Clock: n.clock, Events: n.events, Journal: jw, Rand: rand.New(rand.NewPCG(1, 2)).IntN,
 		Refused: func(code uint64) { n.refused = append(n.refused, code) }}
 	if n.noJournal {

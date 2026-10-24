@@ -19,8 +19,10 @@ import (
 
 // startEngine creates the core, replays the write-ahead log if enabled and
 // starts the engine run. It runs on the consensus goroutine.
-func (r *Runner) startEngine(_ context.Context, head *types.Header) error {
+func (r *Runner) startEngine(_ context.Context, head *types.Header) (startErr error) {
 	r.engineRun++
+	r.beginRestoreSource(head.Number.AddUint64(1))
+	defer r.finishRestoreSource(&startErr)
 	r.manualChecks = 0
 	r.manualStepPending = false
 	r.step = 0
@@ -48,6 +50,7 @@ func (r *Runner) startEngine(_ context.Context, head *types.Header) error {
 	var plan *replayPlan
 	if r.cfg.ReplayWAL && r.d.WAL != nil {
 		p, err := r.planReplay(from)
+		r.observeRestorePlan(p, err)
 		if err != nil {
 			if r.nextHeight != nil || errors.Is(err, errNextHeightWAL) {
 				return err
@@ -61,11 +64,11 @@ func (r *Runner) startEngine(_ context.Context, head *types.Header) error {
 	var journalRecs []*journal.StepRec
 	var replayTimers [4]*consensus.ArmTimer
 	if plan != nil && len(plan.steps) > 0 {
-		core, recs, res := r.runReplay(plan)
+		core, recs, res := r.runReplayObserved(plan)
 		if res.err != nil && res.lastPartial && r.nextHeight == nil {
 			// The last step was cut short by the crash: replay without it.
 			plan.steps = plan.steps[:len(plan.steps)-1]
-			core, recs, res = r.runReplay(plan)
+			core, recs, res = r.runReplayObserved(plan)
 		}
 		r.replay.Records = res.fed
 		if res.err != nil {
@@ -234,11 +237,12 @@ func (r *Runner) stopEngine(reason string) {
 
 // replayPlan is the part of the log a replay feeds.
 type replayPlan struct {
-	pending []deferredRecord
-	head    *types.Header
-	vs      *validator.Set
-	gens    []uint64
-	steps   []walStep
+	boundary int // original record index; -1 when no eligible boundary
+	pending  []deferredRecord
+	head     *types.Header
+	vs       *validator.Set
+	gens     []uint64
+	steps    []walStep
 }
 
 // planReplay finds the last boundary of height from (an end-of-height
@@ -248,8 +252,7 @@ type replayPlan struct {
 // the next end-of-height record, at a run start that did not continue a
 // replay, or at a new head of height from or above.
 func (r *Runner) planReplay(from types.Height) (*replayPlan, error) {
-	fs, dir := r.d.WAL.FS()
-	recs, _, err := wal.ReadAll(fs, dir)
+	recs, _, err := r.readReplayWAL()
 	if err != nil {
 		// Damage the open did not repair (a torn tail being written now);
 		// use what was read.
@@ -283,9 +286,9 @@ func (r *Runner) planReplay(from types.Height) (*replayPlan, error) {
 		return nil, err
 	}
 	if start < 0 {
-		return &replayPlan{pending: pending}, nil
+		return &replayPlan{pending: pending, boundary: -1}, nil
 	}
-	plan := &replayPlan{head: b.Head, vs: b.Validators, gens: b.timerGenerations()}
+	plan := &replayPlan{boundary: start, head: b.Head, vs: b.Validators, gens: b.timerGenerations()}
 	var cur *walStep
 	flush := func() {
 		if cur != nil {
