@@ -105,18 +105,19 @@ type Writer interface {
 // Log is an append-only log in a directory of numbered segment files. It is
 // safe for concurrent use.
 type Log struct {
-	mu      sync.Mutex // wal.writer.mu
-	fs      fsys.FS
-	dir     string
-	opt     Options
-	seg     uint64
-	f       fsys.File
-	size    int64 // bytes written to the current segment file
-	hdr     int64 // bytes of the header records at the start of the segment
-	buf     []byte
-	err     error // sticky write error
-	closed  bool
-	started bool
+	readSource readSourceState
+	mu         sync.Mutex // wal.writer.mu
+	fs         fsys.FS
+	dir        string
+	opt        Options
+	seg        uint64
+	f          fsys.File
+	size       int64 // bytes written to the current segment file
+	hdr        int64 // bytes of the header records at the start of the segment
+	buf        []byte
+	err        error // sticky write error
+	closed     bool
+	started    bool
 }
 
 var _ Writer = (*Log)(nil)

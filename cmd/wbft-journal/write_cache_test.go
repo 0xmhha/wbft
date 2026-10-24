@@ -10,6 +10,8 @@ import (
 	"github.com/0xmhha/wbft/codec"
 	"github.com/0xmhha/wbft/consensus"
 	"github.com/0xmhha/wbft/consensus/inputlog"
+	"github.com/0xmhha/wbft/consensus/privval"
+	"github.com/0xmhha/wbft/consensus/wal"
 	"github.com/0xmhha/wbft/crypto/ecdsa"
 	"github.com/0xmhha/wbft/crypto/keccak"
 	"github.com/0xmhha/wbft/internal/fsys"
@@ -141,7 +143,7 @@ func TestReceiveCacheRecordR01ProjectionUnavailableWithoutProfile(t *testing.T) 
 
 func TestSessionSourceR01ProjectionUnavailableWithoutProfile(t *testing.T) {
 	for _, legacy := range []uint64{0, journal.CacheTraceVersion} {
-		for _, domain := range []string{"lifetime", "frame", "write_attempt", "core_step", "app_queue", "finalize", "inbox", "internal", "selection", "receive_dispatch"} {
+		for _, domain := range []string{"lifetime", "frame", "write_attempt", "core_step", "app_queue", "finalize", "inbox", "internal", "selection", "receive_dispatch", "wal_read", "restore", "signer", "signer_call"} {
 			t.Run(fmt.Sprintf("%s/%d", domain, legacy), func(t *testing.T) {
 				fs := fsys.NewMem()
 				writer, err := journal.Open(journal.Options{FS: fs, Dir: "/session-source", Synchronous: true}, journal.Identity{Run: "current-writer", Core: journal.CoreOptions{CacheTrace: legacy}})
@@ -150,6 +152,14 @@ func TestSessionSourceR01ProjectionUnavailableWithoutProfile(t *testing.T) {
 				}
 				ref := &journal.SessionRef{Run: "original-writer", Ordinal: 7}
 				switch domain {
+				case "signer":
+					writer.Put(journal.Record{Body: &journal.SignerRec{Source: privval.Source{Version: privval.SourceVersion, Ref: privval.SourceRef{Namespace: "original-signer", Signer: 1, Sequence: 1}, Action: "initial", Result: "ok", Unavailable: "inspection_limits_required"}}})
+				case "signer_call":
+					writer.Put(journal.Record{Body: &journal.SignerCallRec{Version: journal.SignerCallSourceVersion, EngineRun: 1, Step: 1, Output: 1, Source: privval.SourceRef{Namespace: "original-signer", Signer: 1, Sequence: 2}, Result: "sent"}})
+				case "restore":
+					writer.Put(journal.Record{Body: &journal.RestoreRec{Version: journal.RestoreSourceVersion, EngineRun: 1, Read: journal.WALReadRef{Namespace: "original-reader", Log: 1, Sequence: 1}, From: "1"}})
+				case "wal_read":
+					writer.Put(journal.Record{Body: &journal.WALReadRec{Source: wal.ReadSource{Version: wal.ReadSourceVersion, Namespace: "original-reader", Log: 1, Sequence: 1}}})
 				case "receive_dispatch":
 					input, e := inputlog.Encode(consensus.Message{})
 					if e != nil {
@@ -195,6 +205,9 @@ func TestSessionSourceR01ProjectionUnavailableWithoutProfile(t *testing.T) {
 					t.Fatal(err)
 				}
 				expected := "session"
+				if domain == "wal_read" {
+					expected = "WAL read sources"
+				}
 				if domain == "receive_dispatch" {
 					expected = "receive dispatch sources"
 				}
@@ -206,6 +219,15 @@ func TestSessionSourceR01ProjectionUnavailableWithoutProfile(t *testing.T) {
 				}
 				if domain == "internal" {
 					expected = "internal sources"
+				}
+				if domain == "signer" {
+					expected = "signer sources"
+				}
+				if domain == "signer_call" {
+					expected = "signer call sources"
+				}
+				if domain == "restore" {
+					expected = "restore sources"
 				}
 				if domain == "inbox" {
 					expected = "inbox sources"

@@ -92,6 +92,10 @@ func inspectCoreSourceOutputs(records []Record, limits CoreSourceLimits, capture
 
 // Snapshot consumers receive only independently executed, source-checked states.
 func inspectCoreSourceStates(records []Record, limits CoreSourceLimits, capture func(string, *CoreStepRec, []consensus.Output), snapshots func(string, *CoreStepRec, *consensus.Snapshot)) (CoreSourceCheck, []coreSourceAccepted, error) {
+	return inspectCoreSourceStatesRestored(records, limits, capture, snapshots, nil)
+}
+
+func inspectCoreSourceStatesRestored(records []Record, limits CoreSourceLimits, capture func(string, *CoreStepRec, []consensus.Output), snapshots func(string, *CoreStepRec, *consensus.Snapshot), seeds map[coreSourceRunKey]restoredCoreSeed) (CoreSourceCheck, []coreSourceAccepted, error) {
 	report := CoreSourceCheck{Status: "unavailable", Scope: "core_execution_on_recorded_inputs", PhysicalStatus: "unavailable", ScheduleStatus: "unavailable"}
 	unavailable := func(reason string) (CoreSourceCheck, []coreSourceAccepted, error) {
 		report.Status, report.Reason = "unavailable", reason
@@ -119,7 +123,7 @@ func inspectCoreSourceStates(records []Record, limits CoreSourceLimits, capture 
 		usedBytes += uint64(n)
 		return true
 	}
-	for _, record := range records {
+	for position, record := range records {
 		switch s := record.Body.(type) {
 		case *SegmentRec:
 			writer = s.Run
@@ -174,7 +178,15 @@ func inspectCoreSourceStates(records []Record, limits CoreSourceLimits, capture 
 				return unavailable("source_" + s.Unavailable)
 			}
 			if s.ReplayedPrefix {
-				return unavailable("restored_prefix_not_reconstructed")
+				seed, ok := seeds[coreSourceRunKey{writer, s.EngineRun}]
+				if !ok {
+					return unavailable("restored_prefix_not_reconstructed")
+				}
+				if seed.ready >= position {
+					return inconsistent("restore_source_after_live_step")
+				}
+			} else if _, ok := seeds[coreSourceRunKey{writer, s.EngineRun}]; ok {
+				return inconsistent("restored_prefix_marker_missing")
 			}
 			w, ok := writers[writer]
 			if !ok {
@@ -196,6 +208,19 @@ func inspectCoreSourceStates(records []Record, limits CoreSourceLimits, capture 
 			}
 			key := coreSourceRunKey{writer, s.EngineRun}
 			model := runs[key]
+			if model == nil {
+				if seed, ok := seeds[key]; ok {
+					if seed.config.self != w.self || seed.config.improvements != w.improvements || seed.config.backlog != w.backlog || !bytes.Equal(seed.config.config, w.config) {
+						return inconsistent("restore_configuration_changed")
+					}
+					if report.Runs >= limits.Runs {
+						return unavailable("run_limit")
+					}
+					model = seed.model
+					runs[key] = model
+					report.Runs++
+				}
+			}
 			if model == nil {
 				if s.Step != 1 || s.InputKind != inputlog.KindStart {
 					return unavailable("core_start_missing")

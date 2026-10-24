@@ -172,6 +172,10 @@ type Deps struct {
 	SelectionSources SelectionSourceObserver
 	// ReceiveDispatchSources observes original lookup ownership and actual completion.
 	ReceiveDispatchSources ReceiveDispatchSourceObserver
+	// WALReadSources observes original restore reads with explicit copy bounds.
+	SignerCalls         SignerCallObserver
+	WALReadSources      WALReadSourceObserver
+	WALReadSourceLimits wal.ReadSourceLimits
 	// Synchronising reports whether the application is synchronising the
 	// chain; consensus messages that arrive while the engine is stopped are
 	// then dropped instead of closing the connection.
@@ -271,6 +275,10 @@ type Runner struct {
 	floorSkip                map[string]bool
 	lastGen                  [4]uint64
 	replay                   ReplayInfo
+	walReadNamespace         string
+	restoreSource            *journal.RestoreRec
+	restoreSourceBytes       uint64
+	lastWALReadSource        journal.WALReadRef
 
 	running  atomic.Bool
 	snap     publishedSnapshot
@@ -394,6 +402,9 @@ func New(cfg Config, d Deps) (*Runner, error) {
 		lg = slog.New(slog.DiscardHandler)
 	}
 	r := &Runner{cfg: cfg, d: d, log: lg, notify: make(chan struct{}, 1), floorSkip: map[string]bool{}}
+	if source, ok := d.WALReadSources.(interface{ CaptureRun() string }); ok {
+		r.walReadNamespace = source.CaptureRun()
+	}
 	r.receiveCache = receiveCache
 	if d.ModuleLogger != nil {
 		r.modLogs = map[logcat.Module]*slog.Logger{logcat.ConsensusRound: d.ModuleLogger(logcat.ConsensusRound),

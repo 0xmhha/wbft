@@ -103,7 +103,8 @@ type Options struct {
 	// system.
 	FS fsys.FS
 	// Faults is called at the fault points of the sign state write.
-	Faults faultpoint.Handler
+	Faults  faultpoint.Handler
+	Sources *SourceOptions
 }
 
 // FileSigner signs with a node key file and keeps its sign state in a file.
@@ -120,7 +121,8 @@ type FileSigner struct {
 	addr   types.Address
 	blsPub []byte
 
-	st state
+	st     state
+	source sourceState
 }
 
 var _ Signer = (*FileSigner)(nil)
@@ -147,7 +149,11 @@ func OpenFileSigner(opt Options, keyFile, stateFile string) (*FileSigner, error)
 	if err != nil {
 		return nil, err
 	}
-	return newSigner(fs, opt.Faults, secret, stateFile)
+	signer, err := newSigner(fs, opt.Faults, secret, stateFile)
+	if err == nil {
+		signer.initializeSource(opt.Sources)
+	}
+	return signer, err
 }
 
 // NewKeySigner returns a signer for the 32-byte secret key with its sign state
@@ -208,9 +214,17 @@ func (s *FileSigner) Empty() bool {
 // InitSignFloor records "sign nothing at height <= h". It is allowed only
 // while no signature has been recorded (otherwise ErrSignStateNotEmpty); the
 // floor is durable when it returns.
-func (s *FileSigner) InitSignFloor(h types.Height) error {
+func (s *FileSigner) InitSignFloor(h types.Height) (sourceErr error) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	record := s.beginSource("init_floor")
+	defer func() {
+		s.finishSourceLocked(record, VoteSignature{}, sourceErr)
+		s.mu.Unlock()
+		s.publishSource(record)
+	}()
+	if record != nil {
+		record.Floor = h.String()
+	}
 	if s.st.highest != nil {
 		return ErrSignStateNotEmpty
 	}
@@ -221,9 +235,14 @@ func (s *FileSigner) InitSignFloor(h types.Height) error {
 
 // ClearSignFloor removes the floor. It is allowed only while no signature has
 // been recorded.
-func (s *FileSigner) ClearSignFloor() error {
+func (s *FileSigner) ClearSignFloor() (sourceErr error) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	record := s.beginSource("clear_floor")
+	defer func() {
+		s.finishSourceLocked(record, VoteSignature{}, sourceErr)
+		s.mu.Unlock()
+		s.publishSource(record)
+	}()
 	if s.st.highest != nil {
 		return ErrSignStateNotEmpty
 	}
@@ -289,60 +308,74 @@ func preparedRank(a, b *types.Round) int {
 //
 // Heights are compared with their full values.
 func (s *FileSigner) SignVote(req VoteRequest) (VoteSignature, error) {
+	sig, _, err := s.signVoteSource(req)
+	return sig, err
+}
+
+func (s *FileSigner) signVoteSource(req VoteRequest) (sourceSig VoteSignature, sourceRef SourceRef, sourceErr error) {
 	m := req.Msg
 	if m == nil {
-		return VoteSignature{}, ErrBadRequest
+		return VoteSignature{}, sourceRef, ErrBadRequest
 	}
 	switch m.Code {
 	case codec.CodePreprepare, codec.CodePrepare, codec.CodeCommit, codec.CodeRoundChange:
 	default:
-		return VoteSignature{}, ErrBadRequest
+		return VoteSignature{}, sourceRef, ErrBadRequest
 	}
 	c := *m
 	c.Signature = nil
 	c.Seal = nil
 	if m.Code == codec.CodePrepare || m.Code == codec.CodeCommit {
 		if len(req.SealData) == 0 {
-			return VoteSignature{}, ErrBadRequest
+			return VoteSignature{}, sourceRef, ErrBadRequest
 		}
 		c.Seal = s.bls.Sign(req.SealData).Bytes()
 	}
 	payload, err := codec.SigningPayload(&c, false, nil)
 	if err != nil {
-		return VoteSignature{}, err
+		return VoteSignature{}, sourceRef, err
 	}
 	ph := keccak.Sum256(payload)
 	seq, round := m.View.Sequence, m.View.Round
 
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	sourceRec := s.beginSource("vote")
+	if sourceRec != nil {
+		sourceRef = sourceRec.Ref
+		s.sourceVoteRequest(sourceRec, &c, req)
+	}
+	defer func() {
+		s.finishSourceLocked(sourceRec, sourceSig, sourceErr)
+		s.mu.Unlock()
+		s.publishSource(sourceRec)
+	}()
 	st := &s.st
 	if st.floor != nil && seq.Cmp(*st.floor) <= 0 {
-		return VoteSignature{}, ErrBelowSignFloor
+		return VoteSignature{}, sourceRef, ErrBelowSignFloor
 	}
 	old := st.find(m.Code, seq, round)
 	if old != nil && old.payload == ph {
-		return VoteSignature{Signature: bytes.Clone(old.signature), Seal: bytes.Clone(old.seal), Reused: true}, nil
+		return VoteSignature{Signature: bytes.Clone(old.signature), Seal: bytes.Clone(old.seal), Reused: true}, sourceRef, nil
 	}
 	if st.highest != nil && seq.Cmp(*st.highest) < 0 {
-		return VoteSignature{}, fmt.Errorf("%w: height %s below the highest signed height %s", ErrDoubleSign, seq, st.highest)
+		return VoteSignature{}, sourceRef, fmt.Errorf("%w: height %s below the highest signed height %s", ErrDoubleSign, seq, st.highest)
 	}
 	var prepared *types.Round
 	if m.Code == codec.CodeRoundChange {
 		prepared = m.PreparedRound
 		released := req.BadBlockReleased && prepared == nil
 		if cr, ok := st.commits[seq.String()]; ok && !released && (prepared == nil || prepared.Cmp(cr) < 0) {
-			return VoteSignature{}, fmt.Errorf("%w: ROUND-CHANGE below the COMMIT of round %s", ErrDoubleSign, cr)
+			return VoteSignature{}, sourceRef, fmt.Errorf("%w: ROUND-CHANGE below the COMMIT of round %s", ErrDoubleSign, cr)
 		}
 		if old != nil && !released && preparedRank(prepared, old.prepared) < 0 {
-			return VoteSignature{}, fmt.Errorf("%w: ROUND-CHANGE with a lower prepared round", ErrDoubleSign)
+			return VoteSignature{}, sourceRef, fmt.Errorf("%w: ROUND-CHANGE with a lower prepared round", ErrDoubleSign)
 		}
 	} else if old != nil {
-		return VoteSignature{}, fmt.Errorf("%w: code %d at view (%s, %s)", ErrDoubleSign, m.Code, seq, round)
+		return VoteSignature{}, sourceRef, fmt.Errorf("%w: code %d at view (%s, %s)", ErrDoubleSign, m.Code, seq, round)
 	}
 	sig, err := ecdsa.Sign(ph, s.key)
 	if err != nil {
-		return VoteSignature{}, err
+		return VoteSignature{}, sourceRef, err
 	}
 	next := st.clone()
 	next.put(record{code: m.Code, seq: seq, round: round, payload: ph, signature: sig, seal: c.Seal, prepared: prepared})
@@ -357,9 +390,9 @@ func (s *FileSigner) SignVote(req VoteRequest) (VoteSignature, error) {
 	}
 	next.prune()
 	if err := s.commit(next); err != nil {
-		return VoteSignature{}, err
+		return VoteSignature{}, sourceRef, err
 	}
-	return VoteSignature{Signature: bytes.Clone(sig), Seal: bytes.Clone(c.Seal)}, nil
+	return VoteSignature{Signature: bytes.Clone(sig), Seal: bytes.Clone(c.Seal)}, sourceRef, nil
 }
 
 // commit writes next durably and then makes it the state.
@@ -369,8 +402,18 @@ func (s *FileSigner) commit(next state) error {
 		return err
 	}
 	faultpoint.Hit(s.faults, faultpoint.PrivvalBeforePersist)
+	if r := s.source.active; r != nil {
+		r.WriteAttempted = 1
+		r.Write = s.sourceRetain(r, data)
+	}
 	if err := fsys.WriteFileAtomic(s.fs, s.dir, s.file, data, 0o600); err != nil {
+		if r := s.source.active; r != nil {
+			r.WriteResult = "failed"
+		}
 		return err
+	}
+	if r := s.source.active; r != nil {
+		r.WriteResult = "ok"
 	}
 	faultpoint.Hit(s.faults, faultpoint.PrivvalAfterPersist)
 	s.st = next
