@@ -229,3 +229,24 @@ func TestTimerLifecycleEqualDeadlineQueueOrder(t *testing.T) {
 		t.Fatal("equal deadlines replaced original queue order", report, err)
 	}
 }
+
+// The wire owner is zero-step/output for every restored timer. Only the
+// independently decoded kind distinguishes these private lifecycle identities.
+func TestTimerLifecycleRestoredKindsHaveDistinctIdentity(t *testing.T) {
+	source := &TimerRec{EngineRun: 2, ArmEngineRun: 2, Source: "restore"}
+	seen := map[lifecycleSourceKey]bool{}
+	for kind := consensus.RoundTimer; kind <= consensus.RoundProposalTimer; kind++ {
+		owner := timerLifecycleSourceIdentity("normal-restored", source, false, kind)
+		arm := timerLifecycleSourceIdentity("normal-restored", source, true, kind)
+		if owner != arm || seen[arm] || arm.restoredKind != uint64(kind)+1 {
+			t.Fatal("restored kind identity collided", kind, owner, arm)
+		}
+		seen[arm] = true
+	}
+	normal := &TimerRec{EngineRun: 2, Step: 5, Output: 7, ArmEngineRun: 2, ArmStep: 5, ArmOutput: 7, Source: "core"}
+	a := timerLifecycleSourceIdentity("normal-restored", normal, true, consensus.RoundTimer)
+	b := timerLifecycleSourceIdentity("normal-restored", normal, true, consensus.RetryTimer)
+	if a != b || a.restoredKind != 0 {
+		t.Fatal("ordinary core output identity changed", a, b)
+	}
+}

@@ -72,3 +72,40 @@ Missing roots, gaps, unsupported paths and exhausted limits remain unavailable.
 The default inbox/internal/receive-dispatch and functional replay guards remain
 separate. These records cannot be projected into R01, including headerless
 records with legacy cache declarations.
+
+
+`CheckRestoredInternalSources` verifies the complete observed internal FIFO,
+including its installation reset and replay-owned appends. Verified restore
+arms use separate identities for each timer kind even when live step/output
+coordinates are zero. `CheckRestoredTimerLifecycleSources` follows these arms
+through actual queue, dequeue, replacement, cancellation and clear operations.
+
+`CheckRestoredInboxSources` derives the initial replay snapshot from its original
+WAL installation. The replay flag persists on later live publications and is
+checked separately from publication phase. The first post-restore selection
+uses the actual installation boundary rather than a fabricated live Start step.
+Standalone inbox and selection checks still require independent evidence for
+Known-message discards.
+
+`CheckRestoredReceiveDispatchSources` verifies original raw receive sources,
+checking-ledger lookups, private replay qualification and actual dispositions.
+A replay marker never substitutes for required coordinates. Only successful
+independent verification can supply private Known-discard evidence to queue
+inspectors. The ordinary entry points retain their restored-prefix guards.
+
+`CheckRestoredNodeSources` composes these checks with accepted writes, local I/O,
+application queues and finalize tasks. `CheckRestoredNodeExecutionSources` also
+checks public initial signer witnesses, actual signing/WAL bindings and isolated
+application execution from explicit public roots. Each inspection reconstructs
+fresh private state. No caller-supplied core model or runtime result is reused.
+
+Additional original readable-prefix records need not have installed a restore.
+They are validated and counted as `unreferenced_reads`; the checker does not
+infer their purpose, close completion or durability. Every retained engine still
+requires its actual installation record.
+
+A successful composition leaves physical, schedule and termination statuses
+unavailable. Retained-work counts concern checked queues only. Initial public
+signer state and public application prefixes remain conditional witnesses, and
+cross-lifetime WAL ownership, operational budgets and full runtime closure
+require separate evidence.

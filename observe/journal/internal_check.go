@@ -20,22 +20,23 @@ type InternalLimits struct {
 }
 
 type InternalCheck struct {
-	Status         string `json:"status"`
-	Reason         string `json:"reason,omitempty"`
-	Scope          string `json:"scope"`
-	PhysicalStatus string `json:"physical_status"`
-	ScheduleStatus string `json:"schedule_status"`
-	SignerStatus   string `json:"signer_status"`
-	Appended       uint64 `json:"appended,string"`
-	Scheduled      uint64 `json:"scheduled,string"`
-	OwnMessages    uint64 `json:"own_messages,string"`
-	Popped         uint64 `json:"popped,string"`
-	Dispatched     uint64 `json:"dispatched,string"`
-	Resets         uint64 `json:"resets,string"`
-	Clears         uint64 `json:"clears,string"`
-	ClearedInputs  uint64 `json:"cleared_inputs,string"`
-	RetainedQueued uint64 `json:"retained_queued,string"`
-	RetainedTaken  uint64 `json:"retained_taken,string"`
+	Status              string `json:"status"`
+	Reason              string `json:"reason,omitempty"`
+	Scope               string `json:"scope"`
+	PhysicalStatus      string `json:"physical_status"`
+	ScheduleStatus      string `json:"schedule_status"`
+	SignerStatus        string `json:"signer_status"`
+	Appended            uint64 `json:"appended,string"`
+	Scheduled           uint64 `json:"scheduled,string"`
+	OwnMessages         uint64 `json:"own_messages,string"`
+	RestoredOwnMessages uint64 `json:"restored_own_messages,string"`
+	Popped              uint64 `json:"popped,string"`
+	Dispatched          uint64 `json:"dispatched,string"`
+	Resets              uint64 `json:"resets,string"`
+	Clears              uint64 `json:"clears,string"`
+	ClearedInputs       uint64 `json:"cleared_inputs,string"`
+	RetainedQueued      uint64 `json:"retained_queued,string"`
+	RetainedTaken       uint64 `json:"retained_taken,string"`
 }
 
 var ErrInternalSource = errors.New("journal: inconsistent internal input source")
@@ -104,6 +105,33 @@ func matchInternalOwn(in consensus.Input, r *InternalRec, expected *internalExpe
 // selection completed a core step or that other input lanes were empty. Missing
 // signing-state, restored-prefix and receive-dedup evidence remains unavailable.
 func CheckInternalSources(records []Record, limits InternalLimits) (InternalCheck, error) {
+	return checkInternalSources(records, limits, false, restoredQueueEvidence{})
+}
+
+// CheckRestoredInternalSources explicitly reconstructs original WAL state and
+// restore effects before checking the entire observed FIFO. It preserves the
+// ordinary restored-prefix guard and never edits markers or invents live steps.
+func CheckRestoredInternalSources(records []Record, limits InternalLimits) (InternalCheck, error) {
+	restore, seeds, err := reconstructRestoreSources(records, limits.Core)
+	report := InternalCheck{Status: "unavailable", Reason: "restore_not_reconstructed", Scope: "internal_queue_on_independent_restored_core", PhysicalStatus: "unavailable", ScheduleStatus: "unavailable", SignerStatus: "unavailable"}
+	if err != nil || restore.Status != "consistent" {
+		if err != nil {
+			report.Status = "inconsistent"
+		}
+		return report, err
+	}
+	var evidence restoredQueueEvidence
+	effects, err := inspectRestoreEffects(records, limits.Core, seeds, func(e restoredQueueEvidence) { evidence = e })
+	if err != nil || effects.Status != "consistent" {
+		report.Status, report.Reason = effects.Status, "effects_"+effects.Reason
+		return report, err
+	}
+	report, err = checkInternalSources(records, limits, true, evidence)
+	report.Scope = "internal_queue_on_independent_restored_core"
+	return report, err
+}
+
+func checkInternalSources(records []Record, limits InternalLimits, restored bool, evidence restoredQueueEvidence) (InternalCheck, error) {
 	report := InternalCheck{Status: "unavailable", Scope: "internal_queue_on_independent_core_outputs", PhysicalStatus: "unavailable", ScheduleStatus: "unavailable", SignerStatus: "unavailable"}
 	unavailable := func(reason string) (InternalCheck, error) {
 		report.Status, report.Reason = "unavailable", reason
@@ -123,7 +151,7 @@ func CheckInternalSources(records []Record, limits InternalLimits) (InternalChec
 	stops := map[appCoreKey]bool{}
 	var span uint64
 	issue := ""
-	core, _, err := inspectCoreSourceOutputs(records, limits.Core, func(writer string, source *CoreStepRec, outputs []consensus.Output) {
+	core, _, err := inspectApplicationCoreOutputs(records, limits.Core, restored, func(writer string, source *CoreStepRec, outputs []consensus.Output) {
 		if issue != "" {
 			return
 		}
@@ -181,10 +209,14 @@ func CheckInternalSources(records []Record, limits InternalLimits) (InternalChec
 	if issue != "" {
 		return unavailable(issue)
 	}
+	for key := range evidence.starts {
+		resets[appCoreKey{key.writer, key.engine, 0}] = false
+	}
+	indexes := map[*InternalRec]int{}
 	groups := map[string][]*InternalRec{}
 	writer := ""
 	var operations uint64
-	for _, record := range records {
+	for index, record := range records {
 		switch r := record.Body.(type) {
 		case *SegmentRec:
 			writer = r.Run
@@ -207,7 +239,7 @@ func CheckInternalSources(records []Record, limits InternalLimits) (InternalChec
 			if !validInternalRec(r) {
 				return inconsistent("invalid_internal_source")
 			}
-			if r.Unavailable != "" {
+			if r.Unavailable != "" && (r.Unavailable != "replay_prefix" || evidence.appends[restoredInternalKey{writer, r.EngineRun, r.Sequence}] != r) {
 				return unavailable("internal_" + r.Unavailable)
 			}
 			if writer == "" {
@@ -219,6 +251,7 @@ func CheckInternalSources(records []Record, limits InternalLimits) (InternalChec
 			operations++
 			span += uint64(len(r.Input))
 			groups[writer] = append(groups[writer], r)
+			indexes[r] = index
 		}
 	}
 	if operations == 0 {
@@ -275,11 +308,18 @@ func CheckInternalSources(records []Record, limits InternalLimits) (InternalChec
 			case "reset":
 				key := appCoreKey{name, r.EngineRun, 1}
 				start := steps[key]
-				if start == nil {
-					return unavailable("internal_start_source_missing")
-				}
-				if r.EngineRun != engine+1 || start.InputKind != inputlog.KindStart || resets[key] || r.Mono > uint64(start.Entry.Mono) {
-					return inconsistent("internal_start_source_changed")
+				if boundary, ok := evidence.starts[coreSourceRunKey{name, r.EngineRun}]; ok {
+					key = appCoreKey{name, r.EngineRun, 0}
+					if r.EngineRun != engine+1 || resets[key] || indexes[r] >= boundary.readIndex || indexes[r] >= boundary.ready || r.Mono > boundary.readMono || r.Mono > boundary.installedMono {
+						return inconsistent("internal_restore_reset_changed")
+					}
+				} else {
+					if start == nil {
+						return unavailable("internal_start_source_missing")
+					}
+					if r.EngineRun != engine+1 || start.InputKind != inputlog.KindStart || resets[key] || r.Mono > uint64(start.Entry.Mono) {
+						return inconsistent("internal_start_source_changed")
+					}
 				}
 				if len(taken) != 0 {
 					return unavailable("internal_start_with_undispatched_input")
@@ -290,34 +330,43 @@ func CheckInternalSources(records []Record, limits InternalLimits) (InternalChec
 				engine = r.EngineRun
 				report.Resets++
 			case "append":
-				key := internalOutputKey{appCoreKey{name, r.EngineRun, r.Step}, r.Output}
-				e := expected[key]
-				if e == nil {
-					return unavailable("internal_output_source_missing")
-				}
-				if e.seen {
-					return inconsistent("internal_output_reused")
-				}
-				if r.Mono < uint64(e.source.Entry.Mono) || r.Mono > uint64(e.source.Observed.Mono) {
-					return inconsistent("internal_output_time_changed")
-				}
-				if e.scheduled != nil {
-					if r.Origin != "schedule" || r.InputKind != inputlog.Kind(e.scheduled) || !bytes.Equal(r.Input, e.input) {
-						return inconsistent("internal_scheduled_input_changed")
+				if evidence.appends[restoredInternalKey{name, r.EngineRun, r.Sequence}] == r {
+					if uint64(len(queue))+uint64(len(taken)) >= limits.Entries {
+						return unavailable("internal_entry_limit")
 					}
-					report.Scheduled++
+					queue = append(queue, r)
+					report.Appended++
+					report.RestoredOwnMessages++
 				} else {
-					if r.Origin != "own" || !matchInternalOwn(in, r, e) {
-						return inconsistent("internal_own_input_changed")
+					key := internalOutputKey{appCoreKey{name, r.EngineRun, r.Step}, r.Output}
+					e := expected[key]
+					if e == nil {
+						return unavailable("internal_output_source_missing")
 					}
-					report.OwnMessages++
+					if e.seen {
+						return inconsistent("internal_output_reused")
+					}
+					if r.Mono < uint64(e.source.Entry.Mono) || r.Mono > uint64(e.source.Observed.Mono) {
+						return inconsistent("internal_output_time_changed")
+					}
+					if e.scheduled != nil {
+						if r.Origin != "schedule" || r.InputKind != inputlog.Kind(e.scheduled) || !bytes.Equal(r.Input, e.input) {
+							return inconsistent("internal_scheduled_input_changed")
+						}
+						report.Scheduled++
+					} else {
+						if r.Origin != "own" || !matchInternalOwn(in, r, e) {
+							return inconsistent("internal_own_input_changed")
+						}
+						report.OwnMessages++
+					}
+					if uint64(len(queue))+uint64(len(taken)) >= limits.Entries {
+						return unavailable("internal_entry_limit")
+					}
+					e.seen = true
+					queue = append(queue, r)
+					report.Appended++
 				}
-				if uint64(len(queue))+uint64(len(taken)) >= limits.Entries {
-					return unavailable("internal_entry_limit")
-				}
-				e.seen = true
-				queue = append(queue, r)
-				report.Appended++
 			case "pop":
 				if len(queue) == 0 || queue[0].Request != r.Request || queue[0].InputKind != r.InputKind || !bytes.Equal(queue[0].Input, r.Input) {
 					return inconsistent("internal_fifo_changed")

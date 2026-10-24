@@ -27,6 +27,7 @@ type RestoreCheck struct {
 	ApplicationStatus             string `json:"application_status"`
 	PhysicalStatus                string `json:"physical_status"`
 	Reads, Runs, Attempts, Inputs uint64
+	UnreferencedReads             uint64 `json:"unreferenced_reads,string"`
 }
 
 var ErrRestoreSource = errors.New("journal: inconsistent restore source")
@@ -308,9 +309,25 @@ func reconstructRestoreSources(records []Record, limits CoreSourceLimits) (Resto
 	if report.Runs == 0 {
 		return unavailable("no_restore_sources")
 	}
-	for ref := range reads {
+	// ReadAllObserved also supplies independent read witnesses, including an
+	// optional read after WAL Close. Only a RestoreRec assigns a read to an
+	// installation. Never infer that an unreferenced read performed a restore.
+	for ref := range reads { //wbft:unordered only the count of unreferenced reads is accumulated
 		if !usedReads[ref] {
-			return unavailable("restore_result_missing")
+			report.UnreferencedReads++
+		}
+	}
+	// A retained live engine still requires its actual installation record.
+	// Extra read witnesses cannot hide a missing cold or replayed result.
+	writer = ""
+	for _, record := range records {
+		switch source := record.Body.(type) {
+		case *SegmentRec:
+			writer = source.Run
+		case *CoreStepRec:
+			if !seen[coreSourceRunKey{writer, source.EngineRun}] {
+				return unavailable("restore_result_missing")
+			}
 		}
 	}
 	report.Status = "consistent"

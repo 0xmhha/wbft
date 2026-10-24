@@ -31,6 +31,7 @@ type restoreTimerExpected struct {
 	seen     bool
 	arm      *TimerRec
 	queued   bool
+	expiry   *TimerRec
 }
 type restoreInternalExpected struct {
 	seed     restoredCoreSeed
@@ -59,7 +60,30 @@ func CheckRestoredBoundarySources(records []Record, limits CoreSourceLimits) (Re
 	return restore, core, effects, err
 }
 
+type restoredQueueStart struct {
+	readIndex, ready        int
+	readMono, installedMono uint64
+}
+type restoredTimerSourceKey struct {
+	writer           string
+	engine, sequence uint64
+}
+
+type restoredInternalKey struct {
+	writer           string
+	engine, sequence uint64
+}
+type restoredQueueEvidence struct {
+	starts  map[coreSourceRunKey]restoredQueueStart
+	appends map[restoredInternalKey]*InternalRec
+	timers  map[restoredTimerSourceKey]*TimerRec
+}
+
 func checkRestoreEffects(records []Record, limits CoreSourceLimits, seeds map[coreSourceRunKey]restoredCoreSeed) (RestoreEffectsCheck, error) {
+	return inspectRestoreEffects(records, limits, seeds, nil)
+}
+
+func inspectRestoreEffects(records []Record, limits CoreSourceLimits, seeds map[coreSourceRunKey]restoredCoreSeed, verified func(restoredQueueEvidence)) (RestoreEffectsCheck, error) {
 	report := RestoreEffectsCheck{Status: "unavailable", Scope: "restore_timer_and_internal_first_live_bindings"}
 	unavailable := func(reason string) (RestoreEffectsCheck, error) {
 		report.Status, report.Reason = "unavailable", reason
@@ -196,6 +220,7 @@ func checkRestoreEffects(records []Record, limits CoreSourceLimits, seeds map[co
 					return bad("restore_timer_expiry_changed")
 				}
 				proof.queued = true
+				proof.expiry = r
 				continue
 			}
 			if proof.seen || r.Step != 0 || r.Output != 0 || r.ArmEngineRun != r.EngineRun || r.ArmStep != 0 || r.ArmOutput != 0 || !bytes.Equal(r.Input, proof.input) {
@@ -308,6 +333,28 @@ func checkRestoreEffects(records []Record, limits CoreSourceLimits, seeds map[co
 	}
 	if len(seeds) == 0 {
 		return unavailable("no_restored_prefix")
+	}
+	if verified != nil {
+		evidence := restoredQueueEvidence{starts: map[coreSourceRunKey]restoredQueueStart{}, appends: map[restoredInternalKey]*InternalRec{}, timers: map[restoredTimerSourceKey]*TimerRec{}}
+		for key, seed := range seeds { //wbft:unordered independent keyed evidence collection commutes
+			evidence.starts[key] = restoredQueueStart{seed.readIndex, seed.ready, seed.read.Mono, seed.installed.Mono}
+		}
+		for key, items := range internal { //wbft:unordered independent keyed evidence collection commutes
+			for _, item := range items {
+				if item.appended != nil {
+					evidence.appends[restoredInternalKey{key.writer, key.engine, item.appended.Sequence}] = item.appended
+				}
+			}
+		}
+		for key, proof := range timers { //wbft:unordered independent keyed timer evidence collection commutes
+			if proof.arm != nil {
+				evidence.timers[restoredTimerSourceKey{key.writer, key.engine, proof.arm.Sequence}] = proof.arm
+			}
+			if proof.expiry != nil {
+				evidence.timers[restoredTimerSourceKey{key.writer, key.engine, proof.expiry.Sequence}] = proof.expiry
+			}
+		}
+		verified(evidence)
 	}
 	report.Status = "consistent"
 	return report, nil

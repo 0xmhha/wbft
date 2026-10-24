@@ -30,6 +30,10 @@ type acceptedReceiveRequest struct {
 // CheckWriteAcceptedSources follows the original receive request reference,
 // never a peer/key search. Full runtime scheduling/replay stays unavailable.
 func CheckWriteAcceptedSources(records []Record, limits WriteAcceptedSourceLimits) (WriteAcceptedSourceCheck, error) {
+	return checkWriteAcceptedSources(records, limits, false)
+}
+
+func checkWriteAcceptedSources(records []Record, limits WriteAcceptedSourceLimits, restored bool) (WriteAcceptedSourceCheck, error) {
 	report := WriteAcceptedSourceCheck{Status: "unavailable", Scope: "accepted_input_write_recent", PhysicalStatus: "unavailable", ScheduleStatus: "unavailable"}
 	unavailable := func(reason string) (WriteAcceptedSourceCheck, error) {
 		report.Status, report.Reason = "unavailable", reason
@@ -46,7 +50,7 @@ func CheckWriteAcceptedSources(records []Record, limits WriteAcceptedSourceLimit
 	if write.Status != "consistent" {
 		return unavailable("write_" + write.Reason)
 	}
-	receive, err := CheckReceiveSources(records, limits.Receive)
+	receive, err := checkReceiveSources(records, limits.Receive, restored)
 	if err != nil {
 		return inconsistent("receive_" + receive.Reason)
 	}

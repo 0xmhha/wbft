@@ -120,6 +120,10 @@ func CheckInputSelections(records []Record, limits SelectionLimits) (SelectionCh
 }
 
 func checkInputSelections(records []Record, limits SelectionLimits, discarded receiveDiscardEvidenceSet) (SelectionCheck, error) {
+	return inspectInputSelections(records, limits, discarded, false)
+}
+
+func inspectInputSelections(records []Record, limits SelectionLimits, discarded receiveDiscardEvidenceSet, restored bool) (SelectionCheck, error) {
 	consumed := map[receiveDiscardKey]bool{}
 	bySelection := map[finalizeQueueKey]receiveDiscardKey{}
 	for key, evidence := range discarded { //wbft:unordered duplicate gives identical error
@@ -141,34 +145,58 @@ func checkInputSelections(records []Record, limits SelectionLimits, discarded re
 	if limits.Operations == 0 || limits.Sources == 0 || limits.Bytes == 0 {
 		return unavailable("inspection_limits_required")
 	}
-	internal, err := CheckInternalSources(records, limits.Internal)
+	internalCheck := CheckInternalSources
+	if restored {
+		internalCheck = CheckRestoredInternalSources
+	}
+	internal, err := internalCheck(records, limits.Internal)
 	if err != nil {
 		return inconsistent("internal_" + internal.Reason)
 	}
 	if internal.Status != "consistent" {
 		return unavailable("internal_" + internal.Reason)
 	}
-	app, err := CheckAppQueueSources(records, limits.App)
+	app, err := checkAppQueueSources(records, limits.App, restored)
 	if err != nil {
 		return inconsistent("app_" + app.Reason)
 	}
 	if app.Status != "consistent" {
 		return unavailable("app_" + app.Reason)
 	}
-	timer, err := CheckTimerLifecycleSources(records, limits.Timer)
+	timerCheck := CheckTimerLifecycleSources
+	if restored {
+		timerCheck = CheckRestoredTimerLifecycleSources
+	}
+	timer, err := timerCheck(records, limits.Timer)
 	if err != nil {
 		return inconsistent("timer_" + timer.Reason)
 	}
 	if timer.Status != "consistent" {
 		return unavailable("timer_" + timer.Reason)
 	}
-	inbox, err := checkInboxSources(records, limits.Inbox, discarded)
+	inbox, err := inspectInboxSources(records, limits.Inbox, discarded, restored)
 	if err != nil {
 		return inconsistent("inbox_" + inbox.Reason)
 	}
 	if inbox.Status != "consistent" {
 		return unavailable("inbox_" + inbox.Reason)
 	}
+	// The first post-restore probe follows a verified WAL installation, not a
+	// synthetic live Start step. Keep its original index and monotonic boundary.
+	installed := map[appCoreKey]restoredQueueStart{}
+	if restored {
+		restore, seeds, e := reconstructRestoreSources(records, limits.Internal.Core)
+		if e != nil {
+			return inconsistent("restore_" + restore.Reason)
+		}
+		if restore.Status != "consistent" {
+			return unavailable("restore_" + restore.Reason)
+		}
+		for key, seed := range seeds { //wbft:unordered independent installation indexes commute
+			installed[appCoreKey{key.writer, key.engine, seed.installed.Steps}] = restoredQueueStart{seed.readIndex, seed.ready, seed.read.Mono, seed.installed.Mono}
+		}
+	}
+	indexes := map[*SelectionRec]int{}
 	mutations := map[selectionLaneKey][]*selectionMutation{}
 	groups := map[string][]*SelectionRec{}
 	steps := map[appCoreKey]*CoreStepRec{}
@@ -185,7 +213,7 @@ func checkInputSelections(records []Record, limits SelectionLimits, discarded re
 		span += uint64(n)
 		return true
 	}
-	for _, record := range records {
+	for index, record := range records {
 		var mutation *selectionMutation
 		lane := ""
 		switch r := record.Body.(type) {
@@ -208,6 +236,7 @@ func checkInputSelections(records []Record, limits SelectionLimits, discarded re
 				}
 			}
 		case *SelectionRec:
+			indexes[r] = index
 			if operations >= limits.Operations {
 				return unavailable("selection_operation_limit")
 			}
@@ -428,15 +457,25 @@ func checkInputSelections(records []Record, limits SelectionLimits, discarded re
 			previous, mono = r.Sequence, r.Mono
 			if r.Action == "select" {
 				report.Attempts++
-				source := steps[appCoreKey{name, r.EngineRun, r.Step}]
-				if source == nil {
+				key := appCoreKey{name, r.EngineRun, r.Step}
+				source := steps[key]
+				var probeMono uint64
+				boundary, restoredBoundary := installed[key]
+				switch {
+				case source != nil:
+					probeMono = uint64(source.Observed.Mono)
+				case restoredBoundary:
+					if indexes[r] <= boundary.ready || r.Mono < boundary.installedMono {
+						return inconsistent("selection_precedes_restore_installation")
+					}
+					probeMono = boundary.installedMono
+				default:
 					return unavailable("selection_preceding_core_source_missing")
 				}
 				expected, ok := selectedLane(r)
 				if !ok || expected != r.Lane {
 					return inconsistent("selection_priority_changed")
 				}
-				probeMono := uint64(source.Observed.Mono)
 				probes := []struct {
 					name string
 					p    InputProbe

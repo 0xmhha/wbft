@@ -64,7 +64,18 @@ func CheckReceiveDispatchSources(records []Record, limits ReceiveDispatchLimits)
 	return checkReceiveDispatchSources(records, limits, nil)
 }
 
+// CheckRestoredReceiveDispatchSources independently reconstructs the original
+// WAL boundary and restore effects before checking lookup and queue ownership.
+// Known-discard evidence remains private and is emitted only after all checks.
+func CheckRestoredReceiveDispatchSources(records []Record, limits ReceiveDispatchLimits) (ReceiveDispatchCheck, error) {
+	return inspectReceiveDispatchSources(records, limits, nil, true)
+}
+
 func checkReceiveDispatchSources(records []Record, limits ReceiveDispatchLimits, verified func(receiveDiscardEvidenceSet)) (ReceiveDispatchCheck, error) {
+	return inspectReceiveDispatchSources(records, limits, verified, false)
+}
+
+func inspectReceiveDispatchSources(records []Record, limits ReceiveDispatchLimits, verified func(receiveDiscardEvidenceSet), restored bool) (ReceiveDispatchCheck, error) {
 	report := ReceiveDispatchCheck{Status: "unavailable", Scope: "original_receive_lookup_and_actual_input_disposition", PhysicalStatus: "unavailable", ScheduleStatus: "unavailable"}
 	unavailable := func(reason string) (ReceiveDispatchCheck, error) {
 		report.Status, report.Reason = "unavailable", reason
@@ -77,14 +88,27 @@ func checkReceiveDispatchSources(records []Record, limits ReceiveDispatchLimits,
 	if limits.Operations == 0 || limits.Bytes == 0 {
 		return unavailable("inspection_limits_required")
 	}
-	external, err := CheckReceiveSources(records, limits.Receive)
+	if restored {
+		_, core, effects, err := CheckRestoredBoundarySources(records, limits.Receive.Core)
+		if err != nil {
+			return inconsistent("restore_boundary_" + core.Reason + "_" + effects.Reason)
+		}
+		if core.Status != "consistent" || effects.Status != "consistent" {
+			return unavailable("restore_boundary_not_reconstructed")
+		}
+	}
+	external, err := checkReceiveSources(records, limits.Receive, restored)
 	if err != nil {
 		return inconsistent("receive_" + external.Reason)
 	}
 	if external.Status != "consistent" {
 		return unavailable("receive_" + external.Reason)
 	}
-	internal, err := CheckInternalSources(records, limits.Selections.Internal)
+	internalCheck := CheckInternalSources
+	if restored {
+		internalCheck = CheckRestoredInternalSources
+	}
+	internal, err := internalCheck(records, limits.Selections.Internal)
 	if err != nil {
 		return inconsistent("internal_" + internal.Reason)
 	}
@@ -93,7 +117,7 @@ func checkReceiveDispatchSources(records []Record, limits ReceiveDispatchLimits,
 	}
 	snapshots := map[appCoreKey]inboxSourceSnapshot{}
 	wanted := map[appCoreKey]bool{}
-	core, accepted, err := inspectCoreSourceStates(records, limits.Receive.Core, nil, func(writer string, source *CoreStepRec, snapshot *consensus.Snapshot) {
+	core, accepted, err := inspectConditionalCoreStates(records, limits.Receive.Core, restored, nil, func(writer string, source *CoreStepRec, snapshot *consensus.Snapshot) {
 		key := appCoreKey{writer, source.EngineRun, source.Step}
 		snapshots[key] = inboxSourceSnapshot{source, snapshot}
 		if source.InputKind == inputlog.KindMessage && (source.Via == "peer" || source.Via == "internal") {
@@ -117,6 +141,19 @@ func checkReceiveDispatchSources(records []Record, limits ReceiveDispatchLimits,
 		}
 		outputs[key] = a
 	}
+	// Reconstruct a separate private seed for qualification; do not reuse the
+	// mutable model that produced live snapshots or manufacture a live step.
+	restoredRuns := map[coreSourceRunKey]restoredCoreSeed{}
+	if restored {
+		restore, seeds, e := reconstructRestoreSources(records, limits.Receive.Core)
+		if e != nil {
+			return inconsistent("restore_" + restore.Reason)
+		}
+		if restore.Status != "consistent" {
+			return unavailable("restore_" + restore.Reason)
+		}
+		restoredRuns = seeds
+	}
 	lookups := map[receivePreparationKey]*ReceiveCacheRec{}
 	selectionsByID := map[finalizeQueueKey]*SelectionRec{}
 	internalPops := map[finalizeQueueKey]*InternalRec{}
@@ -128,7 +165,7 @@ func checkReceiveDispatchSources(records []Record, limits ReceiveDispatchLimits,
 	registrationFloors := map[receivePreparationKey][]receivePreparationFloor{}
 	writer := ""
 	var operations, span uint64
-	for _, record := range records {
+	for index, record := range records {
 		switch r := record.Body.(type) {
 		case *SegmentRec:
 			writer = r.Run
@@ -221,8 +258,22 @@ func checkReceiveDispatchSources(records []Record, limits ReceiveDispatchLimits,
 			if !validReceiveDispatchRec(r) {
 				return inconsistent("invalid_receive_dispatch_source")
 			}
+			seed, replayed := restoredRuns[coreSourceRunKey{writer, r.EngineRun}]
+			replayed = replayed && seed.installed.Replayed != 0
 			if r.Unavailable != "" {
-				return unavailable("receive_dispatch_" + r.Unavailable)
+				if !replayed || r.Unavailable != "replayed_prefix" {
+					return unavailable("receive_dispatch_" + r.Unavailable)
+				}
+				if index <= seed.ready || r.BeforeStep < seed.installed.Steps || r.Mono < seed.installed.Mono {
+					return inconsistent("restored_dispatch_precedes_installation")
+				}
+				// The producer's replay marker has precedence over other unavailable
+				// reasons. Qualify every required original coordinate explicitly.
+				if r.Request == 0 || r.Source.WriterRun == "" || r.Source.Ledger == 0 || r.Source.Sequence == 0 || r.Scope == 0 || r.Selection == 0 || len(r.Input) == 0 {
+					return unavailable("restored_dispatch_coordinates_missing")
+				}
+			} else if replayed {
+				return inconsistent("restored_dispatch_marker_missing")
 			}
 			n := uint64(size(Record{Body: r}))
 			if n > limits.Bytes-span {
@@ -437,7 +488,7 @@ func checkReceiveDispatchSources(records []Record, limits ReceiveDispatchLimits,
 			return unavailable("core_message_without_original_prepare")
 		}
 	}
-	selections, err := checkInputSelections(records, limits.Selections, discarded)
+	selections, err := inspectInputSelections(records, limits.Selections, discarded, restored)
 	if err != nil {
 		return inconsistent("selection_" + selections.Reason)
 	}
