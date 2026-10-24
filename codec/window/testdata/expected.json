@@ -1,0 +1,6 @@
+{
+  "block_hash": "c7c6a15618ca0c931614bda440772183330874f817b4bd8d36123f70e3ca5b39",
+  "authority_digest": "d5706787759e9b15c94b407366fbfe16d46e39235b832208b1c9c5781e78fc55",
+  "header_sha256": "f0bdf40434ea31228b74a93483d9a4acf1530600e3f4d82cf90f26997597e887",
+  "description": "Offline normal candidate with a nonempty settlement. Keys and signatures are fixture-only. No chain activation or timing attestation."
+}

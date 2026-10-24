@@ -1,0 +1,98 @@
+# Explicit participation observations
+
+`codec/window`, `chain/window` and `observe/window` provide an explicit
+observation format, deterministic settlement and anchored checkpoint storage.
+They do not enable a node fork or change legacy decoding, candidate diligence,
+validator selection or fees. They supply no production activation height.
+
+A valid historical prepare or commit signature included in a permitted carrier
+is an observation. It does not attest signature creation or receipt time.
+Absence from carriers does not prove intentional nonparticipation.
+
+## Format and transition
+
+The envelope is `[2, legacy, proofs, observation]`. `legacy` stays a nested
+ten-item list. Neither codec silently falls back to another format.
+
+Each proof is `[height, hash, round, authorityDigest, phase, bitmap, signature]`.
+Proofs use increasing `(height, phase)` order with one entry per key per carrier.
+Bitmaps use historical signer indices without trailing zero bytes. Heights and
+counts are full non-negative integers; the existing round field is uint32.
+The authority digest commits indexed address/key tuples in actual order.
+
+Every block's observation is
+`[1, policyDigest, parentStateRoot, resultStateRoot, settlement]`. Settlement is
+an empty list outside an epoch. At an epoch it is
+`[1, previousSettledThrough, nextSettledThrough, deltaRows]`. An address-sorted
+row is `[address, eligiblePrepare, eligibleCommit, observedPrepare, observedCommit]`.
+These counts are not diligence or reward weights.
+
+State commits policy, carrier height, parent hash, settled/matured cursors,
+cumulative counts, matured pending counts and open targets. Open targets retain
+hash, final round, indexed historical authority and phase bitmap unions. The
+state excludes its own carrier hash, avoiding a circular commitment. Its root
+uses the `WBFT-PARTICIPATION-STATE/1` domain.
+
+For window `k`, target `h` can appear in carriers `h+1` through `h+k`. Its final
+round comes from its successor's hash-bound `PrevRound`. An epoch first settles
+only the parent's matured counts, through at most `n-1-k`. The current proofs
+are verified and unioned, then targets through `n-k` mature into pending counts.
+The current carrier cannot change that same block's settlement. Repeated
+signatures count once per historical signer and phase. Earlier-than-activation
+targets receive no opportunities.
+
+The filtered hash changes only the nested current round and current prepare
+and commit certificates. Proofs, settlement and state roots remain hash-bound.
+`Build` refuses candidates with current certificates; the caller must freeze
+proof selection before preparing a proposal. Subset observations do not relax
+finality quorum requirements.
+
+## Explicit caller integration
+
+Create `chain/window.Engine` with a `Config`. Chain identity, activation
+boundary, window and every structural/state/checkpoint limit bind its `Digest()`.
+There are no default network settings. `Initial` needs a caller-trusted parent
+immediately before the boundary.
+
+Supply `History.Header(hash, fullHeight)` and `History.Authority(target)` from
+authenticated history. Authority must use unique addresses in historical signer
+order and registered keys. The engine checks header identity, parent continuity,
+historical commitments, signer ranges and BLS subset signatures. The provider
+remains responsible for canonical adoption, key ownership, epoch schedule and
+finality. An untrusted snapshot or truncated-height lookup is unsuitable.
+
+`Build` returns a separate explicit carrier and immutable state, preserving
+legacy epoch information including diligence. It does not sign or submit the
+carrier. `Apply` recomputes its observation transition and compares the complete
+canonical commitment. Failure leaves the parent unchanged. Ordinary node and
+application paths keep their existing format until a separate integration
+explicitly enables these carriers.
+
+`State.Counts(address)` returns copied settled cumulative counts. False means
+no settled eligible history; pending/open observations are not failed scores.
+Economic lookback, qualification, rejoining and rewards remain separate policies.
+
+## Checkpoints and capacity
+
+A checkpoint is `[1, carrierHeight, carrierHash, state]`. `EncodeCheckpoint` and
+`Recover` need an independently trusted carrier and compare policy, height,
+parent lineage and state root. A file's own hash cannot supply a trust anchor.
+A recovered state verifies the next suffix with the same history and transition.
+
+`observe/window.Save` writes in an existing caller-owned directory, syncs the
+file, renames it and syncs the directory. Serialize saves to one path. `Load`
+bounds reads and verifies the checkpoint against the trusted carrier. These
+calls do not certify hardware power-loss durability.
+
+Config requires extra bytes, proof count, signer ceiling, settlement rows, state
+bytes, checkpoint bytes and address rows. Capacity exhaustion returns an
+observation error without partial advancement. Expose that error rather than
+turning it into a legacy block rejection or missing-signature score.
+
+The post-carrier open set has at most `k-1` targets. This does not bound lifetime
+disk use: cumulative address history and authenticated headers can grow.
+Production limits, retention, epoch growth and witness intake need operating
+measurements. Local witness queues require separate item, byte and verification
+budgets. Do not add overlapping aggregate signatures. Select an intact verified
+aggregate or aggregate distinct individual signatures. Lost constructor data
+does not prove a signer was absent.
