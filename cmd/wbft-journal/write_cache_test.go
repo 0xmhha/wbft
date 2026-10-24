@@ -141,7 +141,7 @@ func TestReceiveCacheRecordR01ProjectionUnavailableWithoutProfile(t *testing.T) 
 
 func TestSessionSourceR01ProjectionUnavailableWithoutProfile(t *testing.T) {
 	for _, legacy := range []uint64{0, journal.CacheTraceVersion} {
-		for _, domain := range []string{"lifetime", "frame", "write_attempt", "core_step", "app_queue", "finalize", "inbox", "internal", "selection"} {
+		for _, domain := range []string{"lifetime", "frame", "write_attempt", "core_step", "app_queue", "finalize", "inbox", "internal", "selection", "receive_dispatch"} {
 			t.Run(fmt.Sprintf("%s/%d", domain, legacy), func(t *testing.T) {
 				fs := fsys.NewMem()
 				writer, err := journal.Open(journal.Options{FS: fs, Dir: "/session-source", Synchronous: true}, journal.Identity{Run: "current-writer", Core: journal.CoreOptions{CacheTrace: legacy}})
@@ -150,6 +150,12 @@ func TestSessionSourceR01ProjectionUnavailableWithoutProfile(t *testing.T) {
 				}
 				ref := &journal.SessionRef{Run: "original-writer", Ordinal: 7}
 				switch domain {
+				case "receive_dispatch":
+					input, e := inputlog.Encode(consensus.Message{})
+					if e != nil {
+						t.Fatal(e)
+					}
+					writer.Put(journal.Record{Body: &journal.ReceiveDispatchRec{Version: journal.ReceiveDispatchSourceVersion, Sequence: 1, Request: 1, EngineRun: 1, BeforeStep: 1, Action: "prepare", Via: "peer", Source: transport.ReceivePreparationSource{WriterRun: "original-writer", Ledger: 1, Sequence: 1}, Scope: 1, Decision: uint64(transport.ReceiveReserved), Selection: 1, InboxRequest: 1, InputKind: inputlog.KindMessage, Input: input}})
 				case "lifetime":
 					writer.Put(journal.Record{Body: &journal.SessionRec{Session: ref, Event: journal.SessionObserved, Active: true}})
 				case "selection":
@@ -189,6 +195,9 @@ func TestSessionSourceR01ProjectionUnavailableWithoutProfile(t *testing.T) {
 					t.Fatal(err)
 				}
 				expected := "session"
+				if domain == "receive_dispatch" {
+					expected = "receive dispatch sources"
+				}
 				if domain == "core_step" {
 					expected = "core step sources"
 				}

@@ -165,10 +165,26 @@ func (l *ReceiveLedger) pruneClosed(t *ReceiveTransition) {
 // not suppress another pending copy. Origin is retained only when complete and
 // consistent with the adapter capture; unavailable metadata never rejects an
 // otherwise valid functional check.
-func (l *ReceiveLedger) Prepare(scope *ValidationScope, in Inbound, origin ReceiveOrigin) (ticket ReceiveTicket, decision ReceiveDecision) {
+func (l *ReceiveLedger) Prepare(scope *ValidationScope, in Inbound, origin ReceiveOrigin) (ReceiveTicket, ReceiveDecision) {
+	ticket, decision, _ := l.PrepareObserved(scope, in, origin)
+	return ticket, decision
+}
+
+// ReceivePreparationSource identifies one original mutex-ordered Prepare call,
+// including decisions which own no ticket. It grants no cache capability. An
+// empty namespace or zero sequence remains unavailable, never rebound later.
+type ReceivePreparationSource struct {
+	WriterRun        string
+	Ledger, Sequence uint64
+}
+
+// PrepareObserved performs exactly the same check as Prepare and freezes its
+// original diagnostic coordinates before releasing the ledger mutex. Observer
+// delivery or a later lookup cannot replace the returned call's identity.
+func (l *ReceiveLedger) PrepareObserved(scope *ValidationScope, in Inbound, origin ReceiveOrigin) (ticket ReceiveTicket, decision ReceiveDecision, source ReceivePreparationSource) {
 	active := scope.Active()
 	if !active && l.opt.Trace == nil {
-		return ReceiveTicket{}, ReceiveUnavailable
+		return ReceiveTicket{}, ReceiveUnavailable, ReceivePreparationSource{}
 	}
 	key := l.key(scope, in.Code, in.Payload)
 	l.mu.Lock()
@@ -183,17 +199,23 @@ func (l *ReceiveLedger) Prepare(scope *ValidationScope, in Inbound, origin Recei
 		event.Origin = origin
 	}
 	event.ScopeActive = active && scope.Active()
-	defer func() { event.Decision = decision; l.observedReceiveUnlock(&event) }()
+	defer func() {
+		event.Decision = decision
+		if l.opt.Trace != nil {
+			source = ReceivePreparationSource{WriterRun: l.traceRun, Ledger: event.Ledger, Sequence: event.Sequence}
+		}
+		l.observedReceiveUnlock(&event)
+	}()
 	if l.closed || !event.ScopeActive {
-		return ReceiveTicket{}, ReceiveUnavailable
+		return ReceiveTicket{}, ReceiveUnavailable, ReceivePreparationSource{}
 	}
 	l.pruneClosed(&event)
 	if l.known.Contains(key) {
 		event.Known = true
-		return ReceiveTicket{}, ReceiveKnown
+		return ReceiveTicket{}, ReceiveKnown, ReceivePreparationSource{}
 	}
 	if uint64(len(l.pending)) >= l.opt.Pending || l.counts[in.Peer] >= l.opt.PerPeer {
-		return ReceiveTicket{}, ReceivePendingFull
+		return ReceiveTicket{}, ReceivePendingFull, ReceivePreparationSource{}
 	}
 	r := &receiveReservation{owner: l, scope: scope, peer: in.Peer, code: in.Code, key: key, payload: sha256.Sum256(in.Payload), origin: origin, observation: event.Sequence}
 	if l.opt.Trace != nil {
@@ -203,7 +225,7 @@ func (l *ReceiveLedger) Prepare(scope *ValidationScope, in Inbound, origin Recei
 	l.pending[r] = struct{}{}
 	l.counts[in.Peer]++
 	event.Request = r.observation
-	return ReceiveTicket{reservation: r}, ReceiveReserved
+	return ReceiveTicket{reservation: r}, ReceiveReserved, ReceivePreparationSource{}
 }
 
 func (l *ReceiveLedger) owns(ticket ReceiveTicket) *receiveReservation {

@@ -4,6 +4,7 @@ import (
 	"github.com/0xmhha/wbft/codec"
 	"github.com/0xmhha/wbft/consensus"
 	"github.com/0xmhha/wbft/observe/event"
+	"github.com/0xmhha/wbft/observe/journal"
 	"github.com/0xmhha/wbft/p2p/transport"
 )
 
@@ -47,16 +48,20 @@ func (r *Runner) receiveAlreadyKnown(in transport.Inbound) bool {
 // receive worker. Even an input checked against an earlier snapshot must pass
 // the core's full current validation before it may become known.
 func (r *Runner) beginReceiveCheck(q queued) (transport.ReceiveTicket, transport.Inbound, bool) {
+	ticket, in, duplicate, _ := r.beginReceiveCheckSource(q)
+	return ticket, in, duplicate
+}
+func (r *Runner) beginReceiveCheckSource(q queued) (transport.ReceiveTicket, transport.Inbound, bool, *journal.ReceiveDispatchRec) {
 	if r.receiveCache == nil {
-		return transport.ReceiveTicket{}, transport.Inbound{}, false
+		return transport.ReceiveTicket{}, transport.Inbound{}, false, nil
 	}
 	m, ok := q.in.(consensus.Message)
 	if !ok {
-		return transport.ReceiveTicket{}, transport.Inbound{}, false
+		return transport.ReceiveTicket{}, transport.Inbound{}, false, nil
 	}
 	current := r.updateReceiveContext(r.core.Snapshot())
 	if current == nil {
-		return transport.ReceiveTicket{}, transport.Inbound{}, false
+		return transport.ReceiveTicket{}, transport.Inbound{}, false, nil
 	}
 	in := transport.Inbound{Peer: m.Peer, Code: uint64(m.Code), Payload: m.Payload, RecvMono: m.RecvMono, Capture: q.capture, Stream: q.stream, Origin: q.origin}
 	origin := q.origin
@@ -65,14 +70,22 @@ func (r *Runner) beginReceiveCheck(q queued) (transport.ReceiveTicket, transport
 		in.Capture = origin.CaptureID
 		in.Stream = q.deferred.record.stream
 	}
-	ticket, decision := r.receiveCache.Prepare(current.scope, in, origin)
+	var ticket transport.ReceiveTicket
+	var decision transport.ReceiveDecision
+	var source transport.ReceivePreparationSource
+	if r.d.ReceiveDispatchSources != nil {
+		ticket, decision, source = r.receiveCache.PrepareObserved(current.scope, in, origin)
+	} else {
+		ticket, decision = r.receiveCache.Prepare(current.scope, in, origin)
+	}
+	observation := r.observeReceivePreparation(q, current, decision, source)
 	if decision == transport.ReceiveKnown && q.via == viaPeer && q.deferred == nil {
 		r.prefilter(in, nil, event.DropSilent, "duplicate", false)
-		return transport.ReceiveTicket{}, in, true
+		return transport.ReceiveTicket{}, in, true, observation
 	}
 	// A local bookkeeping limit never discards an already admitted own or
 	// deferred consensus input. Such an input can run without caching.
-	return ticket, in, false
+	return ticket, in, false, observation
 }
 
 // completeReceiveCheck registers only the core's successful direct ACCEPT.

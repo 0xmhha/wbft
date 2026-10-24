@@ -170,6 +170,8 @@ type Deps struct {
 	InternalSources InternalSourceObserver
 	// SelectionSources observes original conditional next probes and actual dispatch.
 	SelectionSources SelectionSourceObserver
+	// ReceiveDispatchSources observes original lookup ownership and actual completion.
+	ReceiveDispatchSources ReceiveDispatchSourceObserver
 	// Synchronising reports whether the application is synchronising the
 	// chain; consensus messages that arrive while the engine is stopped are
 	// then dropped instead of closing the connection.
@@ -260,6 +262,8 @@ type Runner struct {
 	internalSourceExhausted  bool
 	selectionSourceSequence  uint64
 	selectionSourceExhausted bool
+	receiveDispatchSequence  uint64
+	receiveDispatchExhausted bool
 	lastOwn                  map[ownKey][]byte
 	buildDone                chan struct{}
 	buildSeq                 types.Height

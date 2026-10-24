@@ -32,6 +32,7 @@ type InboxCheck struct {
 	Checked          uint64 `json:"checked,string"`
 	Taken            uint64 `json:"taken,string"`
 	Dispatched       uint64 `json:"dispatched,string"`
+	DiscardedKnown   uint64 `json:"discarded_known,string"`
 	Clears           uint64 `json:"clears,string"`
 	RetainedQueued   uint64 `json:"retained_queued,string"`
 	RetainedChecking uint64 `json:"retained_checking,string"`
@@ -88,6 +89,11 @@ func inboxWindow(snapshot *consensus.Snapshot, code codec.Code, view types.View)
 // published core snapshots. It checks finite observed boundaries. Internal/app/
 // timer priority and random scheduling outside this inbox remain unavailable.
 func CheckInboxSources(records []Record, limits InboxLimits) (InboxCheck, error) {
+	return checkInboxSources(records, limits, nil)
+}
+
+func checkInboxSources(records []Record, limits InboxLimits, discarded receiveDiscardEvidenceSet) (InboxCheck, error) {
+	consumed := map[receiveDiscardKey]bool{}
 	report := InboxCheck{Status: "unavailable", Scope: "inbox_queue_worker_snapshot_slot_and_core_input_sources", PhysicalStatus: "unavailable", ScheduleStatus: "unavailable"}
 	unavailable := func(reason string) (InboxCheck, error) {
 		report.Status, report.Reason = "unavailable", reason
@@ -197,7 +203,10 @@ func CheckInboxSources(records []Record, limits InboxLimits) (InboxCheck, error)
 				return inconsistent("invalid_inbox_source")
 			}
 			if r.Unavailable != "" {
-				return unavailable("inbox_" + r.Unavailable)
+				_, certified := discarded[receiveDiscardKey{writer, r.EngineRun, r.Request}]
+				if r.Action != "discard" || r.Unavailable != "dispatch_deduplicated" || !certified {
+					return unavailable("inbox_" + r.Unavailable)
+				}
 			}
 			if writer == "" {
 				return unavailable("inbox_writer_missing")
@@ -444,6 +453,23 @@ func CheckInboxSources(records []Record, limits InboxLimits) (InboxCheck, error)
 				model.taken[r.Request] = r
 				delete(model.slots, key)
 				report.Taken++
+			case "discard":
+				key := receiveDiscardKey{name, r.EngineRun, r.Request}
+				evidence, certified := discarded[key]
+				selected := model.taken[r.Request]
+				if !certified || consumed[key] || selected == nil || selected.EngineRun != r.EngineRun {
+					return inconsistent("known_discard_without_original_take")
+				}
+				p, c := evidence.prepare, evidence.completion
+				in, e := inputlog.Decode(p.InputKind, p.Input, nil)
+				m, ok := in.(consensus.Message)
+				if e != nil || !ok || uint64(m.Code) != original.Code || m.Peer != original.Peer || uint64(m.RecvMono) != original.RecvMono || !bytes.Equal(m.Payload, original.Payload) || p.Origin != original.Origin || p.StreamRun != original.StreamRun || p.Stream != original.Stream || p.Capture != original.Capture || p.InboxRequest != r.Request || p.EngineRun != r.EngineRun || selected.Mono > p.Mono || p.Mono > r.Mono || r.Mono > c.Mono || r.Step != 0 {
+					return inconsistent("known_discard_original_input_changed")
+				}
+				consumed[key] = true
+				delete(model.taken, r.Request)
+				delete(model.pending, r.Request)
+				report.DiscardedKnown++
 			case "dispatch":
 				selected := model.taken[r.Request]
 				if selected == nil || selected.EngineRun != r.EngineRun {
@@ -514,6 +540,11 @@ func CheckInboxSources(records []Record, limits InboxLimits) (InboxCheck, error)
 	for _, found := range stops { //wbft:unordered all missing clears have the same result
 		if !found {
 			return unavailable("stop_without_inbox_clear")
+		}
+	}
+	for key := range discarded { //wbft:unordered identical missing-source result
+		if !consumed[key] {
+			return unavailable("known_discard_without_inbox_source")
 		}
 	}
 	report.Status = "consistent"
