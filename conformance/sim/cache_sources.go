@@ -81,6 +81,12 @@ func (f *cacheSources) ObserveReceiveTransition(t transport.ReceiveTransition) {
 func (f *cacheSources) ObserveCoreStep(s runner.CoreStepObservation) {
 	f.writer.Put(journal.Record{Body: &s})
 }
+func (f *cacheSources) ObserveInputSelection(source journal.SelectionRec) {
+	f.writer.Put(journal.Record{Body: &source})
+}
+func (f *cacheSources) ObserveInternalSource(source journal.InternalRec) {
+	f.writer.Put(journal.Record{Body: &source})
+}
 func (f *cacheSources) ObserveInboxSource(source journal.InboxRec) {
 	f.writer.Put(journal.Record{Body: &source})
 }

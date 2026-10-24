@@ -24,7 +24,7 @@ func (r *Runner) startEngine(_ context.Context, head *types.Header) error {
 	r.manualChecks = 0
 	r.manualStepPending = false
 	r.step = 0
-	r.internal = nil
+	r.clearInternal("reset")
 	r.lastOwn = map[ownKey][]byte{}
 	r.floorSkip = map[string]bool{}
 	r.lastGen = [4]uint64{}
@@ -216,7 +216,7 @@ func (r *Runner) stopEngine(reason string) {
 	r.timers.setOwner(r.engineRun, r.step, 0, "lifecycle")
 	r.timers.clear()
 	r.inbox.clear()
-	r.internal = nil
+	r.clearInternal("clear")
 	r.appMu.Lock()
 	appBefore := len(r.appQ)
 	r.appQ, r.headNote = nil, nil
@@ -556,7 +556,7 @@ func (r *Runner) afterReplayTimers(timers []*consensus.ArmTimer, snap *consensus
 		}
 		r.emit(sendRecord(uint64(m.code), m.payload, event.CauseReplay, &m.msg.View), nil)
 		if !counted(vars, m.code, r.cfg.Core.Self) {
-			r.internal = append(r.internal, queued{in: consensus.Message{Code: m.code, Payload: m.payload, Peer: r.cfg.Core.Self, RecvMono: r.d.Clock.Mono()}, via: viaInternal})
+			r.appendInternal(consensus.Message{Code: m.code, Payload: m.payload, Peer: r.cfg.Core.Self, RecvMono: r.d.Clock.Mono()}, "replay", 0)
 		}
 	}
 }

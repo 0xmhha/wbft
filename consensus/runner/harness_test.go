@@ -335,6 +335,7 @@ type tnode struct {
 	appQueueSources AppQueueSourceObserver
 	finalizeSources FinalizeSourceObserver
 	inboxSources    InboxSourceObserver
+	internalSources InternalSourceObserver
 	// timerTrace enables measured scheduler records in the test journal.
 	timerTrace bool
 	// refused is the codes of the signatures privval refused (Deps.Refused).
@@ -390,7 +391,7 @@ func (n *tnode) boot() {
 	}
 	n.events = &eventLog{}
 	d := Deps{Chain: n.chain, App: n.app, Transport: dd, Net: n.net,
-		CoreSteps: n.coreSteps, TimerSources: n.timerSources, AppQueueSources: n.appQueueSources, FinalizeSources: n.finalizeSources, InboxSources: n.inboxSources,
+		CoreSteps: n.coreSteps, TimerSources: n.timerSources, AppQueueSources: n.appQueueSources, FinalizeSources: n.finalizeSources, InboxSources: n.inboxSources, InternalSources: n.internalSources,
 		Signer: s, WAL: log, Clock: n.clock, Events: n.events, Journal: jw, Rand: rand.New(rand.NewPCG(1, 2)).IntN,
 		Refused: func(code uint64) { n.refused = append(n.refused, code) }}
 	if n.noJournal {

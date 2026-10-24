@@ -128,13 +128,19 @@ func (s *scheduler) cancel(kinds []consensus.TimerKind) []consensus.ArmTimer {
 	return out
 }
 
-func (s *scheduler) pending() bool {
+func (s *scheduler) pending() bool { ready, _ := s.pendingSource(false); return ready }
+func (s *scheduler) pendingSource(observe bool) (bool, journal.InputProbe) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return len(s.fired) > 0
+	ready := len(s.fired) > 0
+	if observe {
+		return ready, inputProbe(ready, s.sequence, uint64(s.clock.Mono()))
+	}
+	return ready, journal.InputProbe{}
 }
 
-func (s *scheduler) pop() (consensus.Timeout, bool) {
+func (s *scheduler) pop() (consensus.Timeout, bool) { t, _, ok := s.popSource(); return t, ok }
+func (s *scheduler) popSource() (consensus.Timeout, uint64, bool) {
 	s.mu.Lock()
 	var observation *journal.TimerRec
 	defer func() {
@@ -142,7 +148,7 @@ func (s *scheduler) pop() (consensus.Timeout, bool) {
 		s.publish(observation)
 	}()
 	if len(s.fired) == 0 {
-		return consensus.Timeout{}, false
+		return consensus.Timeout{}, 0, false
 	}
 	t := s.fired[0]
 	s.fired = s.fired[1:]
@@ -150,7 +156,11 @@ func (s *scheduler) pop() (consensus.Timeout, bool) {
 		observation = s.record("pop", s.owner, s.queued[0])
 		s.queued = s.queued[1:]
 	}
-	return t, true
+	var source uint64
+	if observation != nil {
+		source = observation.Sequence
+	}
+	return t, source, true
 }
 
 // clear cancels every timer and drops the queued expiries.

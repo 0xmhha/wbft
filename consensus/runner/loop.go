@@ -106,12 +106,22 @@ func (r *Runner) Pump() bool {
 // application queue, then the timer queue or the peers, chosen at random
 // when both have input.
 func (r *Runner) next() (queued, bool) {
+	selection := r.newSelection()
+	r.selectionProbe(selection, "internal", len(r.internal) > 0, r.internalSourceSequence)
 	if len(r.internal) > 0 {
+		before := len(r.internal)
 		q := r.internal[0]
 		r.internal = r.internal[1:]
-		return q, true
+		observation := r.internalRecord("pop", q, "", 0, before)
+		var source uint64
+		if observation != nil {
+			source = observation.Sequence
+		}
+		r.publishInternal(observation)
+		return r.finishSelection(selection, "internal", source, q, true)
 	}
 	r.appMu.Lock()
+	r.selectionProbe(selection, "app", len(r.appQ) > 0, r.appSourceSequence)
 	if len(r.appQ) > 0 {
 		before := len(r.appQ)
 		q := r.appQ[0]
@@ -121,18 +131,38 @@ func (r *Runner) next() (queued, bool) {
 			r.headNote = nil
 		}
 		observation := r.appQueueRecordLocked("pop", q.appSource, q.in, r.engineRun, r.step+1, before)
+		var source uint64
+		if observation != nil {
+			source = observation.Sequence
+		}
 		r.appMu.Unlock()
 		r.publishAppQueue(observation)
-		return q, true
+		return r.finishSelection(selection, "app", source, q, true)
 	}
 	r.appMu.Unlock()
-	if q, ok := r.takeNextHeight(); ok {
-		return q, true
+	if selection != nil {
+		selection.NextHeight = "disabled"
+		if r.nextHeight != nil {
+			selection.NextHeight, selection.Unavailable = "unsupported", "next_height_source"
+		}
 	}
-	hasTimer := r.timers.pending()
-	hasPeer := r.inbox.hasReady()
+	if q, ok := r.takeNextHeight(); ok {
+		return r.finishSelection(selection, "next_height", 0, q, true)
+	}
+	hasTimer, timerProbe := r.timers.pendingSource(selection != nil)
+	hasPeer, inboxProbe := r.inbox.readySource(selection != nil)
+	if selection != nil {
+		selection.Timer, selection.Inbox = timerProbe, inboxProbe
+		if (r.d.TimerSources == nil || r.d.InboxSources == nil) && selection.Unavailable == "" {
+			selection.Unavailable = "lane_source_missing"
+		}
+	}
 	if hasTimer && hasPeer {
-		if r.rand(2) == 0 {
+		choice := r.rand(2)
+		if selection != nil {
+			selection.Random, selection.Choice = 1, uint64(choice)
+		}
+		if choice == 0 {
 			hasPeer = false
 		} else {
 			hasTimer = false
@@ -140,16 +170,19 @@ func (r *Runner) next() (queued, bool) {
 	}
 	if hasTimer {
 		r.timers.setOwner(r.engineRun, r.step+1, 0, "dequeue")
-		if t, ok := r.timers.pop(); ok {
-			return queued{in: t, via: viaTimer}, true
+		if t, source, ok := r.timers.popSource(); ok {
+			return r.finishSelection(selection, "timer", source, queued{in: t, via: viaTimer}, true)
 		}
 	}
 	if hasPeer {
 		if q, ok := r.inbox.takeQueued(); ok {
-			return q, true
+			return r.finishSelection(selection, "peer", q.selectionLaneSource, q, true)
 		}
 	}
-	return queued{}, false
+	if selection != nil && (hasTimer || hasPeer) && selection.Unavailable == "" {
+		selection.Unavailable = "dequeue_unavailable"
+	}
+	return r.finishSelection(selection, "none", 0, queued{}, false)
 }
 
 // processOne handles one input; it reports false when there was none.
@@ -177,6 +210,7 @@ func (r *Runner) processOne() bool {
 type stepCtx struct {
 	q                           queued
 	step                        uint64
+	output                      uint64 // original one-based output, retained through own-message signing
 	outs                        []consensus.Output
 	env                         []envAnswer
 	seqIn                       types.Height
@@ -189,6 +223,8 @@ func (r *Runner) handle(q queued) {
 	ticket, received, duplicate := r.beginReceiveCheck(q)
 	if duplicate {
 		r.inbox.dispatchSource(q, "discard")
+		r.dispatchInternal(q, "discard")
+		r.dispatchSelection(q, "discard")
 		return
 	}
 	if r.receiveCache != nil {
@@ -260,6 +296,8 @@ func (r *Runner) handle(q queued) {
 	r.journalStep(sc, kind, body, after)
 	r.observeCoreStep(sc, kind, body, before, after)
 	r.inbox.dispatchSource(q, "dispatch")
+	r.dispatchInternal(q, "dispatch")
+	r.dispatchSelection(q, "dispatch")
 }
 
 // endHeight writes the end-of-height record of the head the core left
@@ -303,6 +341,7 @@ func (r *Runner) endHeight(snap *consensus.Snapshot, gens [4]uint64) {
 // execute runs the outputs of one step in order.
 func (r *Runner) execute(sc *stepCtx) {
 	for index, o := range sc.outs {
+		sc.output = uint64(index) + 1
 		r.timers.setOwner(r.engineRun, sc.step, uint64(index)+1, "core")
 		if r.Halted() != nil {
 			return
@@ -321,7 +360,7 @@ func (r *Runner) execute(sc *stepCtx) {
 				}
 			}
 		case consensus.Schedule:
-			r.internal = append(r.internal, queued{in: o.In, via: viaInternal})
+			r.appendInternal(o.In, "schedule", uint64(index)+1)
 		case consensus.ArmTimer:
 			r.lastGen[o.Kind] = o.Gen
 			r.timers.arm(o, r.stepAt.Mono)
@@ -370,7 +409,7 @@ func (r *Runner) execute(sc *stepCtx) {
 func (r *Runner) broadcast(sc *stepCtx, b consensus.Broadcast) {
 	m := b.Msg
 	if r.d.Signer == nil {
-		r.internal = append(r.internal, queued{in: consensus.BroadcastFailed{Code: m.Code, View: m.View}, via: viaInternal})
+		r.appendInternal(consensus.BroadcastFailed{Code: m.Code, View: m.View}, "signer_missing", sc.output)
 		return
 	}
 	sig, err := r.d.Signer.SignVote(privval.VoteRequest{Msg: m, SealData: b.SealData, BadBlockReleased: b.BadBlockReleased})
@@ -391,7 +430,7 @@ func (r *Runner) broadcast(sc *stepCtx, b consensus.Broadcast) {
 	}
 	if err := transport.CheckOutbound(uint64(c.Code), payload); err != nil {
 		r.log.Error("own message not sendable", "code", c.Code, "err", err)
-		r.internal = append(r.internal, queued{in: consensus.BroadcastFailed{Code: m.Code, View: m.View}, via: viaInternal})
+		r.appendInternal(consensus.BroadcastFailed{Code: m.Code, View: m.View}, "outbound", sc.output)
 		return
 	}
 	faultpoint.Hit(r.d.Faults, faultpoint.WALBeforeOwnMsg)
@@ -413,7 +452,7 @@ func (r *Runner) broadcast(sc *stepCtx, b consensus.Broadcast) {
 	faultpoint.Hit(r.d.Faults, faultpoint.SendAfter)
 	r.sendEvent(sc, uint64(c.Code), payload, cause, &c.View)
 	r.lastOwn[ownKey{code: uint64(c.Code)}] = payload
-	r.internal = append(r.internal, queued{in: consensus.Message{Code: c.Code, Payload: payload, Peer: r.cfg.Core.Self, RecvMono: r.d.Clock.Mono()}, via: viaInternal})
+	r.appendInternal(consensus.Message{Code: c.Code, Payload: payload, Peer: r.cfg.Core.Self, RecvMono: r.d.Clock.Mono()}, "own", sc.output)
 }
 
 // refused reports a privval refusal to the core as BroadcastFailed.
@@ -438,7 +477,7 @@ func (r *Runner) refused(sc *stepCtx, m *codec.Message, err error) {
 			"what": what, "code": uint64(m.Code), "h": m.View.Sequence.String()}}, &sc.step)
 	}
 	r.log.Warn("privval refused a signature", "code", m.Code, "view", m.View.Sequence.String()+"/"+m.View.Round.String(), "err", err)
-	r.internal = append(r.internal, queued{in: consensus.BroadcastFailed{Code: m.Code, View: m.View}, via: viaInternal})
+	r.appendInternal(consensus.BroadcastFailed{Code: m.Code, View: m.View}, "refusal", sc.output)
 }
 
 func (r *Runner) sendEvent(sc *stepCtx, code uint64, payload []byte, cause event.SendCause, view *types.View) {

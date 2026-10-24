@@ -166,6 +166,10 @@ type Deps struct {
 	FinalizeSources FinalizeSourceObserver
 	// InboxSources observes detached receive queue and slot boundaries.
 	InboxSources InboxSourceObserver
+	// InternalSources observes original internal queue output/selection boundaries.
+	InternalSources InternalSourceObserver
+	// SelectionSources observes original conditional next probes and actual dispatch.
+	SelectionSources SelectionSourceObserver
 	// Synchronising reports whether the application is synchronising the
 	// chain; consensus messages that arrive while the engine is stopped are
 	// then dropped instead of closing the connection.
@@ -203,14 +207,17 @@ var (
 
 // queued is one input with where it came from.
 type queued struct {
-	inboxSource uint64                  // original inbox append; never functional authority
-	appSource   uint64                  // diagnostic append identity; never functional authority
-	stream      *transport.WriteSession // optional original functional stream, never WAL input
-	origin      transport.ReceiveOrigin // frozen observer provenance; never functional authority
-	deferred    *deferredEntry
-	capture     uint64
-	in          consensus.Input
-	via         string
+	selectionSource     uint64
+	selectionLaneSource uint64                  // original lane dequeue sequence
+	internalSource      uint64                  // diagnostic original append; never functional authority
+	inboxSource         uint64                  // original inbox append; never functional authority
+	appSource           uint64                  // diagnostic append identity; never functional authority
+	stream              *transport.WriteSession // optional original functional stream, never WAL input
+	origin              transport.ReceiveOrigin // frozen observer provenance; never functional authority
+	deferred            *deferredEntry
+	capture             uint64
+	in                  consensus.Input
+	via                 string
 }
 
 // Values of the via of journal step records.
@@ -247,15 +254,19 @@ type Runner struct {
 	// stepAt is the moment the current step started: every event of the
 	// step carries it, and the timers the step arms run from it
 	// (WBFT-TIMER-010, WBFT-TIMER-012: "measured from the moment").
-	stepAt    event.Stamp
-	internal  []queued
-	lastOwn   map[ownKey][]byte
-	buildDone chan struct{}
-	buildSeq  types.Height
-	boundary  []wal.Position // positions of the last end-of-height records
-	floorSkip map[string]bool
-	lastGen   [4]uint64
-	replay    ReplayInfo
+	stepAt                   event.Stamp
+	internal                 []queued
+	internalSourceSequence   uint64
+	internalSourceExhausted  bool
+	selectionSourceSequence  uint64
+	selectionSourceExhausted bool
+	lastOwn                  map[ownKey][]byte
+	buildDone                chan struct{}
+	buildSeq                 types.Height
+	boundary                 []wal.Position // positions of the last end-of-height records
+	floorSkip                map[string]bool
+	lastGen                  [4]uint64
+	replay                   ReplayInfo
 
 	running  atomic.Bool
 	snap     publishedSnapshot
