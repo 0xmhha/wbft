@@ -220,11 +220,12 @@ type stepCtx struct {
 // handle processes one input: WAL record, core step, outputs, end-of-height
 // record, journal record and snapshot.
 func (r *Runner) handle(q queued) {
-	ticket, received, duplicate := r.beginReceiveCheck(q)
+	ticket, received, duplicate, receivePreparation := r.beginReceiveCheckSource(q)
 	if duplicate {
 		r.inbox.dispatchSource(q, "discard")
 		r.dispatchInternal(q, "discard")
 		r.dispatchSelection(q, "discard")
+		r.observeReceiveCompletion(receivePreparation, "discard")
 		return
 	}
 	if r.receiveCache != nil {
@@ -298,6 +299,7 @@ func (r *Runner) handle(q queued) {
 	r.inbox.dispatchSource(q, "dispatch")
 	r.dispatchInternal(q, "dispatch")
 	r.dispatchSelection(q, "dispatch")
+	r.observeReceiveCompletion(receivePreparation, "dispatch")
 }
 
 // endHeight writes the end-of-height record of the head the core left

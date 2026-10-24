@@ -46,6 +46,10 @@ func (w *r01Writer) indexCache(rec journal.Record, pos wal.Position) {
 		w.cacheErr = fmt.Errorf("accepted-receive cache observations are unavailable in R01 exports")
 		return
 	}
+	if _, ok := rec.Body.(*journal.ReceiveDispatchRec); ok {
+		w.cacheErr = fmt.Errorf("receive dispatch sources are unavailable in R01 exports")
+		return
+	}
 	if _, ok := rec.Body.(*journal.SelectionRec); ok {
 		w.cacheErr = fmt.Errorf("input selection sources are unavailable in R01 exports")
 		return

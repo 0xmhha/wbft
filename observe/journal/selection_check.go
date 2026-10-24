@@ -33,6 +33,7 @@ type SelectionCheck struct {
 	Selected         uint64 `json:"selected,string"`
 	RandomChoices    uint64 `json:"random_choices,string"`
 	Dispatched       uint64 `json:"dispatched,string"`
+	DiscardedKnown   uint64 `json:"discarded_known,string"`
 	RetainedSelected uint64 `json:"retained_selected,string"`
 }
 
@@ -115,6 +116,19 @@ func selectedLane(r *SelectionRec) (string, bool) {
 // its eventual core dispatch. Consistency does not close physical execution,
 // random generator state, signer state, application execution or a WAL prefix.
 func CheckInputSelections(records []Record, limits SelectionLimits) (SelectionCheck, error) {
+	return checkInputSelections(records, limits, nil)
+}
+
+func checkInputSelections(records []Record, limits SelectionLimits, discarded receiveDiscardEvidenceSet) (SelectionCheck, error) {
+	consumed := map[receiveDiscardKey]bool{}
+	bySelection := map[finalizeQueueKey]receiveDiscardKey{}
+	for key, evidence := range discarded { //wbft:unordered duplicate gives identical error
+		selection := finalizeQueueKey{key.writer, evidence.prepare.Selection}
+		if _, exists := bySelection[selection]; exists {
+			return SelectionCheck{Status: "inconsistent", Reason: "known_discard_selection_reused"}, ErrInputSelectionSource
+		}
+		bySelection[selection] = key
+	}
 	report := SelectionCheck{Status: "unavailable", Scope: "conditional_input_probes_and_original_dequeues", PhysicalStatus: "unavailable", ScheduleStatus: "unavailable"}
 	unavailable := func(reason string) (SelectionCheck, error) {
 		report.Status, report.Reason = "unavailable", reason
@@ -148,7 +162,7 @@ func CheckInputSelections(records []Record, limits SelectionLimits) (SelectionCh
 	if timer.Status != "consistent" {
 		return unavailable("timer_" + timer.Reason)
 	}
-	inbox, err := CheckInboxSources(records, limits.Inbox)
+	inbox, err := checkInboxSources(records, limits.Inbox, discarded)
 	if err != nil {
 		return inconsistent("inbox_" + inbox.Reason)
 	}
@@ -204,7 +218,10 @@ func CheckInputSelections(records []Record, limits SelectionLimits) (SelectionCh
 				return inconsistent("invalid_selection_source")
 			}
 			if r.Unavailable != "" {
-				return unavailable("selection_" + r.Unavailable)
+				_, certified := bySelection[finalizeQueueKey{writer, r.Selection}]
+				if r.Action != "discard" || r.Unavailable != "dispatch_deduplicated" || !certified {
+					return unavailable("selection_" + r.Unavailable)
+				}
 			}
 			if writer == "" {
 				return unavailable("selection_writer_missing")
@@ -483,6 +500,20 @@ func CheckInputSelections(records []Record, limits SelectionLimits) (SelectionCh
 				selected[r.Selection] = r
 				report.Selected++
 				report.RandomChoices += r.Random
+			} else if r.Action == "discard" {
+				key, certified := bySelection[finalizeQueueKey{name, r.Selection}]
+				evidence := discarded[key]
+				selectedInput := selected[r.Selection]
+				if !certified || consumed[key] || selectedInput == nil {
+					return inconsistent("known_discard_without_original_selection")
+				}
+				p, c := evidence.prepare, evidence.completion
+				if selectedInput.Lane != "peer" || selectedInput.EngineRun != r.EngineRun || r.EngineRun != p.EngineRun || selectedInput.Step != p.BeforeStep || r.Step != 0 || p.Selection != r.Selection || selectedInput.InputKind != r.InputKind || p.InputKind != r.InputKind || !bytes.Equal(selectedInput.Input, r.Input) || !bytes.Equal(p.Input, r.Input) || selectedInput.Mono > p.Mono || p.Mono > r.Mono || r.Mono > c.Mono {
+					return inconsistent("known_discard_selection_changed")
+				}
+				consumed[key] = true
+				delete(selected, r.Selection)
+				report.DiscardedKnown++
 			} else {
 				selectedInput := selected[r.Selection]
 				if selectedInput == nil || selectedInput.EngineRun != r.EngineRun || selectedInput.Step+1 != r.Step || selectedInput.InputKind != r.InputKind || !bytes.Equal(selectedInput.Input, r.Input) {
@@ -515,6 +546,11 @@ func CheckInputSelections(records []Record, limits SelectionLimits) (SelectionCh
 	for _, seen := range wanted { //wbft:unordered identical missing-source result
 		if !seen {
 			return unavailable("selection_for_core_dispatch_missing")
+		}
+	}
+	for key := range discarded { //wbft:unordered identical missing-source result
+		if !consumed[key] {
+			return unavailable("known_discard_without_selection_source")
 		}
 	}
 	report.Status, report.Reason = "consistent", ""

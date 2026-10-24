@@ -20,25 +20,26 @@ type Kind uint8
 
 // Record kinds.
 const (
-	KindSegment      Kind = 1  // first record of every segment: who wrote it
-	KindPeer         Kind = 2  // a peer's consensus stream was attached or closed
-	KindMsg          Kind = 3  // a consensus message received or sent
-	KindOutcome      Kind = 4  // what the node did with a received message
-	KindSuppressed   Kind = 5  // a send suppressed by the recent cache
-	KindStep         Kind = 6  // one input of the core and the digest of its outputs
-	KindGap          Kind = 7  // records dropped while the queue was full
-	KindTimer        Kind = 8  // measured scheduler mutation and queue timing
-	KindCache        Kind = 9  // measured cache mutation and empty-instance declaration
-	KindSync         Kind = 10 // submitted and processed application sync controls
-	KindWriteCache   Kind = 11 // actual accepted/completed write-ledger observations
-	KindReceiveCache Kind = 12 // actual accepted-input checking-ledger observations
-	KindSession      Kind = 13 // original stream observations and functional endings
-	KindCoreStep     Kind = 14 // detached actual live core execution sources
-	KindAppQueue     Kind = 15 // detached application-input queue mutex mutations
-	KindFinalize     Kind = 16 // detached commit queue and application call boundaries
-	KindInbox        Kind = 17 // detached inbox queue and slot sources
-	KindInternal     Kind = 18 // detached internal queue source and dispatch boundaries
-	KindSelection    Kind = 19 // original conditional probes and selected input dispatch
+	KindSegment         Kind = 1  // first record of every segment: who wrote it
+	KindPeer            Kind = 2  // a peer's consensus stream was attached or closed
+	KindMsg             Kind = 3  // a consensus message received or sent
+	KindOutcome         Kind = 4  // what the node did with a received message
+	KindSuppressed      Kind = 5  // a send suppressed by the recent cache
+	KindStep            Kind = 6  // one input of the core and the digest of its outputs
+	KindGap             Kind = 7  // records dropped while the queue was full
+	KindTimer           Kind = 8  // measured scheduler mutation and queue timing
+	KindCache           Kind = 9  // measured cache mutation and empty-instance declaration
+	KindSync            Kind = 10 // submitted and processed application sync controls
+	KindWriteCache      Kind = 11 // actual accepted/completed write-ledger observations
+	KindReceiveCache    Kind = 12 // actual accepted-input checking-ledger observations
+	KindSession         Kind = 13 // original stream observations and functional endings
+	KindCoreStep        Kind = 14 // detached actual live core execution sources
+	KindAppQueue        Kind = 15 // detached application-input queue mutex mutations
+	KindFinalize        Kind = 16 // detached commit queue and application call boundaries
+	KindInbox           Kind = 17 // detached inbox queue and slot sources
+	KindInternal        Kind = 18 // detached internal queue source and dispatch boundaries
+	KindSelection       Kind = 19 // original conditional probes and selected input dispatch
+	KindReceiveDispatch Kind = 20 // original receive preparation and dispatch decisions
 )
 
 func (k Kind) String() string {
@@ -79,6 +80,8 @@ func (k Kind) String() string {
 		return "internal_source"
 	case KindSelection:
 		return "input_selection_source"
+	case KindReceiveDispatch:
+		return "receive_dispatch_source"
 	case KindFinalize:
 		return "finalize_source"
 	}
@@ -87,7 +90,7 @@ func (k Kind) String() string {
 
 // Record is one journal record. Body is one of *SegmentRec, *PeerRec,
 // *MsgRec, *OutcomeRec, *SuppressedRec, *StepRec, *GapRec, *TimerRec, *CacheRec,
-// *WriteCacheRec, *ReceiveCacheRec, *SessionRec, *CoreStepRec, *AppQueueRec, *FinalizeRec, *InboxRec, *InternalRec, *SelectionRec, or *SyncRec. JSeq is assigned
+// *WriteCacheRec, *ReceiveCacheRec, *SessionRec, *CoreStepRec, *AppQueueRec, *FinalizeRec, *InboxRec, *InternalRec, *SelectionRec, *ReceiveDispatchRec, or *SyncRec. JSeq is assigned
 // by the writer: it increases by one per written record within a run.
 type Record struct {
 	Kind Kind
@@ -646,6 +649,8 @@ func encodeBody(r Record, jseq uint64) ([]byte, error) {
 		return encodeInternalRec(b, jseq)
 	case *SelectionRec:
 		return encodeSelectionRec(b, jseq)
+	case *ReceiveDispatchRec:
+		return encodeReceiveDispatchRec(b, jseq)
 	case *FinalizeRec:
 		return encodeFinalizeRec(b, jseq)
 	case *SyncRec:
@@ -833,6 +838,8 @@ func decodeBody(k Kind, body []byte) (Record, error) {
 		return decodeInternalRec(body)
 	case KindSelection:
 		return decodeSelectionRec(body)
+	case KindReceiveDispatch:
+		return decodeReceiveDispatchRec(body)
 	case KindFinalize:
 		return decodeFinalizeRec(body)
 	case KindSync:
@@ -887,6 +894,8 @@ func kindOf(body any) (Kind, bool) {
 		return KindInternal, true
 	case *SelectionRec:
 		return KindSelection, true
+	case *ReceiveDispatchRec:
+		return KindReceiveDispatch, true
 	case *FinalizeRec:
 		return KindFinalize, true
 	case *SyncRec:
@@ -940,6 +949,8 @@ func size(r Record) int64 {
 		return n
 	case *AppQueueRec:
 		return 256 + int64(len(b.Input)+len(b.InputKind)+len(b.Action)+len(b.Unavailable))
+	case *ReceiveDispatchRec:
+		return 512 + int64(len(b.Input)+len(b.InputKind)+len(b.Via)+len(b.Action)+len(b.Source.WriterRun)+len(b.StreamRun)+len(b.Origin.WriterRun)+len(b.Unavailable))
 	case *SelectionRec:
 		return 512 + int64(len(b.Input)+len(b.InputKind)+len(b.Action)+len(b.Lane)+len(b.NextHeight)+len(b.Unavailable)+len(b.Internal.State)+len(b.App.State)+len(b.Timer.State)+len(b.Inbox.State))
 	case *InternalRec:
