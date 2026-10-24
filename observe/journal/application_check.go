@@ -101,14 +101,20 @@ func CheckRestoredApplicationSources(ctx context.Context, records []Record, root
 }
 
 func inspectApplicationCoreOutputs(records []Record, limits CoreSourceLimits, restored bool, capture func(string, *CoreStepRec, []consensus.Output)) (CoreSourceCheck, []coreSourceAccepted, error) {
+	return inspectConditionalCoreStates(records, limits, restored, capture, nil)
+}
+
+// Every conditional inspection creates fresh private restored state. Output
+// and snapshot consumers never receive a runner-owned model or caller proof.
+func inspectConditionalCoreStates(records []Record, limits CoreSourceLimits, restored bool, capture func(string, *CoreStepRec, []consensus.Output), snapshots func(string, *CoreStepRec, *consensus.Snapshot)) (CoreSourceCheck, []coreSourceAccepted, error) {
 	if !restored {
-		return inspectCoreSourceOutputs(records, limits, capture)
+		return inspectCoreSourceStates(records, limits, capture, snapshots)
 	}
 	restore, seeds, err := reconstructRestoreSources(records, limits)
 	if err != nil || restore.Status != "consistent" {
 		return CoreSourceCheck{Status: "unavailable", Reason: "restore_not_reconstructed"}, nil, err
 	}
-	return inspectCoreSourceStatesRestored(records, limits, capture, nil, seeds)
+	return inspectCoreSourceStatesRestored(records, limits, capture, snapshots, seeds)
 }
 
 func checkApplicationSources(ctx context.Context, records []Record, roots map[string]ApplicationRoot, factory ApplicationFactory, limits ApplicationLimits, restored bool) (report ApplicationCheck, checkErr error) {

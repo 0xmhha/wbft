@@ -8,6 +8,8 @@ import (
 
 	"github.com/0xmhha/wbft/codec"
 	"github.com/0xmhha/wbft/codec/rlp"
+	"github.com/0xmhha/wbft/consensus"
+	"github.com/0xmhha/wbft/consensus/inputlog"
 	"github.com/0xmhha/wbft/consensus/privval"
 	"github.com/0xmhha/wbft/consensus/wal"
 	"github.com/0xmhha/wbft/observe/journal"
@@ -46,6 +48,7 @@ func TestRestoreSourcesNormalGracefulRestartToFirstLiveStep(t *testing.T) {
 			n.coreSteps = o
 			n.timerSources = o
 			n.internalSources = o
+			n.inboxSources = o
 			n.signerCalls = o
 			n.signerSources = &privval.SourceOptions{Namespace: o.CaptureRun(), Records: 1024, Bytes: 8 << 20, Observe: func(source privval.Source) {
 				writer.Put(journal.Record{Body: &journal.SignerRec{Source: source, Mono: uint64(n.clock.Mono()), WallNs: uint64(n.clock.Now().UnixNano())}})
@@ -116,12 +119,184 @@ func TestRestoreSourcesNormalGracefulRestartToFirstLiveStep(t *testing.T) {
 	if err != nil || restore.Status != "consistent" || core.Status != "consistent" || restore.Reads != 2 || restore.Runs != 2 || restore.Attempts != 1 || restore.Inputs == 0 {
 		t.Fatal("normal restore and first live step not reconstructed", restore, core, err)
 	}
+	internalBounds := journal.InternalLimits{Core: limits, Operations: 4096, Entries: 4096, Outputs: 16384, Bytes: 32 << 20}
+	fullInternal, internalErr := journal.CheckRestoredInternalSources(original, internalBounds)
+	if internalErr != nil || fullInternal.Status != "consistent" || fullInternal.RestoredOwnMessages == 0 || fullInternal.RetainedQueued != 0 || fullInternal.RetainedTaken != 0 {
+		t.Fatal("full restored internal FIFO not reconstructed", fullInternal, internalErr)
+	}
+	ordinaryInternal, internalErr := journal.CheckInternalSources(original, internalBounds)
+	if internalErr != nil || ordinaryInternal.Status != "unavailable" {
+		t.Fatal("ordinary restored internal guard relaxed", ordinaryInternal, internalErr)
+	}
+	timerBounds := journal.TimerSourceLimits{Core: limits, Operations: 4096, Bindings: 16384, Bytes: 32 << 20}
+	restoredTimers, timerErr := journal.CheckRestoredTimerLifecycleSources(original, timerBounds)
+	if timerErr != nil || restoredTimers.Status != "consistent" || restoredTimers.RetainedLive != 0 || restoredTimers.RetainedQueued != 0 {
+		t.Fatal("restored scheduler lifecycle not reconstructed", restoredTimers, timerErr)
+	}
+	ordinaryTimers, timerErr := journal.CheckTimerLifecycleSources(original, timerBounds)
+	if timerErr != nil || ordinaryTimers.Status != "unavailable" {
+		t.Fatal("ordinary timer restore guard relaxed", ordinaryTimers, timerErr)
+	}
+	inboxBounds := journal.InboxLimits{Core: limits, Operations: 4096, Entries: 4096, Peers: 16, Frames: 4096, Bytes: 32 << 20}
+	restoredInbox, inboxErr := journal.CheckRestoredInboxSources(original, inboxBounds)
+	if inboxErr != nil || restoredInbox.Status != "consistent" || restoredInbox.Clears != 2 || restoredInbox.RetainedQueued != 0 || restoredInbox.RetainedChecking != 0 || restoredInbox.RetainedSlots != 0 || restoredInbox.RetainedTaken != 0 {
+		t.Fatal("restored empty peer inbox lifecycle not reconstructed", restoredInbox, inboxErr)
+	}
+	ordinaryInbox, inboxErr := journal.CheckInboxSources(original, inboxBounds)
+	if inboxErr != nil || ordinaryInbox.Status != "unavailable" {
+		t.Fatal("ordinary inbox restore guard relaxed", ordinaryInbox, inboxErr)
+	}
 	legacy, err := journal.CheckCoreStepSources(original, limits)
 	if err != nil || legacy.Status != "unavailable" || legacy.Reason != "restored_prefix_not_reconstructed" {
 		t.Fatal("default checker guard relaxed", legacy, err)
 	}
 	if restore.SignerStatus != "consistent_on_initial_witness" || restore.ApplicationStatus != "unavailable" || restore.PhysicalStatus != "unavailable" {
 		t.Fatal("read reconstruction claimed unrelated proof", restore)
+	}
+	for _, name := range []string{"reset_after_install", "missing_reset", "replay_fifo_count", "changed_replay_pop", "zero_entries"} {
+		t.Run("restored_internal/"+name, func(t *testing.T) {
+			copied := slices.Clone(original)
+			bounded := internalBounds
+			changed := false
+			var engine, installed uint64
+			for _, row := range original {
+				if source, ok := row.Body.(*journal.RestoreRec); ok && source.Replayed == 1 {
+					engine, installed = source.EngineRun, source.Mono
+				}
+			}
+			if name == "zero_entries" {
+				bounded.Entries = 0
+				changed = true
+			}
+			for i, row := range original {
+				if changed {
+					break
+				}
+				source, ok := row.Body.(*journal.InternalRec)
+				if !ok || source.EngineRun != engine {
+					continue
+				}
+				switch name {
+				case "reset_after_install":
+					if source.Action == "reset" {
+						v := *source
+						v.Mono = installed + 1
+						copied[i].Body = &v
+						changed = true
+					}
+				case "missing_reset":
+					if source.Action == "reset" {
+						copied = append(copied[:i], copied[i+1:]...)
+						changed = true
+					}
+				case "replay_fifo_count":
+					if source.Action == "append" && source.Origin == "replay" {
+						v := *source
+						v.Before++
+						v.After++
+						copied[i].Body = &v
+						changed = true
+					}
+				case "changed_replay_pop":
+					if source.Action == "pop" {
+						v := *source
+						v.Request++
+						copied[i].Body = &v
+						changed = true
+					}
+				}
+			}
+			if !changed {
+				t.Fatal("normal restored source required for offline case missing", name)
+			}
+			check, e := journal.CheckRestoredInternalSources(copied, bounded)
+			if check.Status == "consistent" {
+				t.Fatal("changed/missing restored FIFO source accepted", name, check, e)
+			}
+			t.Logf("restored_internal_copy case=%s status=%s reason=%s error=%v", name, check.Status, check.Reason, e)
+		})
+	}
+	for _, name := range []string{"missing_transition", "changed_transition_kind", "restore_arm_unqualified", "zero_operations"} {
+		t.Run("restored_timers/"+name, func(t *testing.T) {
+			copied := slices.Clone(original)
+			bounded := timerBounds
+			changed := false
+			var engine uint64
+			for _, row := range original {
+				if source, ok := row.Body.(*journal.RestoreRec); ok && source.Replayed == 1 {
+					engine = source.EngineRun
+				}
+			}
+			if name == "zero_operations" {
+				bounded.Operations = 0
+				changed = true
+			}
+			for i, row := range original {
+				if changed {
+					break
+				}
+				source, ok := row.Body.(*journal.TimerRec)
+				if !ok || source.EngineRun != engine {
+					continue
+				}
+				switch name {
+				case "missing_transition":
+					if (source.Action == "queued" || source.Action == "pop" || source.Action == "cancelled" || source.Action == "replace") && source.ArmEngineRun == engine && source.ArmStep == 0 && source.ArmOutput == 0 {
+						copied = append(copied[:i], copied[i+1:]...)
+						changed = true
+					}
+				case "changed_transition_kind":
+					if (source.Action == "queued" || source.Action == "pop" || source.Action == "cancelled" || source.Action == "replace") && source.ArmEngineRun == engine && source.ArmStep == 0 && source.ArmOutput == 0 {
+						input, e := inputlog.Decode(inputlog.KindTimeout, source.Input, nil)
+						if e != nil {
+							t.Fatal(e)
+						}
+						timeout := input.(consensus.Timeout)
+						timeout.Kind = (timeout.Kind + 1) % 4
+						v := *source
+						v.Input, e = inputlog.Encode(timeout)
+						if e != nil {
+							t.Fatal(e)
+						}
+						copied[i].Body = &v
+						changed = true
+					}
+				case "restore_arm_unqualified":
+					if source.Source == "restore" && source.Action == "arm" {
+						v := *source
+						v.Source = "core"
+						copied[i].Body = &v
+						changed = true
+					}
+				}
+			}
+			if !changed {
+				t.Fatal("normal restored timer source required for offline case missing", name)
+			}
+			check, e := journal.CheckRestoredTimerLifecycleSources(copied, bounded)
+			if check.Status == "consistent" {
+				t.Fatal("changed/missing restored scheduler accepted", name, check, e)
+			}
+			t.Logf("restored_timer_copy case=%s status=%s reason=%s error=%v", name, check.Status, check.Reason, e)
+		})
+	}
+	// A later readable-prefix witness does not itself claim another install.
+	// Its bytes remain validated, and every retained engine still needs a result.
+	var witness *journal.WALReadRec
+	for _, row := range original {
+		if source, ok := row.Body.(*journal.WALReadRec); ok {
+			v := *source
+			v.Source.Sequence++
+			witness = &v
+		}
+	}
+	if witness == nil {
+		t.Fatal("normal original read witness missing")
+	}
+	withWitness := append(slices.Clone(original), journal.Record{Kind: journal.KindWALRead, Body: witness})
+	readCheck, coreCheck, readErr := journal.CheckRestoredCoreSources(withWitness, limits)
+	if readErr != nil || readCheck.Status != "consistent" || coreCheck.Status != "consistent" || readCheck.UnreferencedReads != 1 {
+		t.Fatal("additional original read witness mistaken for restore", readCheck, coreCheck, readErr)
 	}
 	var target, firstLive int
 	for i, rec := range original {

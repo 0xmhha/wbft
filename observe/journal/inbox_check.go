@@ -93,6 +93,33 @@ func CheckInboxSources(records []Record, limits InboxLimits) (InboxCheck, error)
 }
 
 func checkInboxSources(records []Record, limits InboxLimits, discarded receiveDiscardEvidenceSet) (InboxCheck, error) {
+	return inspectInboxSources(records, limits, discarded, false)
+}
+
+// CheckRestoredInboxSources binds replay snapshot references to independently
+// reconstructed WAL installations. The ordinary guard and private Known-discard
+// requirements remain unchanged, and no synthetic live core step is created.
+func CheckRestoredInboxSources(records []Record, limits InboxLimits) (InboxCheck, error) {
+	_, core, effects, err := CheckRestoredBoundarySources(records, limits.Core)
+	report := InboxCheck{Status: "unavailable", Reason: "restore_boundary_not_reconstructed", Scope: "inbox_on_original_wal_restore_and_live_core", PhysicalStatus: "unavailable", ScheduleStatus: "unavailable"}
+	if err != nil || core.Status != "consistent" || effects.Status != "consistent" {
+		if err != nil {
+			report.Status = "inconsistent"
+		}
+		return report, err
+	}
+	report, err = inspectInboxSources(records, limits, nil, true)
+	report.Scope = "inbox_on_original_wal_restore_and_live_core"
+	return report, err
+}
+
+type restoredInboxSnapshot struct {
+	snapshot  *consensus.Snapshot
+	readIndex int
+	readMono  uint64
+}
+
+func inspectInboxSources(records []Record, limits InboxLimits, discarded receiveDiscardEvidenceSet, restored bool) (InboxCheck, error) {
 	consumed := map[receiveDiscardKey]bool{}
 	report := InboxCheck{Status: "unavailable", Scope: "inbox_queue_worker_snapshot_slot_and_core_input_sources", PhysicalStatus: "unavailable", ScheduleStatus: "unavailable"}
 	unavailable := func(reason string) (InboxCheck, error) {
@@ -106,9 +133,23 @@ func checkInboxSources(records []Record, limits InboxLimits, discarded receiveDi
 	if limits.Operations == 0 || limits.Entries == 0 || limits.Peers == 0 || limits.Frames == 0 || limits.Bytes == 0 {
 		return unavailable("inspection_limits_required")
 	}
+	replayed := map[appCoreKey]restoredInboxSnapshot{}
+	if restored {
+		restore, seeds, e := reconstructRestoreSources(records, limits.Core)
+		if e != nil {
+			return inconsistent("restore_" + restore.Reason)
+		}
+		if restore.Status != "consistent" {
+			return unavailable("restore_" + restore.Reason)
+		}
+		for key, seed := range seeds { //wbft:unordered independent snapshot indexes commute
+			replayed[appCoreKey{key.writer, key.engine, seed.installed.Steps}] = restoredInboxSnapshot{seed.model.state.Snapshot(), seed.readIndex, seed.read.Mono}
+		}
+	}
+	indexes := map[*InboxRec]int{}
 	snapshots := map[appCoreKey]inboxSourceSnapshot{}
 	wanted, stops := map[appCoreKey]bool{}, map[appCoreKey]bool{}
-	core, _, err := inspectCoreSourceStates(records, limits.Core, nil, func(writer string, source *CoreStepRec, snapshot *consensus.Snapshot) {
+	core, _, err := inspectConditionalCoreStates(records, limits.Core, restored, nil, func(writer string, source *CoreStepRec, snapshot *consensus.Snapshot) {
 		key := appCoreKey{writer, source.EngineRun, source.Step}
 		snapshots[key] = inboxSourceSnapshot{source, snapshot}
 		if source.Via == "peer" && source.InputKind == inputlog.KindMessage {
@@ -131,7 +172,7 @@ func checkInboxSources(records []Record, limits InboxLimits, discarded receiveDi
 	sessions := map[SessionRef]types.Address{}
 	writer := ""
 	var span, operations, frames uint64
-	for _, record := range records {
+	for index, record := range records {
 		switch r := record.Body.(type) {
 		case *SegmentRec:
 			writer = r.Run
@@ -217,6 +258,7 @@ func checkInboxSources(records []Record, limits InboxLimits, discarded receiveDi
 			}
 			span += n
 			groups[writer] = append(groups[writer], r)
+			indexes[r] = index
 		}
 	}
 	if operations == 0 {
@@ -344,29 +386,48 @@ func checkInboxSources(records []Record, limits InboxLimits, discarded receiveDi
 				if !model.checking[r.Request] {
 					return inconsistent("check_without_dequeue")
 				}
-				if r.SnapshotReplayed != 0 || r.SnapshotPhase == "replay" {
+				publication, exists := snapshots[appCoreKey{name, r.SnapshotEngine, r.SnapshotStep}]
+				phase := "step"
+				var earliest int64
+				if (r.SnapshotReplayed != 0 || r.SnapshotPhase == "replay") && !restored {
 					return unavailable("restored_prefix_not_reconstructed")
 				}
-				publication, exists := snapshots[appCoreKey{name, r.SnapshotEngine, r.SnapshotStep}]
-				if r.SnapshotPhase == "initial" && r.SnapshotEngine == 0 && r.SnapshotStep == 0 {
-					publication = inboxSourceSnapshot{&CoreStepRec{}, &consensus.Snapshot{}}
-					exists = true
+				if r.SnapshotPhase == "replay" {
+					boundary, ok := replayed[appCoreKey{name, r.SnapshotEngine, r.SnapshotStep}]
+					if !ok {
+						return unavailable("restored_snapshot_publication_missing")
+					}
+					if r.SnapshotReplayed != 1 || r.SnapshotPhase != "replay" || indexes[r] <= boundary.readIndex {
+						return inconsistent("restored_snapshot_owner_or_order_changed")
+					}
+					publication = inboxSourceSnapshot{snapshot: boundary.snapshot}
+					exists, phase, earliest = true, "replay", int64(boundary.readMono)
+				} else if r.SnapshotPhase == "initial" && r.SnapshotEngine == 0 && r.SnapshotStep == 0 {
+					publication = inboxSourceSnapshot{snapshot: &consensus.Snapshot{}}
+					if r.SnapshotReplayed != 0 {
+						return inconsistent("snapshot_replayed_owner_changed")
+					}
+					exists, phase = true, "initial"
+				} else if exists {
+					// A restored engine retains its prefix label on later actual
+					// live publications. The label does not turn those snapshots
+					// into the initial replay installation or erase their owner.
+					if r.SnapshotReplayed != boolUint(publication.source.ReplayedPrefix) {
+						return inconsistent("snapshot_replayed_owner_changed")
+					}
+					earliest = publication.source.Entry.Mono
+					if publication.source.InputKind == inputlog.KindStart {
+						phase = "start"
+					}
+					if publication.source.InputKind == inputlog.KindStop {
+						phase = "stopped"
+					}
 				}
 				if !exists {
 					return unavailable("snapshot_publication_missing")
 				}
-				phase := "step"
-				if r.SnapshotPhase == "initial" && r.SnapshotEngine == 0 && r.SnapshotStep == 0 {
-					phase = "initial"
-				}
-				if publication.source.Entry.Mono > int64(r.Mono) {
+				if earliest > int64(r.Mono) {
 					return inconsistent("snapshot_from_future_step")
-				}
-				if publication.source.InputKind == inputlog.KindStart {
-					phase = "start"
-				}
-				if publication.source.InputKind == inputlog.KindStop {
-					phase = "stopped"
 				}
 				if r.SnapshotPhase != phase {
 					return inconsistent("snapshot_phase_changed")

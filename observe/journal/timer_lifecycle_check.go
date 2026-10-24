@@ -37,7 +37,35 @@ var ErrTimerLifecycleSource = errors.New("journal: inconsistent timer lifecycle 
 // spans and indexes, not decoding allocations or process resources. A retained
 // finite horizon may end with live/queued timers; those counts are explicit.
 func CheckTimerLifecycleSources(records []Record, limits TimerSourceLimits) (TimerLifecycleCheck, error) {
-	base, err := CheckTimerSources(records, limits)
+	return checkTimerLifecycleSources(records, limits, false, restoredQueueEvidence{})
+}
+
+// CheckRestoredTimerLifecycleSources first derives restore arms from the original
+// WAL. Ordinary guards remain active. Each dependent core inspection uses fresh
+// private state, and verified arms never become fabricated live core outputs.
+func CheckRestoredTimerLifecycleSources(records []Record, limits TimerSourceLimits) (TimerLifecycleCheck, error) {
+	restore, seeds, err := reconstructRestoreSources(records, limits.Core)
+	report := newTimerLifecycleCheck()
+	if err != nil || restore.Status != "consistent" {
+		report.Reason = "restore_not_reconstructed"
+		if err != nil {
+			report.Status = "inconsistent"
+		}
+		return report, err
+	}
+	var evidence restoredQueueEvidence
+	effects, err := inspectRestoreEffects(records, limits.Core, seeds, func(e restoredQueueEvidence) { evidence = e })
+	if err != nil || effects.Status != "consistent" {
+		report.Status, report.Reason = effects.Status, "effects_"+effects.Reason
+		return report, err
+	}
+	report, err = checkTimerLifecycleSources(records, limits, true, evidence)
+	report.Scope = "scheduler_mutations_on_independent_wal_restore_and_core_sources"
+	return report, err
+}
+
+func checkTimerLifecycleSources(records []Record, limits TimerSourceLimits, restored bool, evidence restoredQueueEvidence) (TimerLifecycleCheck, error) {
+	base, err := checkTimerSources(records, limits, restored)
 	if base.Status != "consistent" || err != nil {
 		report := newTimerLifecycleCheck()
 		report.Status, report.Reason = base.Status, "bindings_"+base.Reason
@@ -46,7 +74,7 @@ func CheckTimerLifecycleSources(records []Record, limits TimerSourceLimits) (Tim
 		}
 		return report, nil
 	}
-	return inspectTimerLifecycle(records, limits)
+	return inspectTimerLifecycleWithRestore(records, limits, evidence)
 }
 
 func newTimerLifecycleCheck() TimerLifecycleCheck {
@@ -59,7 +87,31 @@ type lifecycleArm struct {
 	queued bool
 }
 
+// A restored arm has no live step/output. Kind separates its original timers
+// without changing the wire format or overloading a live core output identity.
+type lifecycleSourceKey struct {
+	timerSourceOutputKey
+	restoredKind uint64
+}
+
+func timerLifecycleSourceIdentity(writer string, t *TimerRec, arm bool, kind consensus.TimerKind) lifecycleSourceKey {
+	key := lifecycleSourceKey{timerSourceOutputKey: timerSourceOutputKey{timerSourceStepKey{writer, t.EngineRun, t.Step}, t.Output}}
+	if arm {
+		key.timerSourceOutputKey = timerSourceOutputKey{timerSourceStepKey{writer, t.ArmEngineRun, t.ArmStep}, t.ArmOutput}
+		if t.ArmEngineRun != 0 && t.ArmStep == 0 && t.ArmOutput == 0 {
+			key.restoredKind = uint64(kind) + 1
+		}
+	} else if t.Source == "restore" && t.Step == 0 && t.Output == 0 {
+		key.restoredKind = uint64(kind) + 1
+	}
+	return key
+}
+
 func inspectTimerLifecycle(records []Record, limits TimerSourceLimits) (TimerLifecycleCheck, error) {
+	return inspectTimerLifecycleWithRestore(records, limits, restoredQueueEvidence{})
+}
+
+func inspectTimerLifecycleWithRestore(records []Record, limits TimerSourceLimits, evidence restoredQueueEvidence) (TimerLifecycleCheck, error) {
 	report := newTimerLifecycleCheck()
 	unavailable := func(reason string) (TimerLifecycleCheck, error) {
 		report.Status, report.Reason = "unavailable", reason
@@ -120,18 +172,30 @@ func inspectTimerLifecycle(records []Record, limits TimerSourceLimits) (TimerLif
 			}
 			return 0
 		})
-		keyOf := func(t *TimerRec, arm bool) timerSourceOutputKey {
-			if arm {
-				return timerSourceOutputKey{timerSourceStepKey{writer, t.ArmEngineRun, t.ArmStep}, t.ArmOutput}
-			}
-			return timerSourceOutputKey{timerSourceStepKey{writer, t.EngineRun, t.Step}, t.Output}
-		}
-		causes := map[timerSourceOutputKey]*TimerRec{}
+		kinds := map[*TimerRec]consensus.TimerKind{}
 		for _, t := range operations {
-			if t.Source == "restore" {
+			if t.Source == "restore" && evidence.timers[restoredTimerSourceKey{writer, t.EngineRun, t.Sequence}] != t {
 				return unavailable("timer_restoration_requires_proof")
 			}
-			if (t.Source == "core" || t.Source == "lifecycle") && (t.Action == "arm" || t.Action == "cancel") {
+			if len(t.Input) > 0 {
+				input, e := inputlog.Decode(inputlog.KindTimeout, t.Input, nil)
+				timeout, ok := input.(consensus.Timeout)
+				if e != nil {
+					return inconsistent("timer_timeout_encoding_changed")
+				}
+				if !ok || timeout.Kind > consensus.RoundProposalTimer {
+					return inconsistent("timer_kind_changed")
+				}
+				kinds[t] = timeout.Kind
+			}
+		}
+		keyOf := func(t *TimerRec, arm bool) lifecycleSourceKey {
+			return timerLifecycleSourceIdentity(writer, t, arm, kinds[t])
+		}
+		causes := map[lifecycleSourceKey]*TimerRec{}
+		for _, t := range operations {
+
+			if (t.Source == "core" || t.Source == "lifecycle" || t.Source == "restore") && (t.Action == "arm" || t.Action == "cancel") {
 				key := keyOf(t, false)
 				if causes[key] != nil {
 					return inconsistent("timer_mutation_cause_repeated")
@@ -139,9 +203,9 @@ func inspectTimerLifecycle(records []Record, limits TimerSourceLimits) (TimerLif
 				causes[key] = t
 			}
 		}
-		arms := map[timerSourceOutputKey]*lifecycleArm{}
-		live := map[consensus.TimerKind]timerSourceOutputKey{}
-		var queue []timerSourceOutputKey
+		arms := map[lifecycleSourceKey]*lifecycleArm{}
+		live := map[consensus.TimerKind]lifecycleSourceKey{}
+		var queue []lifecycleSourceKey
 		var previous uint64
 		var mono time.Duration
 		for _, t := range operations {
@@ -173,23 +237,12 @@ func inspectTimerLifecycle(records []Record, limits TimerSourceLimits) (TimerLif
 					return inconsistent("timer_stop_source_changed")
 				}
 			}
-			var kind consensus.TimerKind
-			if len(t.Input) != 0 {
-				input, err := inputlog.Decode(inputlog.KindTimeout, t.Input, nil)
-				if err != nil {
-					return inconsistent("timer_timeout_encoding_changed")
-				}
-				timeout, ok := input.(consensus.Timeout)
-				if !ok || timeout.Kind > consensus.RoundProposalTimer {
-					return inconsistent("timer_kind_changed")
-				}
-				kind = timeout.Kind
-			}
+			kind := kinds[t]
 			arm := arms[armKey]
 			sameArm := arm != nil && arm.kind == kind && bytes.Equal(arm.record.Input, t.Input) && arm.record.EntryMono == t.EntryMono && arm.record.Deadline == t.Deadline
 			switch t.Action {
 			case "arm":
-				if t.Source != "core" || owner != armKey || arm != nil {
+				if (t.Source != "core" && evidence.timers[restoredTimerSourceKey{writer, t.EngineRun, t.Sequence}] != t) || owner != armKey || arm != nil {
 					return inconsistent("timer_arm_identity_changed")
 				}
 				if _, exists := live[kind]; exists {

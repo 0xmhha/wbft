@@ -54,6 +54,16 @@ type receiveSessionSource struct {
 }
 
 func CheckReceiveSources(records []Record, limits ReceiveSourceLimits) (ReceiveSourceCheck, error) {
+	return checkReceiveSources(records, limits, false)
+}
+
+// CheckRestoredReceiveSources checks original external captures against fresh
+// WAL reconstruction and actual live ACCEPTs. It does not assert physical I/O.
+func CheckRestoredReceiveSources(records []Record, limits ReceiveSourceLimits) (ReceiveSourceCheck, error) {
+	return checkReceiveSources(records, limits, true)
+}
+
+func checkReceiveSources(records []Record, limits ReceiveSourceLimits, restored bool) (ReceiveSourceCheck, error) {
 	report := ReceiveSourceCheck{Status: "unavailable", Scope: "external_read_capture_core_accept", PhysicalStatus: "unavailable", ScheduleStatus: "unavailable"}
 	unavailable := func(reason string) (ReceiveSourceCheck, error) {
 		report.Status, report.Reason = "unavailable", reason
@@ -73,7 +83,7 @@ func CheckReceiveSources(records []Record, limits ReceiveSourceLimits) (ReceiveS
 	if cache.Status != "consistent" {
 		return unavailable("transition_" + cache.Reason)
 	}
-	core, accepted, err := reconstructCoreSources(records, limits.Core)
+	core, accepted, err := inspectConditionalCoreStates(records, limits.Core, restored, nil, nil)
 	if err != nil {
 		return inconsistent("core_" + core.Reason)
 	}

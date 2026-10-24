@@ -55,6 +55,10 @@ type timerSourceExpected struct {
 }
 
 func CheckTimerSources(records []Record, limits TimerSourceLimits) (TimerSourceCheck, error) {
+	return checkTimerSources(records, limits, false)
+}
+
+func checkTimerSources(records []Record, limits TimerSourceLimits, restored bool) (TimerSourceCheck, error) {
 	report := TimerSourceCheck{Status: "unavailable", Scope: "core_timer_output_and_timeout_bindings", PhysicalStatus: "unavailable", ScheduleStatus: "unavailable"}
 	unavailable := func(reason string) (TimerSourceCheck, error) {
 		report.Status, report.Reason = "unavailable", reason
@@ -81,7 +85,7 @@ func CheckTimerSources(records []Record, limits TimerSourceLimits) (TimerSourceC
 		usedBytes += n
 		return true
 	}
-	core, _, err := inspectCoreSourceOutputs(records, limits.Core, func(run string, source *CoreStepRec, recomputed []consensus.Output) {
+	core, _, err := inspectApplicationCoreOutputs(records, limits.Core, restored, func(run string, source *CoreStepRec, recomputed []consensus.Output) {
 		if captureIssue != "" {
 			return
 		}
