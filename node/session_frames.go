@@ -5,6 +5,7 @@ import (
 	"github.com/0xmhha/wbft/observe/event"
 	"github.com/0xmhha/wbft/observe/journal"
 	"github.com/0xmhha/wbft/p2p/transport"
+	"sync"
 )
 
 // sessionFrameRecorder is the separate accepted/completed source recorder.
@@ -12,7 +13,11 @@ import (
 // remains unavailable. The default frameRecorder stays unchanged.
 type sessionFrameRecorder struct {
 	*frameRecorder
-	run string
+	run                              string
+	runtimeMu                        sync.Mutex
+	runtimeEnabled, runtimeExhausted bool
+	runtimeLimit, runtimeSequence    uint64
+	runtimeLoops                     map[runtimeLoopKey]journal.RuntimeRec
 }
 
 var _ transport.SessionObserver = (*sessionFrameRecorder)(nil)

@@ -32,6 +32,10 @@ type DiagnosticOptions struct {
 	// WAL Close. It adds shutdown I/O and original ReadAll allocations; WALRead
 	// bounds only the detached evidence copy, not that I/O or allocation.
 	WALReadOnStop bool
+	// RuntimeSources observes original loop and shutdown boundaries. RuntimeRecords
+	// bounds copied diagnostic operations only. Nil/default behavior stays unchanged.
+	RuntimeSources bool
+	RuntimeRecords uint64
 }
 
 func freezeDiagnostics(cfg Config, d *Deps) error {
@@ -47,6 +51,9 @@ func freezeDiagnostics(cfg Config, d *Deps) error {
 	}
 	if o.WALRead.Frames == 0 || o.WALRead.Bytes == 0 || o.SignerRecords == 0 || o.SignerBytes == 0 || o.ApplicationBytes == 0 {
 		return fmt.Errorf("%w: diagnostic copy limits must be positive", ErrConfig)
+	}
+	if o.RuntimeSources && o.RuntimeRecords == 0 {
+		return fmt.Errorf("%w: runtime diagnostic operation limit must be positive", ErrConfig)
 	}
 	if _, ok := d.Transport.(transport.Observed); !ok {
 		return fmt.Errorf("%w: diagnostic transport observations are unavailable", ErrConfig)
