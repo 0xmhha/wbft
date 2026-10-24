@@ -143,7 +143,7 @@ func TestReceiveCacheRecordR01ProjectionUnavailableWithoutProfile(t *testing.T) 
 
 func TestSessionSourceR01ProjectionUnavailableWithoutProfile(t *testing.T) {
 	for _, legacy := range []uint64{0, journal.CacheTraceVersion} {
-		for _, domain := range []string{"lifetime", "frame", "write_attempt", "core_step", "app_queue", "finalize", "inbox", "internal", "selection", "receive_dispatch", "wal_read", "restore", "signer", "signer_call", "application"} {
+		for _, domain := range []string{"lifetime", "frame", "write_attempt", "core_step", "app_queue", "finalize", "inbox", "internal", "selection", "receive_dispatch", "wal_read", "restore", "signer", "signer_call", "application", "runtime"} {
 			t.Run(fmt.Sprintf("%s/%d", domain, legacy), func(t *testing.T) {
 				fs := fsys.NewMem()
 				writer, err := journal.Open(journal.Options{FS: fs, Dir: "/session-source", Synchronous: true}, journal.Identity{Run: "current-writer", Core: journal.CoreOptions{CacheTrace: legacy}})
@@ -152,6 +152,8 @@ func TestSessionSourceR01ProjectionUnavailableWithoutProfile(t *testing.T) {
 				}
 				ref := &journal.SessionRef{Run: "original-writer", Ordinal: 7}
 				switch domain {
+				case "runtime":
+					writer.Put(journal.Record{Body: &journal.RuntimeRec{Version: journal.RuntimeSourceVersion, Sequence: 1, Request: 1, Namespace: "current-writer", Component: journal.RuntimeAppStop, Phase: "enter"}})
 				case "application":
 					writer.Put(journal.Record{Body: &journal.ApplicationRec{Version: journal.ApplicationSourceVersion, Result: "ok", Unavailable: "owner_unavailable"}})
 				case "signer":
@@ -207,6 +209,9 @@ func TestSessionSourceR01ProjectionUnavailableWithoutProfile(t *testing.T) {
 					t.Fatal(err)
 				}
 				expected := "session"
+				if domain == "runtime" {
+					expected = "runtime sources"
+				}
 				if domain == "wal_read" {
 					expected = "WAL read sources"
 				}

@@ -193,6 +193,15 @@ func New(cfg Config, d Deps) (*Node, error) {
 	n.partDropped = n.metrics.Counter("wbft_participation_write_dropped_total",
 		"Participation inputs dropped because the recorder's queue was full, and records that could not be built or written.")
 	n.walFsync = n.metrics.Histogram("wbft_wal_fsync_seconds", "Duration of the write-ahead log's fsyncs, by method.", fsyncBuckets, "method")
+	if o := n.d.Diagnostics; o != nil && o.RuntimeSources {
+		// Observe actual protocol entries before an application starts listening.
+		// A late frame observer cannot reconstruct already-running loop entries.
+		diagnostic := newSessionFrameRecorder(o.Writer, n.clock, n.wireOffset())
+		diagnostic.runtimeEnabled, diagnostic.runtimeLimit = true, o.RuntimeRecords
+		diagnostic.engine = n.engineState
+		n.diagnostic = diagnostic
+		n.d.Transport.(transport.Observed).SetFrameObserver(diagnostic)
+	}
 	return n, nil
 }
 
@@ -343,12 +352,20 @@ func (n *Node) start(ctx context.Context) error {
 	}
 
 	// 3. Logs and sign state.
-	n.diagnostic = nil
 	if o := n.d.Diagnostics; o != nil {
 		if o.Writer.CaptureRun() != runID {
 			return refuse("diagnostic writer run changed")
 		}
-		n.diagnostic = newSessionFrameRecorder(o.Writer, n.clock, n.wireOffset())
+		n.mu.Lock()
+		diagnostic := n.diagnostic
+		n.mu.Unlock()
+		if diagnostic == nil || !o.RuntimeSources {
+			diagnostic = newSessionFrameRecorder(o.Writer, n.clock, n.wireOffset())
+			diagnostic.runtimeEnabled, diagnostic.runtimeLimit = o.RuntimeSources, o.RuntimeRecords
+		}
+		n.mu.Lock()
+		n.diagnostic = diagnostic
+		n.mu.Unlock()
 	}
 	if n.cfg.KeyFile != "" || n.d.key != nil {
 		if err := n.openSigner(head); err != nil {
@@ -485,8 +502,10 @@ func (n *Node) start(ctx context.Context) error {
 			out = recordedTransport{Transport: n.d.Transport, rec: rec}
 		}
 		if rec := n.diagnostic; rec != nil {
-			rec.engine = n.engineState
-			n.d.Transport.(transport.Observed).SetFrameObserver(rec)
+			if !rec.runtimeEnabled {
+				rec.engine = n.engineState
+				n.d.Transport.(transport.Observed).SetFrameObserver(rec)
+			}
 			out = recordedWriteTransport{Transport: n.d.Transport, WriteSender: n.d.Transport.(transport.WriteSender), rec: rec}
 		}
 		suppressed := n.metrics.Counter("wbft_send_suppressed_total", "Sends left out because the peer's recent cache holds the message, by cause.", "cause")
@@ -967,6 +986,7 @@ func (n *Node) Stop() error {
 // close ends a started node; n.ctl is held. A nonempty stopReason records
 // a terminal node boundary after its consensus workers, WAL and journal stop.
 func (n *Node) close(stopReason string) error {
+	finishRuntime := n.ObserveRuntimeCall(journal.RuntimeNodeStop)
 	n.mu.Lock()
 	n.state = stopped
 	r := n.r
@@ -1014,7 +1034,9 @@ func (n *Node) close(stopReason string) error {
 	if n.evq != nil && !n.evq.Close(eventsCloseWait) {
 		n.log.Warn("the event file did not take the queued event records in time; they may be lost", "wait", eventsCloseWait)
 	}
-	return errors.Join(errs...)
+	err := errors.Join(errs...)
+	finishRuntime(err)
+	return err
 }
 
 // flushEvents waits until the event records emitted so far are written to
