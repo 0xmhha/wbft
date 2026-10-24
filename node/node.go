@@ -983,6 +983,13 @@ func (n *Node) close(stopReason string) error {
 	n.cancel()
 	if n.wal != nil {
 		errs = append(errs, n.wal.Close())
+		if n.diagnostic != nil && n.d.Diagnostics.WALReadOnStop {
+			// Consensus workers have returned and the original WAL Close completed.
+			// This extra, explicitly requested read is observation only: its result
+			// never changes the original close error or any future restore input.
+			_, _, source, _ := n.wal.ReadAllObserved(n.diagnostic.CaptureRun(), n.d.Diagnostics.WALRead)
+			n.diagnostic.ObserveWALRead(journal.WALReadRec{Source: source, Mono: uint64(n.clock.Mono()), WallNs: uint64(n.clock.Now().UnixNano())})
+		}
 	}
 	// The core has stopped: no record follows.
 	if o, ok := n.d.Transport.(transport.Observed); ok && n.journal != nil {

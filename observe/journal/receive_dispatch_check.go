@@ -61,6 +61,10 @@ func sameReceiveDispatchIdentity(a, b *ReceiveDispatchRec) bool {
 // discards. It checks recorded sources, not private signing-state execution,
 // restored WAL prefixes, application state, physical I/O or a closed runtime.
 func CheckReceiveDispatchSources(records []Record, limits ReceiveDispatchLimits) (ReceiveDispatchCheck, error) {
+	return checkReceiveDispatchSources(records, limits, nil)
+}
+
+func checkReceiveDispatchSources(records []Record, limits ReceiveDispatchLimits, verified func(receiveDiscardEvidenceSet)) (ReceiveDispatchCheck, error) {
 	report := ReceiveDispatchCheck{Status: "unavailable", Scope: "original_receive_lookup_and_actual_input_disposition", PhysicalStatus: "unavailable", ScheduleStatus: "unavailable"}
 	unavailable := func(reason string) (ReceiveDispatchCheck, error) {
 		report.Status, report.Reason = "unavailable", reason
@@ -444,5 +448,8 @@ func CheckReceiveDispatchSources(records []Record, limits ReceiveDispatchLimits)
 		return inconsistent("known_discard_selection_count_changed")
 	}
 	report.Status, report.Reason = "consistent", ""
+	if verified != nil {
+		verified(discarded)
+	}
 	return report, nil
 }
