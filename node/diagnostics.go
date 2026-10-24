@@ -28,6 +28,10 @@ type DiagnosticOptions struct {
 	WALRead                    wal.ReadSourceLimits
 	SignerRecords, SignerBytes uint64
 	ApplicationBytes           uint64
+	// WALReadOnStop explicitly requests one diagnostic read after the original
+	// WAL Close. It adds shutdown I/O and original ReadAll allocations; WALRead
+	// bounds only the detached evidence copy, not that I/O or allocation.
+	WALReadOnStop bool
 }
 
 func freezeDiagnostics(cfg Config, d *Deps) error {

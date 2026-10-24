@@ -65,7 +65,7 @@ func TestNodeDiagnosticsNormalColdAndStoredSources(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		options := &DiagnosticOptions{Writer: w, WALRead: wal.ReadSourceLimits{Frames: 4096, Bytes: 8 << 20}, SignerRecords: 4096, SignerBytes: 8 << 20, ApplicationBytes: 8 << 20}
+		options := &DiagnosticOptions{Writer: w, WALRead: wal.ReadSourceLimits{Frames: 4096, Bytes: 8 << 20}, SignerRecords: 4096, SignerBytes: 8 << 20, ApplicationBytes: 8 << 20, WALReadOnStop: true}
 		n, err := New(Config{DataDir: "/data", RunID: runID, CachePolicy: &limits, Journal: JournalConfig{Disabled: true}}, Deps{
 			App: a, Authority: a, fs: fs, key: key, Transport: &diagnosticIsolatedTransport{}, Diagnostics: options,
 		})
@@ -74,6 +74,7 @@ func TestNodeDiagnosticsNormalColdAndStoredSources(t *testing.T) {
 		}
 		// Options are caller-owned; Node froze the source configuration at New.
 		options.SignerBytes, options.WALRead.Bytes = 1, 1
+		options.WALReadOnStop = false
 		a.cons = n.Consensus()
 		target := a.Head().Number.RefLow64() + 1 //wbft:low64 HH-60
 		if err = n.Start(t.Context()); err != nil {
@@ -95,6 +96,18 @@ func TestNodeDiagnosticsNormalColdAndStoredSources(t *testing.T) {
 			t.Fatal(err)
 		}
 		counts := map[journal.Kind]int{}
+		readSources := 0
+		for _, row := range rows {
+			if source, ok := row.Body.(*journal.WALReadRec); ok {
+				readSources++
+				if source.Source.Unavailable != "" || source.Source.Error != "" {
+					t.Fatal("original shutdown read unavailable", source)
+				}
+			}
+		}
+		if readSources != 2 {
+			t.Fatal("frozen explicit shutdown read not retained", readSources)
+		}
 		owners := map[uint64]journal.FinalizeRec{}
 		for _, row := range rows {
 			counts[row.Kind]++

@@ -94,6 +94,18 @@ type recordedWriteTransport struct {
 
 var _ transport.WriteAttemptFactory = recordedWriteTransport{}
 
+func (t recordedWriteTransport) WritePeers() []transport.WritePeer {
+	targets := t.WriteSender.WritePeers()
+	for _, target := range targets {
+		// Freeze observation metadata before the original ledger reservation
+		// snapshots this exact session. The adapter's original loop still
+		// owns the observed-session and I/O callbacks. No origin is invented
+		// for a target whose loop never produces an observation.
+		target.Session.BindObservationRun(t.rec.CaptureRun())
+	}
+	return targets
+}
+
 func (t recordedWriteTransport) WriteAttempt(ticket transport.WriteTicket, cause event.SendCause) transport.SendAttempt {
 	for {
 		previous := t.rec.attemptSequence.Load()
