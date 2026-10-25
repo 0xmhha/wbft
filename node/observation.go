@@ -15,13 +15,14 @@ import (
 	"github.com/0xmhha/wbft/codec/rlp"
 	wire "github.com/0xmhha/wbft/codec/window"
 	"github.com/0xmhha/wbft/internal/fsys"
+	"github.com/0xmhha/wbft/observe/journal"
 	"github.com/0xmhha/wbft/rpc"
 	"github.com/0xmhha/wbft/types"
 )
 
 // ObservationConfig explicitly selects observation-only recent retention.
 // All values are required. It supplies no production H or activation height.
-// The initial runtime requires the functional journal to be disabled.
+// A functional journal records the exact policy and writer-start checkpoint.
 type ObservationConfig struct {
 	Policy               window.Config
 	Retention            types.Height
@@ -79,8 +80,8 @@ func freezeObservation(cfg *Config) error {
 		return nil
 	}
 	copy := *cfg.Observation
-	if !cfg.Journal.Disabled || copy.HistoryWalk == 0 || copy.ReplayHeaders == 0 || copy.WitnessItems == 0 || copy.WitnessBytes == 0 || copy.WitnessBytes >= 1<<63-1 || copy.WitnessChecksPerStep == 0 {
-		return fmt.Errorf("%w: observation requires explicit replay limits and a disabled functional journal", ErrConfig)
+	if copy.HistoryWalk == 0 || copy.ReplayHeaders == 0 || copy.WitnessItems == 0 || copy.WitnessBytes == 0 || copy.WitnessBytes >= 1<<63-1 || copy.WitnessChecksPerStep == 0 {
+		return fmt.Errorf("%w: observation requires explicit replay and witness limits", ErrConfig)
 	}
 	_, err := window.NewRecent(copy.Policy, copy.Retention)
 	if err != nil {
@@ -90,6 +91,29 @@ func freezeObservation(cfg *Config) error {
 	copy.Retention = types.MustHeightFromBig(copy.Retention.Big())
 	cfg.Observation = &copy
 	return nil
+}
+
+func (r *observationRuntime) journalOptions(head *types.Header) (*journal.ObservationOptions, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	options, err := journal.NewObservationOptions(r.cfg.Policy, r.cfg.Retention, r.cfg.HistoryWalk, r.cfg.ReplayHeaders)
+	if err != nil {
+		return nil, err
+	}
+	if head == nil {
+		return nil, window.ErrHistory
+	}
+	if head.Number.Cmp(r.cfg.Policy.Activation) >= 0 {
+		state, err := r.stateAt(head, r.chain)
+		if err != nil {
+			return nil, err
+		}
+		options.Checkpoint, err = r.engine.EncodeCheckpoint(state, head)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return options, nil
 }
 
 func (n *Node) openObservation(cfg *types.Config, genesis types.Hash) (*observationRuntime, error) {

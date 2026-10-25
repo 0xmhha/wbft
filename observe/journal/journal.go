@@ -1,6 +1,7 @@
 package journal
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -143,6 +144,14 @@ type segStats struct {
 // starts in a new segment; damaged segments of an earlier run are moved
 // aside as package wal does.
 func Open(opt Options, id Identity) (*FileWriter, error) {
+	if id.Core.Observation != nil {
+		options := *id.Core.Observation
+		options.Checkpoint = bytes.Clone(options.Checkpoint)
+		if err := options.ValidateIdentity(id.ChainID, id.GenesisHash); err != nil {
+			return nil, err
+		}
+		id.Core.Observation = &options
+	}
 	if id.Core.CachePolicy != nil {
 		options := *id.Core.CachePolicy
 		id.Core.CachePolicy = &options

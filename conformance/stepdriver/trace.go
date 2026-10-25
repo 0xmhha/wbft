@@ -162,6 +162,7 @@ func RunTrace(j JournalReader, opts TraceOptions, yield func(StepResult) error) 
 	var writerRun string
 	var deferredProfile bool
 	var configuration []byte
+	var observation *traceObservation
 	approximate := false
 	everStarted := false
 	for {
@@ -195,6 +196,10 @@ func RunTrace(j JournalReader, opts TraceOptions, yield func(StepResult) error) 
 					return fmt.Errorf("stepdriver: segment chain configuration: %w", err)
 				}
 				cfg = c
+				observation, err = newTraceObservation(b, cfg, opts.Blocks)
+				if err != nil {
+					return fmt.Errorf("stepdriver: observation profile: %w", err)
+				}
 				copts = consensus.Options{Config: cfg, Self: b.Core.Self, Improvements: consensus.ImprovementSet(b.Core.Improvements), BacklogLimit: int(b.Core.BacklogLimit)}
 				core = nil
 				approximate = false
@@ -275,6 +280,18 @@ func RunTrace(j JournalReader, opts TraceOptions, yield func(StepResult) error) 
 				return &TraceError{Approximate: approximate, WriterRun: writerRun, EngineRun: original.EngineRun, Step: original.Step, Err: fmt.Errorf("%w: after engine run %d step %d", ErrTraceGap, run, last)}
 			}
 			last = b.Step
+			if observation == nil {
+				if h, err := headOf(opts.Blocks, b.HeadNumber, b.HeadHash); err == nil {
+					if _, legacyErr := codec.DecodeExtra(h); legacyErr != nil {
+						if _, envelopeErr := codec.DecodeConsensusExtra(h); envelopeErr == nil {
+							return &TraceError{WriterRun: writerRun, EngineRun: original.EngineRun, Step: original.Step, Err: ErrTraceConfiguration}
+						}
+					}
+				}
+			}
+			if err := observation.check(b.HeadNumber, b.HeadHash); err != nil {
+				return &TraceError{Approximate: approximate, WriterRun: writerRun, EngineRun: original.EngineRun, Step: original.Step, Err: err}
+			}
 			var captured *consensus.Message
 			if b.InputKind == inputlog.KindCapturedMessage {
 				var err error

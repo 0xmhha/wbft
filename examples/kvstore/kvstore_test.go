@@ -29,8 +29,12 @@ type testNet struct {
 func newTestNet(t *testing.T, n int) *testNet { return newTestNetWithObservation(t, n, nil) }
 
 func newTestNetWithObservation(t *testing.T, n int, configure func(*Genesis) *node.ObservationConfig) *testNet {
+	return newTestNetConfigured(t, n, configure, configure != nil)
+}
+
+func newTestNetConfigured(t *testing.T, n int, configure func(*Genesis) *node.ObservationConfig, noJournal bool) *testNet {
 	t.Helper()
-	tn := &testNet{t: t}
+	tn := &testNet{t: t, noJournal: noJournal}
 	dir := t.TempDir()
 	for i := range n {
 		home := filepath.Join(dir, fmt.Sprintf("node%d", i))
@@ -49,7 +53,6 @@ func newTestNetWithObservation(t *testing.T, n int, configure func(*Genesis) *no
 	tn.g = g
 	if configure != nil {
 		tn.observation = configure(g)
-		tn.noJournal = true
 	}
 	tn.nodes = make([]*Node, n)
 	tn.ports = make([]string, n)
