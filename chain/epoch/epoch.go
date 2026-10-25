@@ -274,7 +274,7 @@ func ComputeNextEpochInfo(chain types.ChainReader, cfg *types.Config, e *types.H
 	validatorsDiff := 0 // len(latest.Validators) - len(prior set); may be negative
 	it := e
 	for latestEpoch.Cmp(it.Number) != 0 {
-		extra, err := codec.DecodeExtra(it)
+		extra, err := codec.DecodeConsensusExtra(it)
 		if err != nil {
 			return nil, err
 		}
@@ -488,7 +488,7 @@ func selectNextValidators(e *types.Header, candidates []types.CandidateEntry, ne
 //
 // Spec: WBFT-EPOCH-006, WBFT-HDR-131
 func CheckNoEpochInfo(h *types.Header) error {
-	x, err := codec.DecodeExtra(h)
+	x, err := codec.DecodeConsensusExtra(h)
 	if err != nil {
 		return err
 	}
@@ -509,7 +509,7 @@ func VerifyEpochInfo(chain types.ChainReader, cfg *types.Config, e *types.Header
 	if err != nil {
 		return err
 	}
-	x, err := codec.DecodeExtra(e)
+	x, err := codec.DecodeConsensusExtra(e)
 	if err != nil {
 		return err
 	}

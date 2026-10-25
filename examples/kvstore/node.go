@@ -13,6 +13,8 @@ import (
 
 // NodeConfig configures a kvstore node.
 type NodeConfig struct {
+	Observation *node.ObservationConfig
+	NoJournal   bool
 	// Home holds the node's data: consensus/ (write-ahead log and sign
 	// state) and app/ (blocks).
 	Home string
@@ -65,7 +67,7 @@ func NewNode(cfg NodeConfig) (*Node, error) {
 		deps.Transport, deps.TxTransport = tr, kn.net
 	}
 	n, err := node.New(node.Config{DataDir: filepath.Join(cfg.Home, "consensus"), KeyFile: cfg.KeyFile,
-		TakeoverGuard: cfg.TakeoverGuard}, deps)
+		TakeoverGuard: cfg.TakeoverGuard, Observation: cfg.Observation, Journal: node.JournalConfig{Disabled: cfg.NoJournal}}, deps)
 	if err != nil {
 		return nil, err
 	}

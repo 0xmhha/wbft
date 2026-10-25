@@ -134,6 +134,10 @@ type Config struct {
 
 // Deps are the runner's collaborators.
 type Deps struct {
+	// ObservationSeals receives detached verified extra-seal entries after an
+	// ordinary core step. It is a separately enabled functional witness sink,
+	// independent of diagnostic metadata and replay authority.
+	ObservationSeals func(prepared, committed []consensus.ExtraSealEntry)
 	// ReceiveCacheRecorded observes a direct core ACCEPT retained in the
 	// received cache. It runs after the cache mutex is released and must not
 	// block. Nil changes no functional cache ownership or state.

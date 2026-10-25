@@ -46,13 +46,14 @@ type Backend interface {
 
 // NodeInfo describes the node.
 type NodeInfo struct {
-	Impl        string        `json:"impl"`
-	Address     types.Address `json:"address"`
-	Validator   bool          `json:"validator"`
-	ChainID     *big.Int      `json:"chainId"`
-	GenesisHash types.Hash    `json:"genesisHash"`
-	Head        HeadInfo      `json:"head"`
-	SignFloor   string        `json:"signFloor,omitempty"`
+	Observation *ObservationInfo `json:"observation,omitempty"`
+	Impl        string           `json:"impl"`
+	Address     types.Address    `json:"address"`
+	Validator   bool             `json:"validator"`
+	ChainID     *big.Int         `json:"chainId"`
+	GenesisHash types.Hash       `json:"genesisHash"`
+	Head        HeadInfo         `json:"head"`
+	SignFloor   string           `json:"signFloor,omitempty"`
 	// Mode is "embedded" or "standalone".
 	Mode string `json:"mode"`
 	// BLSPublicKey is the validator's BLS public key (0x-hex), empty on a
@@ -147,4 +148,22 @@ func (s *Service) Peers() []PeerInfo {
 		out = append(out, PeerInfo{Address: p.Addr, Caps: p.Caps, ConnectedSince: p.ConnectedSince.UTC().Format("2006-01-02T15:04:05Z")})
 	}
 	return out
+}
+
+// ObservationInfo labels the separately configured recent-retention policy.
+// It is observation metadata and supplies no diligence or reward weight.
+type ObservationInfo struct {
+	WitnessItems   uint32     `json:"witnessItems"`
+	WitnessDropped uint64     `json:"witnessDropped"`
+	WitnessError   string     `json:"witnessError,omitempty"`
+	PolicyDigest   types.Hash `json:"policyDigest"`
+	Activation     string     `json:"activation"`
+	Retention      string     `json:"retention"`
+	Window         uint64     `json:"window"`
+	Status         string     `json:"status"`
+	Error          string     `json:"error,omitempty"`
+	MaturedFrom    string     `json:"maturedFrom,omitempty"`
+	MaturedThrough string     `json:"maturedThrough,omitempty"`
+	SettledFrom    string     `json:"settledFrom,omitempty"`
+	SettledThrough string     `json:"settledThrough,omitempty"`
 }

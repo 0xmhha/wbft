@@ -213,7 +213,7 @@ func (s *IstanbulService) GetCommitSignersFromBlockByHash(hash types.Hash) (*Blo
 // commitSigners is the author (the coinbase, SNET-RPC-012) and the committed
 // sealers in the EpochInfo that governs h (SNET-RPC-011).
 func (s *IstanbulService) commitSigners(h *types.Header) (*BlockSigners, error) {
-	x, err := codec.DecodeExtra(h)
+	x, err := codec.DecodeConsensusExtra(h)
 	if err != nil {
 		return nil, err
 	}
@@ -354,7 +354,7 @@ func (s *IstanbulService) analyzeBlock(n uint64, act *SealerActivity, authors ma
 	if h == nil {
 		return 0, fmt.Errorf("block %d not found", n)
 	}
-	x, err := codec.DecodeExtra(h)
+	x, err := codec.DecodeConsensusExtra(h)
 	if err != nil {
 		return 0, fmt.Errorf("block %d: failed to extract WBFT extra: %w", n, err)
 	}
@@ -409,7 +409,7 @@ func (s *IstanbulService) GetWbftExtraInfo(number BlockNumber) (map[string]any, 
 	if h == nil {
 		return nil, fmt.Errorf("block %d not found", big.NewInt(int64(number)))
 	}
-	x, err := codec.DecodeExtra(h)
+	x, err := codec.DecodeConsensusExtra(h)
 	if err != nil {
 		return nil, err
 	}

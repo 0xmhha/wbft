@@ -222,7 +222,7 @@ func (m *validatorMetrics) head(h *types.Header) {
 
 // countHead counts the seals and missed proposals of one header.
 func (m *validatorMetrics) countHead(h *types.Header) {
-	x, err := codec.DecodeExtra(h)
+	x, err := codec.DecodeConsensusExtra(h)
 	if err != nil {
 		return
 	}
@@ -246,7 +246,7 @@ func (m *validatorMetrics) countHead(h *types.Header) {
 	if parent == nil || parent.Number.IsZero() {
 		return
 	}
-	px, err := codec.DecodeExtra(parent)
+	px, err := codec.DecodeConsensusExtra(parent)
 	if err != nil {
 		return
 	}

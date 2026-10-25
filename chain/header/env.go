@@ -5,14 +5,18 @@ import (
 
 	"github.com/0xmhha/wbft/chain/validator"
 	"github.com/0xmhha/wbft/chain/validator/source"
+	"github.com/0xmhha/wbft/codec"
 	"github.com/0xmhha/wbft/types"
 )
 
 // Env is what the header rules read from outside the header. The runner,
 // the consensus service and the vector adapter build it.
 type Env struct {
-	Config *types.Config
-	Chain  types.ChainReader
+	// Observation explicitly enables format admission and the separately
+	// checked observation transition. Nil keeps strict legacy admission.
+	Observation ObservationVerifier
+	Config      *types.Config
+	Chain       types.ChainReader
 
 	// ValidatorLookup optionally supplies a governing-set resolver. Nil uses
 	// the checked parent-chain lookup. Reference conformance supplies its
@@ -40,6 +44,13 @@ type Env struct {
 	// matching proposal retry target for ordinary representable time products.
 	// False retains the reference time checks and retry target.
 	UseFutureTimeAllowance bool
+}
+
+// ObservationVerifier supplies a configured fork boundary and authenticated
+// observation state. It never replaces the ordered header or execution rules.
+type ObservationVerifier interface {
+	CheckFormat(h *types.Header, parents []*types.Header) error
+	VerifyObservation(h *types.Header, parents []*types.Header) error
 }
 
 // PartB is the application hook for the execution-side steps. It runs one
@@ -87,4 +98,11 @@ func (env *Env) validatorsAt(n types.Height, parent types.Hash, parents []*types
 		return env.ValidatorLookup(n, parent, parents)
 	}
 	return validator.ValidatorsAt(env.Chain, env.Config, n, parent, parents)
+}
+
+func (env *Env) decodeCurrentExtra(h *types.Header) (*types.WBFTExtra, error) {
+	if env.Observation == nil {
+		return codec.DecodeExtra(h)
+	}
+	return codec.DecodeConsensusExtra(h)
 }

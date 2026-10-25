@@ -395,7 +395,7 @@ func hexAddr(a types.Address) string { return "0x" + hex.EncodeToString(a[:]) }
 // build makes the record of h from its header, its child's prev seals and
 // what the node collected for it (b, nil when nothing).
 func (r *Recorder) build(h, child *types.Header, b *building) (*Record, error) {
-	x, err := codec.DecodeExtra(h)
+	x, err := codec.DecodeConsensusExtra(h)
 	if err != nil {
 		return nil, err
 	}
@@ -526,7 +526,7 @@ func (r *Recorder) build(h, child *types.Header, b *building) (*Record, error) {
 	for i := range mark(x.CommittedSeal, func(v *ValidatorRound) { v.SealedCommitted = true }) { //wbft:unordered a set union
 		own[i] = true
 	}
-	if cx, err := codec.DecodeExtra(child); err == nil {
+	if cx, err := codec.DecodeConsensusExtra(child); err == nil {
 		prev := mark(cx.PrevPreparedSeal, func(v *ValidatorRound) { v.InPrevPrepared = true })
 		for i := range mark(cx.PrevCommittedSeal, func(v *ValidatorRound) { v.InPrevCommitted = true }) { //wbft:unordered a set union
 			prev[i] = true

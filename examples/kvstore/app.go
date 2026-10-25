@@ -274,6 +274,10 @@ func (a *App) build(req app.BuildRequest) (*types.Block, error) {
 			return nil, err
 		}
 	}
+	h, err = app.PrepareObservation(ctx, cons, h)
+	if err != nil {
+		return nil, err
+	}
 	return &types.Block{Header: h, Body: body}, nil
 }
 

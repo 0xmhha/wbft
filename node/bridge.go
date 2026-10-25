@@ -27,12 +27,13 @@ import (
 // chainView answers the runner's chain questions from the application's
 // chain and the header rules. It implements runner.Chain.
 type chainView struct {
-	a     app.Application
-	cfg   *types.Config
-	snaps *source.Cache
-	now   func() time.Time
-	rej   *rejection.Store // the rejected proposals (wbft_rejections)
-	log   *slog.Logger
+	observation *observationRuntime
+	a           app.Application
+	cfg         *types.Config
+	snaps       *source.Cache
+	now         func() time.Time
+	rej         *rejection.Store // the rejected proposals (wbft_rejections)
+	log         *slog.Logger
 	// misses counts the parent snapshots the header rules did not find
 	// (wbft_authority_cache_misses_total); nil counts nothing.
 	misses *metrics.Counter
@@ -47,7 +48,11 @@ var _ runner.Chain = (*chainView)(nil)
 // verification for the cache miss counter (preprepare, header_only), and
 // "" counts nothing (building, whose miss service.snapshot counts).
 func (c *chainView) env(context string) *header.Env {
-	return &header.Env{Config: c.cfg, Chain: c.a, BadBlock: c.a.IsBadBlock, PartB: c.a, Snapshots: c.snapshots(context), Now: c.now, UseFutureTimeAllowance: c.futureTimeAllowance}
+	env := &header.Env{Config: c.cfg, Chain: c.a, BadBlock: c.a.IsBadBlock, PartB: c.a, Snapshots: c.snapshots(context), Now: c.now, UseFutureTimeAllowance: c.futureTimeAllowance}
+	if c.observation != nil {
+		env.Observation = c.observation
+	}
+	return env
 }
 
 // snapshots is the snapshot cache as the header rules of one verification

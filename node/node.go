@@ -123,6 +123,9 @@ const (
 
 // New returns a node that is not started.
 func New(cfg Config, d Deps) (*Node, error) {
+	if err := freezeObservation(&cfg); err != nil {
+		return nil, err
+	}
 	if err := freezeDiagnostics(cfg, &d); err != nil {
 		return nil, err
 	}
@@ -332,6 +335,10 @@ func (n *Node) start(ctx context.Context) error {
 	if info.ChainID != nil && cfg.ChainID != nil && info.ChainID.Cmp(cfg.ChainID) != 0 {
 		return refuse("chain id %v of the application differs from %v of the chain configuration", info.ChainID, cfg.ChainID)
 	}
+	observation, err := n.openObservation(cfg, info.GenesisHash)
+	if err != nil {
+		return fmt.Errorf("node: observation configuration: %w", err)
+	}
 	rej, err := rejection.Open(n.fs, filepath.Join(n.cfg.DataDir, rejectionDir), rejection.Options{})
 	if err != nil {
 		return fmt.Errorf("node: rejection store: %w", err)
@@ -340,7 +347,7 @@ func (n *Node) start(ctx context.Context) error {
 	n.chainCfg = cfg
 	n.rej = rej
 	n.view = &chainView{a: n.d.App, cfg: cfg, snaps: n.snaps, now: n.clock.Now, rej: rej, log: n.log, misses: n.cacheMisses, emit: n.emit,
-		futureTimeAllowance: n.coreImprovements.Has(consensus.UseFutureTimeAllowance)}
+		futureTimeAllowance: n.coreImprovements.Has(consensus.UseFutureTimeAllowance), observation: observation}
 	n.valMetrics.attach(n.d.App, n.view.ValidatorsAt, func(h types.Height) time.Duration {
 		return time.Duration(cfg.ConfigAt(h).BlockPeriodSeconds) * time.Second //nolint:gosec // seconds of a config
 	}, func(h types.Height) uint64 { return cfg.ConfigAt(h).EpochLength })
@@ -555,6 +562,9 @@ func (n *Node) start(ctx context.Context) error {
 		Refused: func(code uint64) { n.refusals.Inc(fmt.Sprintf("%#x", code)) }}
 	if jw != nil {
 		deps.Journal = jw
+	}
+	if n.view.observation != nil {
+		deps.ObservationSeals = n.view.observation.observeSeals
 	}
 	if n.diagnostic != nil {
 		n.diagnostic.connect(&deps, n.d.Diagnostics.WALRead)

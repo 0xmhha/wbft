@@ -172,6 +172,16 @@ func (s *service) OnNewHead(ev app.NewHead) {
 	if ev.Header == nil || !s.n.running() {
 		return
 	}
+	view, _, err := s.ready()
+	if err != nil {
+		return
+	}
+	if view.observation != nil {
+		if err := view.observation.adopt(ev.Header); err != nil {
+			s.n.emit(event.Record{Kind: event.Health, Fields: map[string]any{"what": "observation_unavailable", "error": err.Error()}})
+			return
+		}
+	}
 	hash := codec.BlockHash(ev.Header)
 	s.n.paths.put(hash, ev.Path)
 	s.n.emit(event.Record{Kind: event.NewHead, Fields: newHeadFields(ev.Header, hash, ev.Path.String())})
@@ -243,7 +253,7 @@ func (s *service) OnImportFailed(f app.ImportFailure) {
 // that does not decode, leaves its fields out.
 func newHeadFields(h *types.Header, hash types.Hash, path string) map[string]any {
 	f := map[string]any{"number": h.Number.String(), "hash": "0x" + hex.EncodeToString(hash.Bytes()), "path": path}
-	x, err := codec.DecodeExtra(h)
+	x, err := codec.DecodeConsensusExtra(h)
 	if err != nil {
 		return f
 	}

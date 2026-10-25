@@ -51,7 +51,7 @@ func committedBoundary(chain types.ChainReader, cfg *types.Config, h *types.Head
 			return nil, nil, err
 		}
 		if yes {
-			x, err := codec.DecodeExtra(h)
+			x, err := codec.DecodeConsensusExtra(h)
 			if err != nil {
 				return nil, nil, err
 			}
@@ -156,13 +156,13 @@ func computeCommittedEpochInfo(chain types.ChainReader, cfg *types.Config, e *ty
 				if set.Len() == 0 {
 					return nil, ErrProposerNotFound
 				}
-				x, err := codec.DecodeExtra(h)
+				x, err := codec.DecodeConsensusExtra(h)
 				if err != nil {
 					return nil, err
 				}
 				// uint32 rounds are widened before adding one. Cycles and remainder
 				// count all attempts in O(set size), independent of the round magnitude.
-				successorExtra, err := codec.DecodeExtra(successor)
+				successorExtra, err := codec.DecodeConsensusExtra(successor)
 				if err != nil {
 					return nil, err
 				}

@@ -133,7 +133,7 @@ func PrepareProposal(env *Env, skeleton *types.Header, in ProposalInputs) (*type
 			return nil, ErrUnknownAncestor
 		}
 		if !last.Number.IsZero() {
-			lx, err := codec.DecodeExtra(last)
+			lx, err := codec.DecodeConsensusExtra(last)
 			if err != nil {
 				return nil, err
 			}

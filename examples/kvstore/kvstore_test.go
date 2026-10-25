@@ -9,21 +9,26 @@ import (
 
 	"github.com/0xmhha/wbft/codec"
 	"github.com/0xmhha/wbft/mempool"
+	"github.com/0xmhha/wbft/node"
 	"github.com/0xmhha/wbft/p2p/devnet"
 	"github.com/0xmhha/wbft/types"
 )
 
 type testNet struct {
-	t     *testing.T
-	g     *Genesis
-	vals  []Validator
-	homes []string
-	keys  []string
-	ports []string
-	nodes []*Node
+	observation *node.ObservationConfig
+	noJournal   bool
+	t           *testing.T
+	g           *Genesis
+	vals        []Validator
+	homes       []string
+	keys        []string
+	ports       []string
+	nodes       []*Node
 }
 
-func newTestNet(t *testing.T, n int) *testNet {
+func newTestNet(t *testing.T, n int) *testNet { return newTestNetWithObservation(t, n, nil) }
+
+func newTestNetWithObservation(t *testing.T, n int, configure func(*Genesis) *node.ObservationConfig) *testNet {
 	t.Helper()
 	tn := &testNet{t: t}
 	dir := t.TempDir()
@@ -42,6 +47,10 @@ func newTestNet(t *testing.T, n int) *testNet {
 		t.Fatal(err)
 	}
 	tn.g = g
+	if configure != nil {
+		tn.observation = configure(g)
+		tn.noJournal = true
+	}
 	tn.nodes = make([]*Node, n)
 	tn.ports = make([]string, n)
 	for i := range n {
@@ -66,7 +75,7 @@ func newTestNet(t *testing.T, n int) *testNet {
 
 func (tn *testNet) open(i int) {
 	nd, err := NewNode(NodeConfig{Home: tn.homes[i], Genesis: tn.g, KeyFile: tn.keys[i], Self: tn.vals[i].Address,
-		Listen: tn.ports[i], Network: "kvstore-test"})
+		Listen: tn.ports[i], Network: "kvstore-test", Observation: tn.observation, NoJournal: tn.noJournal})
 	if err != nil {
 		tn.t.Fatal(err)
 	}
