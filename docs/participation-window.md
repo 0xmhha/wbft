@@ -68,6 +68,24 @@ canonical commitment. Failure leaves the parent unchanged. Ordinary node and
 application paths keep their existing format until a separate integration
 explicitly enables these carriers.
 
+`NewBranchHistory(engine, chain, config, maxWalk)` supplies a bounded adapter
+for an application's authenticated `types.ChainReader`. It snapshots the epoch
+schedule, checks the configured genesis identity and follows only parent hashes
+at full heights. It never substitutes a canonical height index for the target's
+branch. The governing epoch supplies signer order and keys. `maxWalk` bounds
+each authority lookup and has no default; `ErrLookupLimit` means local history
+or budget is insufficient, not that a block or signer failed. The application
+still authenticates epoch transitions, registered key ownership and adoption.
+
+`VerifyFinality` separately verifies current prepare/commit quorum certificates
+and the carrier's prepare/commit certificates for its parent. Each target uses
+its governing historical authority; genesis has no parent certificate check.
+The first explicit carrier can verify a legacy parent's signing domain.
+`VerifyAndApply` performs these checks before the observation transition and
+leaves its parent state unchanged on failure. Neither method replaces header,
+execution, epoch or canonical-chain verification. `Apply` remains available to
+callers that already verified finality through their own block verifier.
+
 `State.Counts(address)` returns copied settled cumulative counts. False means
 no settled eligible history; pending/open observations are not failed scores.
 Economic lookback, qualification, rejoining and rewards remain separate policies.
