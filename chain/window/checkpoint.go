@@ -12,7 +12,7 @@ type checkpointRLP struct {
 	Version uint64
 	Height  *big.Int
 	Hash    types.Hash
-	State   stateRLP
+	State   rlp.RawValue
 }
 
 func (e *Engine) checkAnchor(s *State, trusted *types.Header) error {
@@ -34,7 +34,7 @@ func (e *Engine) checkAnchor(s *State, trusted *types.Header) error {
 	if err != nil {
 		return err
 	}
-	if x.Observation.PolicyDigest != e.policy || x.Observation.ResultStateRoot != root {
+	if !e.acceptsVersion(x.Observation.Version) || x.Observation.PolicyDigest != e.policy || x.Observation.ResultStateRoot != root {
 		return ErrCommitment
 	}
 	return nil
@@ -46,7 +46,11 @@ func (e *Engine) EncodeCheckpoint(s *State, trusted *types.Header) ([]byte, erro
 	if err := e.checkAnchor(s, trusted); err != nil {
 		return nil, err
 	}
-	b, err := rlp.Encode(checkpointRLP{1, s.Height().Big(), s.anchor, s.data})
+	state, err := e.stateBytes(s)
+	if err != nil {
+		return nil, err
+	}
+	b, err := rlp.Encode(checkpointRLP{e.version(), s.Height().Big(), s.anchor, state})
 	if err != nil {
 		return nil, err
 	}
@@ -66,10 +70,17 @@ func (e *Engine) Recover(raw []byte, trusted *types.Header) (*State, error) {
 	if err := rlp.DecodeStrict(raw, &c); err != nil {
 		return nil, err
 	}
-	if c.Version != 1 || c.Height == nil || c.State.Height == nil || c.Height.Cmp(c.State.Height) != 0 {
+	if c.Version != e.version() || c.Height == nil || uint64(len(c.State)) > e.cfg.StateBytes {
 		return nil, ErrState
 	}
-	s := &State{c.State, c.Hash}
+	s, err := e.decodeState(c.State)
+	if err != nil {
+		return nil, err
+	}
+	if s.data.Height == nil || c.Height.Cmp(s.data.Height) != 0 {
+		return nil, ErrState
+	}
+	s.anchor = c.Hash
 	if err := e.checkAnchor(s, trusted); err != nil {
 		return nil, err
 	}
