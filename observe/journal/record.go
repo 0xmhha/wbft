@@ -136,6 +136,7 @@ type Identity struct {
 // CoreOptions is the consensus.Options of the journaled core in a portable
 // form: the chain configuration as its JSON text (types.ParseChainConfig).
 type CoreOptions struct {
+	Observation           *ObservationOptions `json:"observation,omitempty"`
 	CachePolicy           *CachePolicyOptions `json:"cache_policy,omitempty"`
 	NextHeight            *DeferredOptions    `json:"next_height,omitempty"`
 	ProposerPolicyProfile string              `json:"proposer_policy_profile,omitempty"`
@@ -353,6 +354,7 @@ type segmentRLP struct {
 	ProposerPolicyProfile string   `rlp:"optional"`
 	NextHeight            []uint64 `rlp:"optional"`
 	CachePolicy           []uint64 `rlp:"optional"`
+	Observation           []byte   `rlp:"optional"`
 }
 
 type peerRLP struct {
@@ -586,11 +588,15 @@ func bigOrZero(b *big.Int) *big.Int {
 func encodeBody(r Record, jseq uint64) ([]byte, error) {
 	switch b := r.Body.(type) {
 	case *SegmentRec:
+		observation, err := b.Core.Observation.encode()
+		if err != nil {
+			return nil, err
+		}
 		return rlp.Encode(&segmentRLP{Format: Format, JSeq: jseq, Self: b.Self, NodeID: bytesOrEmpty(b.NodeID),
 			BLSPublicKey: bytesOrEmpty(b.BLSPublicKey), Run: b.Run, Commit: b.Commit, ChainID: bigOrZero(b.ChainID),
 			GenesisHash: b.GenesisHash, Mode: b.Mode, WireOffset: b.WireOffset, ConfigDigest: b.ConfigDigest,
 			ChainConfig: bytesOrEmpty(b.Core.ChainConfig), CoreSelf: b.Core.Self, Improvements: b.Core.Improvements,
-			BacklogLimit: b.Core.BacklogLimit, Profile: b.Core.Profile, EngineRun: b.EngineRun, TimerTrace: b.Core.TimerTrace, CacheTrace: b.Core.CacheTrace, SyncTrace: b.Core.SyncTrace, ProposerPolicyProfile: b.Core.ProposerPolicyProfile, NextHeight: b.Core.NextHeight.encode(), CachePolicy: b.Core.CachePolicy.encode()})
+			BacklogLimit: b.Core.BacklogLimit, Profile: b.Core.Profile, EngineRun: b.EngineRun, TimerTrace: b.Core.TimerTrace, CacheTrace: b.Core.CacheTrace, SyncTrace: b.Core.SyncTrace, ProposerPolicyProfile: b.Core.ProposerPolicyProfile, NextHeight: b.Core.NextHeight.encode(), CachePolicy: b.Core.CachePolicy.encode(), Observation: observation})
 	case *PeerRec:
 		return rlp.Encode(&peerRLP{Format: Format, JSeq: jseq, PeerIdx: uint64(b.PeerIdx), Addr: b.Addr, NodeID: bytesOrEmpty(b.NodeID),
 			Remote: b.Remote, Event: b.Event, Reason: b.Reason, By: b.By, Cause: b.Cause})
@@ -727,10 +733,14 @@ func decodeBody(k Kind, body []byte) (Record, error) {
 		if err != nil {
 			return fail(err)
 		}
+		observation, err := decodeObservationOptions(w.Observation)
+		if err != nil {
+			return fail(err)
+		}
 		return Record{Kind: k, JSeq: w.JSeq, Body: &SegmentRec{EngineRun: w.EngineRun, Identity: Identity{
 			Self: w.Self, NodeID: w.NodeID, BLSPublicKey: w.BLSPublicKey, Run: w.Run, Commit: w.Commit, ChainID: w.ChainID,
 			GenesisHash: w.GenesisHash, Mode: w.Mode, WireOffset: w.WireOffset, ConfigDigest: w.ConfigDigest,
-			Core: CoreOptions{ChainConfig: w.ChainConfig, Self: w.CoreSelf, Improvements: w.Improvements, BacklogLimit: w.BacklogLimit, Profile: w.Profile, TimerTrace: w.TimerTrace, CacheTrace: w.CacheTrace, SyncTrace: w.SyncTrace, ProposerPolicyProfile: w.ProposerPolicyProfile, NextHeight: deferred, CachePolicy: cache},
+			Core: CoreOptions{ChainConfig: w.ChainConfig, Self: w.CoreSelf, Improvements: w.Improvements, BacklogLimit: w.BacklogLimit, Profile: w.Profile, TimerTrace: w.TimerTrace, CacheTrace: w.CacheTrace, SyncTrace: w.SyncTrace, ProposerPolicyProfile: w.ProposerPolicyProfile, NextHeight: deferred, CachePolicy: cache, Observation: observation},
 		}}}, nil
 	case KindPeer:
 		var w peerRLP
@@ -1052,7 +1062,11 @@ func size(r Record) int64 {
 		}
 		return n
 	case *SegmentRec:
-		return int64(len(b.Core.ChainConfig)) + 256
+		size := int64(len(b.Core.ChainConfig)) + 256
+		if o := b.Core.Observation; o != nil {
+			size += int64(len(o.ChainID)+len(o.Activation)+len(o.Retention)+len(o.Checkpoint)) + 512
+		}
+		return size
 	}
 	return 96
 }

@@ -7,11 +7,14 @@ no candidate diligence, qualification, validator selection or fee calculation.
 These parameters require agreement among operators before network activation;
 no production values are supplied by the library.
 
-The initial runtime requires `Journal.Disabled=true`. Its observation policy
-is persisted separately from the functional journal and checked on every normal
+The observation policy is persisted separately and checked on every normal
 restart. Removing the option or changing the policy digest refuses to start a
-home with persisted observation data. This profile does not provide functional
-journal replay or certify hardware power-loss durability.
+home with persisted observation data. The functional journal supports an explicit
+recent-observation profile; it records the exact policy, local replay bounds and
+a writer-start checkpoint bound to the actual application head. The separate
+completed-write/accepted-input cache policy still requires its journal to be
+disabled until its own replay profile is implemented. Hardware power-loss
+durability is not established by normal shutdown/restart tests.
 
 ## Candidate and admission paths
 
@@ -88,5 +91,29 @@ and unknown fields are refused. Its fields are:
 - `witnessItems`, `witnessBytes`, `witnessChecksPerStep`.
 
 The SDK home accepts this object under `observation`. The compatibility node
-accepts a file through `--wbft.observation` with `--wbft.journal=false`.
+accepts a file through `--wbft.observation`. The existing journal option can
+explicitly disable recording; observation does not require that opt-out.
 No configuration example enables a production network implicitly.
+
+## Functional journal replay
+
+An absent observation option preserves the legacy segment bytes and replay
+behavior. The new optional segment field has an explicit profile and preserves
+full-width chain ID, activation and H as canonical decimal strings. Policy
+limits and digest are verified before reconstructing the recorded core. An
+unknown profile remains readable for diagnosis but cannot enable replay.
+
+`wbft-replay` and `stepdriver.RunTrace` require an independently supplied
+canonical chain. Checkpoint metadata only locates its matching header; the
+engine checks its policy, lineage and state root against that header. This
+permits a new writer after a long activated chain without walking back to
+activation. Subsequent head transitions verify hash-bound historical authority,
+BLS finality and observation state within the explicit replay/history limits.
+An ahead, missing, unrelated or changed checkpoint does not become a trusted
+anchor. A missing observation profile cannot silently replay a V2 head.
+
+The original core output and validator-set digests are still compared for every
+recorded step. Application proposal answers remain recorded answers; this is
+not an independent re-execution of transactions or a reconstruction of all
+physical runtime queues. The canonical observation state and durable local
+witness spool are recovered separately by the node before its core starts.

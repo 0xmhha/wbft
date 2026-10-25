@@ -626,6 +626,13 @@ func (n *Node) openJournal(core consensus.Options, runID string) (*journal.FileW
 	if l := n.cfg.NextHeight; l != nil {
 		id.Core.NextHeight = &journal.DeferredOptions{Profile: journal.DeferredInputProfile, Entries: l.Entries, Bytes: l.Bytes, PerPeer: l.PerPeer, PerSource: l.PerSource}
 	}
+	if observation := n.view.observation; observation != nil {
+		var err error
+		id.Core.Observation, err = observation.journalOptions(n.d.App.Head())
+		if err != nil {
+			return nil, fmt.Errorf("node: observation journal checkpoint: %w", err)
+		}
+	}
 	jw, err := journal.Open(opt, id)
 	if err != nil {
 		return nil, fmt.Errorf("node: message journal: %w", err)

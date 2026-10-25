@@ -20,6 +20,9 @@ func (o CoreOptions) Configuration() (*types.Config, error) {
 	if err != nil {
 		return nil, err
 	}
+	if o.Observation != nil && (cfg.ChainID == nil || cfg.ChainID.String() != o.Observation.ChainID) {
+		return nil, fmt.Errorf("journal: observation chain ID differs from chain configuration")
+	}
 	switch o.ProposerPolicyProfile {
 	case "":
 		return cfg, nil
