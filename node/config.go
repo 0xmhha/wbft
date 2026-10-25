@@ -21,6 +21,7 @@ import (
 
 // Config configures a Node.
 type Config struct {
+	Observation *ObservationConfig `json:",omitempty"`
 	// CachePolicy enables code-aware accepted-input and actual-write caches.
 	// Nil preserves the original policy. The compatible journal profile is
 	// not available yet, so this runtime API requires Journal.Disabled.

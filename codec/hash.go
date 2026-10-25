@@ -20,7 +20,7 @@ var absentHeaderHash = keccak.Sum256(rlp.EmptyList)
 //
 // Spec: WBFT-ENC-080, WBFT-ENC-090
 func FilteredHeader(h *types.Header, round uint32) (*types.Header, error) {
-	x, err := DecodeExtra(h)
+	x, envelope, err := consensusParts(h.Extra)
 	if err != nil {
 		return nil, err
 	}
@@ -28,7 +28,8 @@ func FilteredHeader(h *types.Header, round uint32) (*types.Header, error) {
 	x.CommittedSeal = nil
 	x.Round = round
 	c := h.Copy()
-	if err := SetExtra(c, x); err != nil {
+	c.Extra, err = encodeConsensusExtra(x, envelope)
+	if err != nil {
 		return nil, err
 	}
 	return c, nil

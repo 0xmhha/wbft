@@ -292,6 +292,10 @@ func (r *Runner) handle(q queued) {
 	}
 	after := r.core.Snapshot()
 	r.publishSnapshot(after, snapshotStep)
+	if r.d.ObservationSeals != nil {
+		witnesses := r.core.Snapshot()
+		r.d.ObservationSeals(witnesses.ExtraPrepare, witnesses.ExtraCommit)
+	}
 	if _, ok := q.in.(consensus.NewHead); ok && after.Running && (!before.Running || after.View.Sequence.Cmp(before.View.Sequence) != 0) {
 		r.endHeight(after, gens)
 	}
@@ -573,7 +577,7 @@ func (r *Runner) commit(sc *stepCtx, c consensus.Commit, output uint64) {
 
 func sealers(h *types.Header) (prepared, committed []uint32) {
 	prepared, committed = []uint32{}, []uint32{}
-	x, err := codec.DecodeExtra(h)
+	x, err := codec.DecodeConsensusExtra(h)
 	if err != nil {
 		return
 	}

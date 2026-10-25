@@ -190,7 +190,7 @@ func GoverningEpochInfo(chain types.ChainReader, cfg *types.Config, h *types.Hea
 }
 
 func extractEpochInfo(h *types.Header) (types.Height, *types.EpochInfo, error) {
-	x, err := codec.DecodeExtra(h)
+	x, err := codec.DecodeConsensusExtra(h)
 	if err != nil {
 		return types.Height{}, nil, err
 	}

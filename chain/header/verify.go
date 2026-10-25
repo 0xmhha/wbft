@@ -45,6 +45,11 @@ import (
 //
 // Spec: WBFT-HDR-070, WBFT-VAL-010
 func ValidatorsForVerifying(env *Env, h *types.Header, parents []*types.Header) (v, vp *validator.Set, err error) {
+	if env.Observation != nil {
+		if err := env.Observation.CheckFormat(h, parents); err != nil {
+			return nil, nil, err
+		}
+	}
 	if _, err := epochProposalContext(env, h, parents); err != nil {
 		return nil, nil, err
 	}
@@ -179,7 +184,7 @@ func verifySteps(env *Env, h *types.Header, parents []*types.Header, v, vp *vali
 			return err
 		}
 		if active {
-			x, err := codec.DecodeExtra(h)
+			x, err := env.decodeCurrentExtra(h)
 			if err != nil {
 				return stepErr("H16", "ErrInvalidExtraDataFormat", ErrInvalidExtraDataFormat)
 			}
@@ -203,7 +208,7 @@ func verifySteps(env *Env, h *types.Header, parents []*types.Header, v, vp *vali
 				}
 				at = parent.Number.AddUint64(1)
 			}
-			x, err := codec.DecodeExtra(h)
+			x, err := env.decodeCurrentExtra(h)
 			if err != nil {
 				if env.Config.Rules(types.MinimalSealerBitmap, at) {
 					return stepErr("H16", "ErrInvalidExtraDataFormat", ErrInvalidExtraDataFormat)
@@ -264,7 +269,7 @@ func verifySteps(env *Env, h *types.Header, parents []*types.Header, v, vp *vali
 	// H16: any vanity is accepted.
 	//
 	// Spec: WBFT-HDR-088, WBFT-HDR-017
-	x, err := codec.DecodeExtra(h)
+	x, err := env.decodeCurrentExtra(h)
 	if err != nil {
 		return stepErr("H16", "ErrInvalidExtraDataFormat", ErrInvalidExtraDataFormat)
 	}
@@ -306,6 +311,9 @@ func verifySteps(env *Env, h *types.Header, parents []*types.Header, v, vp *vali
 	// H21
 	if err := env.gasTipStep(h, x, opt); err != nil {
 		return err
+	}
+	if env.Observation != nil {
+		return env.Observation.VerifyObservation(h, parents)
 	}
 	return nil
 }
@@ -354,7 +362,7 @@ func (env *Env) gasTipStep(h *types.Header, x *types.WBFTExtra, opt Options) err
 //
 // Spec: WBFT-HDR-111
 func CheckGasTip(h *types.Header, parentGasTip *uint256.Int) error {
-	x, err := codec.DecodeExtra(h)
+	x, err := codec.DecodeConsensusExtra(h)
 	if err != nil {
 		return err
 	}

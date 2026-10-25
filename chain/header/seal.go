@@ -41,7 +41,7 @@ func startExtra(h *types.Header) (*types.WBFTExtra, error) {
 		copy(vanity, h.Extra)
 		return &types.WBFTExtra{VanityData: vanity, RandaoReveal: []byte{}}, nil
 	}
-	return codec.DecodeExtra(h)
+	return codec.DecodeConsensusExtra(h)
 }
 
 // applyExtra starts the extra of h, applies fns in order and writes the
@@ -56,7 +56,10 @@ func applyExtra(h *types.Header, fns ...func(*types.WBFTExtra) error) (*types.WB
 			return nil, err
 		}
 	}
-	return x, codec.SetExtra(h, x)
+	if len(h.Extra) < types.ExtraVanity {
+		return x, codec.SetExtra(h, x)
+	}
+	return x, codec.SetConsensusExtra(h, x)
 }
 
 // aggregateSeals sets the bit of every sealer and aggregates the seals. A

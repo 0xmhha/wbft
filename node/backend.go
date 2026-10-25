@@ -115,7 +115,14 @@ func (b backend) NodeInfo() rpc.NodeInfo {
 	if n.chainCfg != nil {
 		info.RulesDigest, info.RuleActivations = n.chainCfg.RulesDigest(), n.chainCfg.RuleActivations()
 	}
+	var observations *observationRuntime
+	if n.view != nil {
+		observations = n.view.observation
+	}
 	n.mu.Unlock()
+	if observations != nil {
+		info.Observation = observations.info()
+	}
 	if h := n.d.App.Head(); h != nil {
 		info.Head = rpc.HeadInfo{Number: h.Number.String(), Hash: codec.BlockHash(h)}
 	}
@@ -158,7 +165,7 @@ func (b backend) HeaderCopy(hash types.Hash) (*rpc.HeaderCopyResult, error) {
 	if h == nil {
 		return nil, nil
 	}
-	x, err := codec.DecodeExtra(h)
+	x, err := codec.DecodeConsensusExtra(h)
 	if err != nil {
 		return nil, err
 	}
