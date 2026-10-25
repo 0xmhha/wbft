@@ -167,6 +167,10 @@ type closed struct {
 }
 
 func normal(t *testing.T, k int, activation types.Height) closed {
+	return normalScenario(t, k, activation, false)
+}
+
+func normalScenario(t *testing.T, k int, activation types.Height, previousCertificates bool) closed {
 	t.Helper()
 	engine, s, hist, parent := initial(t, k, activation)
 	headers := []*types.Header{parent}
@@ -178,6 +182,12 @@ func normal(t *testing.T, k int, activation types.Height) closed {
 		legacy := &types.WBFTExtra{VanityData: make([]byte, 32), GasTip: big.NewInt(7), PrevRound: uint32((n - 1) % 3)}
 		if n%6 == 0 {
 			legacy.EpochInfo = epochInfo(members(t, n+1))
+		}
+		if previousCertificates && n > 1 {
+			parentExtra, err := wire.Decode(headers[n-1].Extra, hist.limits)
+			must(t, err)
+			legacy.PrevPreparedSeal = parentExtra.Legacy.PreparedSeal.Copy()
+			legacy.PrevCommittedSeal = parentExtra.Legacy.CommittedSeal.Copy()
 		}
 		raw, err := codec.EncodeExtra(legacy)
 		must(t, err)
