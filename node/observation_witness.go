@@ -161,16 +161,10 @@ func (r *observationRuntime) observeSeals(prepared, committed []consensus.ExtraS
 		if target == nil || target.Number.Cmp(entry.View.Sequence) != 0 {
 			continue
 		}
-		extra, err := codec.DecodeConsensusExtra(target)
-		if err != nil {
-			continue
-		}
-		// The stored canonical certificate supplies the observation's uint32 round.
-		// Do not infer a different full consensus view from that narrower field.
-		if entry.View.Round.Big().Cmp(new(big.Int).SetUint64(uint64(extra.Round))) != 0 {
-			continue
-		}
-		w := observationWitness{target.Number.Big(), entry.Digest, extra.Round, uint8(phase), entry.Source, bytes.Clone(entry.Seal)}
+		// Retain the verified message's existing uint32 BLS signing domain.
+		// A stored local certificate does not choose a later successor's round.
+		round := entry.View.Round.RefLow32() //wbft:low64 HH-74
+		w := observationWitness{target.Number.Big(), entry.Digest, round, uint8(phase), entry.Source, bytes.Clone(entry.Seal)}
 		if !r.liveWitness(w, head) {
 			continue
 		}

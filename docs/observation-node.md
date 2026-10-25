@@ -41,8 +41,9 @@ The functional witness sink receives copied extra-seal entries retained by
 ordinary consensus processing. It does not consume diagnostic records, create
 new network messages or infer timing from signatures. Intake independently
 checks historical signer membership and BLS against stored hash-bound targets.
-The stored certificate supplies the uint32 round; a different full consensus
-view is not inferred from that narrower field.
+Intake retains the verified message's existing uint32 BLS signing domain,
+including the established full-view round projection. A stored local certificate
+does not choose the later successor-bound final round used for proof selection.
 
 `witnessItems`, `witnessBytes` and `witnessChecksPerStep` explicitly bound the
 local durable spool and per-step verification. Source scanning rotates through
