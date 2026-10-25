@@ -41,14 +41,17 @@ type stateRLP struct {
 type State struct {
 	data   stateRLP
 	anchor types.Hash
+	recent *recentState
 }
 
 func (s *State) Height() types.Height         { return types.MustHeightFromBig(s.data.Height) }
 func (s *State) SettledThrough() types.Height { return types.MustHeightFromBig(s.data.Settled) }
 func (s *State) MaturedThrough() types.Height { return types.MustHeightFromBig(s.data.Matured) }
 
-// Counts returns a copy of the settled cumulative observation counts. False
-// means NO_HISTORY, not nonparticipation. Pending counts are not settled yet.
+// Counts returns copied settled observations. New uses cumulative counts;
+// NewRecent uses the latest settlement window reported by SettledWindow.
+// False means NO_HISTORY, not nonparticipation. Current pending opportunities
+// are not settled; RecentCounts exposes the independently labelled live window.
 func (s *State) Counts(address types.Address) (wire.Counts, bool) {
 	for _, r := range s.data.Counts {
 		if r.Address == address {
@@ -132,7 +135,7 @@ func (e *Engine) stateBytes(s *State) ([]byte, error) {
 		return nil, ErrState
 	}
 	d := s.data
-	if d.Version != 1 || d.Policy != e.policy || d.Height == nil || d.Settled == nil || d.Matured == nil || d.Height.Sign() < 0 || d.Settled.Sign() < 0 || d.Settled.Cmp(d.Matured) > 0 || d.Matured.Cmp(d.Height) > 0 || !validRows(d.Counts, e.cfg.AddressRows) || !validRows(d.Pending, e.cfg.AddressRows) {
+	if d.Version != e.version() || d.Policy != e.policy || d.Height == nil || d.Settled == nil || d.Matured == nil || d.Height.Sign() < 0 || d.Settled.Sign() < 0 || d.Settled.Cmp(d.Matured) > 0 || d.Matured.Cmp(d.Height) > 0 || !validRows(d.Counts, e.cfg.AddressRows) || !validRows(d.Pending, e.cfg.AddressRows) {
 		return nil, ErrState
 	}
 	before, _ := e.cfg.Activation.Sub(types.HeightFromUint64(1))
@@ -167,7 +170,14 @@ func (e *Engine) stateBytes(s *State) ([]byte, error) {
 	if d.Height.Cmp(before.Big()) > 0 && next.Cmp(d.Height) != 0 {
 		return nil, ErrState
 	}
-	b, err := rlp.Encode(d)
+	if e.retention.IsZero() {
+		if s.recent != nil {
+			return nil, ErrState
+		}
+	} else if err := e.validateRecentState(s); err != nil {
+		return nil, err
+	}
+	b, err := e.encodeState(s)
 	if err != nil {
 		return nil, err
 	}
@@ -184,7 +194,11 @@ func (e *Engine) Root(s *State) (types.Hash, error) {
 	if err != nil {
 		return types.Hash{}, err
 	}
-	encoded, err := rlp.Encode([]any{[]byte("WBFT-PARTICIPATION-STATE/1"), rlp.RawValue(b)})
+	domain := "WBFT-PARTICIPATION-STATE/1"
+	if !e.retention.IsZero() {
+		domain = "WBFT-PARTICIPATION-STATE/2"
+	}
+	encoded, err := rlp.Encode([]any{[]byte(domain), rlp.RawValue(b)})
 	if err != nil {
 		return types.Hash{}, err
 	}
@@ -195,9 +209,10 @@ func (e *Engine) clone(s *State) (*State, error) {
 	if err != nil {
 		return nil, err
 	}
-	var d stateRLP
-	if err = rlp.DecodeStrict(b, &d); err != nil {
+	out, err := e.decodeState(b)
+	if err != nil {
 		return nil, err
 	}
-	return &State{d, s.anchor}, nil
+	out.anchor = s.anchor
+	return out, nil
 }

@@ -143,6 +143,9 @@ func ownProofs(t *testing.T, headers []*types.Header, history *history, n, k int
 	return proofs
 }
 func initial(t *testing.T, k int, activation types.Height) (*state.Engine, *state.State, *history, *types.Header) {
+	return initialRetention(t, k, activation, types.Height{})
+}
+func initialRetention(t *testing.T, k int, activation, H types.Height) (*state.Engine, *state.State, *history, *types.Header) {
 	t.Helper()
 	limits := wire.Limits{ExtraBytes: 65536, Proofs: 32, SettlementRows: 32, Validators: 8}
 	before, _ := activation.Sub(types.HeightFromUint64(1))
@@ -151,7 +154,13 @@ func initial(t *testing.T, k int, activation types.Height) (*state.Engine, *stat
 	must(t, err)
 	parent := &types.Header{Number: before, Difficulty: big.NewInt(1), GasLimit: 30000000, Extra: raw}
 	hash := codec.BlockHash(parent)
-	engine, err := state.New(state.Config{ChainID: big.NewInt(88001), GenesisHash: hash, Activation: activation, Window: uint64(k), Codec: limits, StateBytes: 65536, CheckpointBytes: 131072, AddressRows: 32})
+	cfg := state.Config{ChainID: big.NewInt(88001), GenesisHash: hash, Activation: activation, Window: uint64(k), Codec: limits, StateBytes: 65536, CheckpointBytes: 131072, AddressRows: 32}
+	var engine *state.Engine
+	if H.IsZero() {
+		engine, err = state.New(cfg)
+	} else {
+		engine, err = state.NewRecent(cfg, H)
+	}
 	must(t, err)
 	s, err := engine.Initial(parent)
 	must(t, err)
@@ -171,14 +180,17 @@ func normal(t *testing.T, k int, activation types.Height) closed {
 }
 
 func normalScenario(t *testing.T, k int, activation types.Height, previousCertificates bool) closed {
+	return normalRetention(t, k, activation, previousCertificates, types.Height{}, 24)
+}
+func normalRetention(t *testing.T, k int, activation types.Height, previousCertificates bool, H types.Height, blocks int) closed {
 	t.Helper()
-	engine, s, hist, parent := initial(t, k, activation)
+	engine, s, hist, parent := initialRetention(t, k, activation, H)
 	headers := []*types.Header{parent}
 	states := []*state.State{s}
 	observed := map[string]map[types.Address][2]bool{}
 	opportunities := map[string][]wire.Member{}
 	var readState = *s
-	for n := 1; n <= 24; n++ {
+	for n := 1; n <= blocks; n++ {
 		legacy := &types.WBFTExtra{VanityData: make([]byte, 32), GasTip: big.NewInt(7), PrevRound: uint32((n - 1) % 3)}
 		if n%6 == 0 {
 			legacy.EpochInfo = epochInfo(members(t, n+1))
@@ -280,6 +292,12 @@ func normalScenario(t *testing.T, k int, activation types.Height, previousCertif
 				if height.Cmp(s.SettledThrough()) > 0 {
 					break
 				}
+				if !H.IsZero() {
+					from, _, _ := s.SettledWindow()
+					if height.Cmp(from) < 0 {
+						continue
+					}
+				}
 				for _, m := range opportunities[height.String()] {
 					if m.Address == a {
 						eligible++
@@ -296,6 +314,45 @@ func normalScenario(t *testing.T, k int, activation types.Height, previousCertif
 			got, ok := s.Counts(a)
 			if ok != (eligible > 0) || got.EligiblePrepare.Cmp(big.NewInt(int64(eligible))) != 0 || got.EligibleCommit.Cmp(big.NewInt(int64(eligible))) != 0 || got.ObservedPrepare.Cmp(big.NewInt(int64(prep))) != 0 || got.ObservedCommit.Cmp(big.NewInt(int64(commit))) != 0 {
 				t.Fatalf("oracle n=%d address=%d", n, id)
+			}
+		}
+		if !H.IsZero() {
+			from := activation
+			if v, ok := s.MaturedThrough().AddUint64(1).Sub(H); ok && v.Cmp(from) > 0 {
+				from = v
+			}
+			gotFrom, gotThrough, ok := s.RecentWindow()
+			if !ok || gotFrom.Cmp(from) != 0 || gotThrough.Cmp(s.MaturedThrough()) != 0 {
+				t.Fatal("retained window cursor")
+			}
+			for id := 0; id < 8; id++ {
+				a := address(id)
+				eligible, prep, commit := 0, 0, 0
+				for target := 1; target <= n; target++ {
+					height := activation.AddUint64(uint64(target - 1))
+					if height.Cmp(s.MaturedThrough()) > 0 {
+						break
+					}
+					if height.Cmp(from) < 0 {
+						continue
+					}
+					for _, m := range opportunities[height.String()] {
+						if m.Address == a {
+							eligible++
+							v := observed[height.String()][a]
+							if v[0] {
+								prep++
+							}
+							if v[1] {
+								commit++
+							}
+						}
+					}
+				}
+				got, has := s.RecentCounts(a)
+				if has != (eligible > 0) || got.EligiblePrepare.Cmp(big.NewInt(int64(eligible))) != 0 || got.ObservedPrepare.Cmp(big.NewInt(int64(prep))) != 0 || got.ObservedCommit.Cmp(big.NewInt(int64(commit))) != 0 {
+					t.Fatalf("recent oracle n=%d address=%d", n, id)
+				}
 			}
 		}
 		if n == 6 || n == 12 || n == 23 {

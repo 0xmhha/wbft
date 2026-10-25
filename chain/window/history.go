@@ -80,7 +80,7 @@ func (b *BranchHistory) Header(hash types.Hash, height types.Height) (*types.Hea
 	}
 	if h.Number.Cmp(b.engine.cfg.Activation) >= 0 {
 		x, err := wire.Decode(h.Extra, b.engine.cfg.Codec)
-		if err != nil || x.Observation.PolicyDigest != b.engine.policy {
+		if err != nil || !b.engine.acceptsVersion(x.Observation.Version) || x.Observation.PolicyDigest != b.engine.policy {
 			return nil, ErrHistory
 		}
 	}

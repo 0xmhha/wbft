@@ -52,8 +52,9 @@ type History interface {
 // Engine is an immutable observation policy. Each transition returns a new
 // state; no local wall clock, network source or economic module is consulted.
 type Engine struct {
-	cfg    Config
-	policy types.Hash
+	cfg       Config
+	policy    types.Hash
+	retention types.Height
 }
 
 // New binds every structural, state and checkpoint limit into policy identity.
@@ -66,7 +67,7 @@ func New(c Config) (*Engine, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Engine{c, keccak.Sum256(b)}, nil
+	return &Engine{cfg: c, policy: keccak.Sum256(b)}, nil
 }
 
 func (e *Engine) Digest() types.Hash      { return e.policy }
@@ -97,7 +98,10 @@ func (e *Engine) Initial(parent *types.Header) (*State, error) {
 	if err != nil {
 		return nil, err
 	}
-	s := &State{data: stateRLP{Version: 1, Policy: e.policy, Height: before.Big(), Parent: parent.ParentHash, Settled: before.Big(), Matured: before.Big()}, anchor: hash}
+	s := &State{data: stateRLP{Version: e.version(), Policy: e.policy, Height: before.Big(), Parent: parent.ParentHash, Settled: before.Big(), Matured: before.Big()}, anchor: hash}
+	if !e.retention.IsZero() {
+		s.recent = &recentState{From: e.cfg.Activation.Big()}
+	}
 	if _, err = e.stateBytes(s); err != nil {
 		return nil, err
 	}

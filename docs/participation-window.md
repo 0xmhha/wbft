@@ -41,6 +41,35 @@ The current carrier cannot change that same block's settlement. Repeated
 signatures count once per historical signer and phase. Earlier-than-activation
 targets receive no opportunities.
 
+### Recent matured-target retention
+
+`NewRecent(config, H)` explicitly selects a separate policy with positive H.
+No production H or activation height is supplied. The policy digest binds H
+and all existing limits. Existing `New(config)` keeps its cumulative format,
+state roots and checkpoints unchanged; the two modes cannot share checkpoints.
+
+Recent mode uses observation version 2 and a complete epoch snapshot:
+`[2, previousSettledThrough, nextSettledThrough, from, replacementRows]`.
+Rows replace the previous snapshot rather than adding signed deltas. The
+snapshot covers at most H eligible matured targets ending at the parent's
+settled cursor. The current carrier's newly matured target cannot affect that
+same epoch snapshot. `SettledWindow()` labels `Counts(address)` with this
+published interval. `RecentWindow()` and `RecentCounts(address)` separately
+describe the latest matured interval, which can be ahead of that settlement.
+
+After maturity, each retained target holds only its full height, historical
+addresses and prepare/commit bitmap unions. Historical public keys and
+certificates are discarded from this observation state. Targets older than
+the latest H matured targets are evicted immediately. An address whose
+eligible targets have expired has no retained history; rejoining does not
+restore its old observations. This is not evidence of failed participation.
+
+State and checkpoint version 2 commit the recent interval and the last
+published snapshot. Both are bounded by H and the explicit byte/row limits.
+The open proof interval remains bounded by k. Retention does not delete the
+application's canonical headers, authenticated history or block archive.
+Increasing H can exhaust explicit capacity and must be measured before use.
+
 The filtered hash changes only the nested current round and current prepare
 and commit certificates. Proofs, settlement and state roots remain hash-bound.
 `Build` refuses candidates with current certificates; the caller must freeze

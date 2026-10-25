@@ -50,10 +50,24 @@ type Settlement struct {
 	Rows     []Counts
 }
 
+// RecentSettlement replaces settled counts with the inclusive [From, Through]
+// matured-target window. Previous remains the prior settlement cursor. An
+// empty window has From == Through+1 and no rows. It is never a signed delta.
+type RecentSettlement struct {
+	Previous types.Height
+	Through  types.Height
+	From     types.Height
+	Rows     []Counts
+}
+
 // Observation binds the parent and resulting observation state to the carrier.
 // Settlement is nil outside an epoch. This codec does not decide epoch status
 // or authenticate the roots against a state transition.
 type Observation struct {
+	// Version zero retains the original version-one cumulative format.
+	Version uint64
+	// Recent is a complete replacement snapshot for version two only.
+	Recent          *RecentSettlement
 	PolicyDigest    types.Hash
 	ParentStateRoot types.Hash
 	ResultStateRoot types.Hash

@@ -130,10 +130,18 @@ func preflight(raw []byte, l Limits) error {
 	}
 	if !bytes.Equal(obs[4], rlp.EmptyList) {
 		s, err := rlp.ListItems(obs[4])
-		if err != nil || len(s) != 4 {
+		var version uint64
+		if rlp.DecodeStrict(obs[0], &version) != nil {
 			return ErrFormat
 		}
-		rows, err := rlp.ListItems(s[3])
+		rowIndex := 3
+		if version == 2 {
+			rowIndex = 4
+		}
+		if err != nil || len(s) != rowIndex+1 {
+			return ErrFormat
+		}
+		rows, err := rlp.ListItems(s[rowIndex])
 		if err != nil {
 			return ErrFormat
 		}
@@ -165,6 +173,12 @@ func wire(x *Extra) (*extraRLP, error) {
 // Encode returns the canonical explicit envelope within the supplied limits.
 // No chain rule, state-root transition or cryptographic verification is applied.
 func Encode(x *Extra, l Limits) ([]byte, error) {
+	if x != nil && x.Observation.Version == 2 {
+		return encodeRecent(x, l)
+	}
+	if x != nil && (x.Observation.Version > 1 || x.Observation.Recent != nil) {
+		return nil, ErrFormat
+	}
 	if !l.valid() {
 		return nil, ErrLimit
 	}
@@ -188,6 +202,11 @@ func Encode(x *Extra, l Limits) ([]byte, error) {
 // Decode accepts only a canonical explicit envelope. It does not fall back to
 // the legacy format or treat an unknown version as an empty observation.
 func Decode(raw []byte, l Limits) (*Extra, error) {
+	if version, err := observationVersion(raw, l); err != nil {
+		return nil, err
+	} else if version == 2 {
+		return decodeRecent(raw, l)
+	}
 	if err := preflight(raw, l); err != nil {
 		return nil, err
 	}
