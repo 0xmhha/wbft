@@ -95,6 +95,9 @@ func (st *step) sendPreprepare(p *types.Block, rcs, ps []*Verified) {
 	if p.Header.Number.Cmp(v.Sequence) != 0 || !s.isProposer(s.opt.Self) {
 		return
 	}
+	if s.opt.Improvements.Has(BindFreshProposalAuthor) && !proposalAuthorAllowed(s.opt.Self, v, p, ps, s.quorum()) {
+		return
+	}
 	m := &codec.Message{
 		Code:         codec.CodePreprepare,
 		View:         v,
@@ -130,6 +133,9 @@ func (st *step) handlePreprepare(v *Verified) (bool, int) {
 		if !IsJustified(blockHash(m.Proposal), m.View, summarizeRoundChanges(v.roundChanges()), summarizePrepares(v.prepares()), s.quorum()) {
 			return false, rowPreprepareReject
 		}
+	}
+	if s.opt.Improvements.Has(BindFreshProposalAuthor) && !proposalAuthorAllowed(v.Source, m.View, m.Proposal, v.prepares(), s.quorum()) {
+		return false, rowPreprepareReject
 	}
 	future, err := st.env.ValidateProposal(m.Proposal)
 	if err != nil {

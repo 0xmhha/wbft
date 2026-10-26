@@ -217,6 +217,9 @@ const (
 	// KeepStoppedPeers drops normal consensus frames during an engine pause
 	// without asking the transport to disconnect their peers.
 	KeepStoppedPeers
+	// BindFreshProposalAuthor checks the author of a fresh proposal and preserves
+	// the original author of a justified prepared block across later rounds.
+	BindFreshProposalAuthor
 )
 
 // RestartSafety is the set of the restart-safety rules of the core. Nodes
@@ -246,6 +249,7 @@ var improvementNames = [...]string{
 	RequireInitialRoundBudget: "require_initial_round_budget",
 	PreserveRoundDeadline:     "preserve_round_deadline",
 	KeepStoppedPeers:          "keep_stopped_peers",
+	BindFreshProposalAuthor:   "bind_fresh_proposal_author",
 }
 
 // ParseImprovement finds a known local behavior by its reported name.
