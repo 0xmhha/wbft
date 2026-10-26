@@ -34,6 +34,9 @@ const ReplayPerBlockPolicy RuleName = "replayPerBlockPolicy"
 // EpochInfoInProposal checks epoch information against parent-state candidates.
 const EpochInfoInProposal RuleName = "epochInfoInProposal"
 
+// BLSRandao uses the registered proposer BLS key for a domain-separated reveal.
+const BLSRandao RuleName = "blsRandao"
+
 // Rules reports whether name is enabled at the full height at.
 // Missing or null activation heights are disabled.
 func (c *Config) Rules(name RuleName, at Height) bool {
@@ -83,7 +86,7 @@ func parseConsensusRules(raw []byte) (map[RuleName]Height, error) {
 		sort.Strings(names)
 		for _, name := range names {
 			field := "wbftRules." + group + "." + name
-			if group != "consensusRules" || RuleName(name) != RejectNumberJump && RuleName(name) != MinimalSealerBitmap && RuleName(name) != StableCandidateSort && RuleName(name) != FirstProposerDiligenceCap && RuleName(name) != CommittedEpochDiligence && RuleName(name) != ReplayPerBlockPolicy && RuleName(name) != EpochInfoInProposal {
+			if group != "consensusRules" || RuleName(name) != RejectNumberJump && RuleName(name) != MinimalSealerBitmap && RuleName(name) != StableCandidateSort && RuleName(name) != FirstProposerDiligenceCap && RuleName(name) != CommittedEpochDiligence && RuleName(name) != ReplayPerBlockPolicy && RuleName(name) != EpochInfoInProposal && RuleName(name) != BLSRandao {
 				return nil, &ErrConfig{Field: field, Reason: "unknown rule"}
 			}
 			value := strings.TrimSpace(string(keys[name]))
@@ -99,6 +102,15 @@ func parseConsensusRules(raw []byte) (map[RuleName]Height, error) {
 				return nil, &ErrConfig{Field: field, Reason: "invalid activation"}
 			}
 			out[RuleName(name)] = MustHeightFromBig(n)
+		}
+	}
+	if at, ok := out[BLSRandao]; ok {
+		if at.IsZero() {
+			return nil, &ErrConfig{Field: "wbftRules.consensusRules.blsRandao", Reason: "activation must be positive"}
+		}
+		number, present := out[RejectNumberJump]
+		if !present || number.Cmp(at) > 0 {
+			return nil, &ErrConfig{Field: "wbftRules.consensusRules.blsRandao", Reason: "requires rejectNumberJump at or before activation"}
 		}
 	}
 	if at, ok := out[EpochInfoInProposal]; ok {

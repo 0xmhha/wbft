@@ -29,6 +29,7 @@ import (
 	"math/big"
 	"time"
 
+	"github.com/0xmhha/wbft/chain/validator"
 	"github.com/0xmhha/wbft/codec"
 	"github.com/0xmhha/wbft/types"
 	"github.com/holiman/uint256"
@@ -38,6 +39,12 @@ import (
 // returns ecdsa_sign(node_key, data), the signature over keccak256(data).
 type RandaoSigner interface {
 	SignRandao(data []byte) ([]byte, error)
+}
+
+// BLSRandaoSigner is an optional extension for explicitly activated BLS reveals.
+// SignBLSRandao signs the supplied BLSRandaoData bytes with the registered key.
+type BLSRandaoSigner interface {
+	SignBLSRandao(data []byte) ([]byte, error)
 }
 
 // ProposalInputs are the inputs of PrepareProposal besides the skeleton.
@@ -93,6 +100,11 @@ func PrepareProposal(env *Env, skeleton *types.Header, in ProposalInputs) (*type
 	if parent == nil {
 		return nil, ErrUnknownAncestor
 	}
+	if _, configured := env.Config.RuleActivation(types.BLSRandao); configured {
+		if err := verifyNumber(env, h, nil); err != nil {
+			return nil, err
+		}
+	}
 	h.Difficulty = big.NewInt(types.WBFTDifficulty)
 
 	// Spec: WBFT-PARAM-053
@@ -115,7 +127,24 @@ func PrepareProposal(env *Env, skeleton *types.Header, in ProposalInputs) (*type
 	gasTip := in.ParentGasTip.ToBig()
 
 	writeRandao := func(x *types.WBFTExtra) error {
-		reveal, err := in.Signer.SignRandao(codec.RandaoData(env.Config.ChainID, h.Number))
+		var reveal []byte
+		var err error
+		if blsRandaoActive(env.Config, parent) {
+			signer, ok := in.Signer.(BLSRandaoSigner)
+			if !ok {
+				return ErrMissingBLSRandaoSigner
+			}
+			reveal, err = signer.SignBLSRandao(codec.BLSRandaoData(env.Config.ChainID, h.Number))
+			if err == nil {
+				var v *validator.Set
+				v, err = env.validatorsAt(h.Number, h.ParentHash, nil)
+				if err == nil {
+					err = verifyRandao(env.Config, h, parent, v, reveal)
+				}
+			}
+		} else {
+			reveal, err = in.Signer.SignRandao(codec.RandaoData(env.Config.ChainID, h.Number))
+		}
 		if err != nil {
 			return fmt.Errorf("failed to sign randao reveal: %w", err)
 		}

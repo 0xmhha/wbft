@@ -8,7 +8,6 @@ import (
 
 	"github.com/0xmhha/wbft/chain/validator"
 	"github.com/0xmhha/wbft/codec"
-	"github.com/0xmhha/wbft/crypto/ecdsa"
 	"github.com/0xmhha/wbft/types"
 )
 
@@ -132,7 +131,7 @@ func VerifyLight(in LightInputs, h, parent *types.Header) (LightResult, error) {
 	if err := verifySeals(h, v, x); err != nil {
 		return Invalid, stepErr("H17", className(err), err)
 	}
-	if err := ecdsa.CheckSigner(codec.RandaoData(in.Config.ChainID, h.Number), x.RandaoReveal, h.Coinbase); err != nil {
+	if err := verifyRandao(in.Config, h, parent, v, x.RandaoReveal); err != nil {
 		return Invalid, stepErr("H18", "ErrInvalidRandaoReveal", fmt.Errorf("%w: %w", ErrInvalidRandaoReveal, err))
 	}
 	if mix := RandaoMix(parent.MixDigest, x.RandaoReveal); mix != h.MixDigest {

@@ -604,7 +604,8 @@ v3.0 ([COPYING](COPYING)).
 Chain-level rules come only from the genesis chain configuration's
 `wbftRules.consensusRules`. The supported keys are `rejectNumberJump`,
 `minimalSealerBitmap`, `stableCandidateSort`, `firstProposerDiligenceCap`,
-`committedEpochDiligence` and `replayPerBlockPolicy`. Each key is disabled when missing or null; a
+`committedEpochDiligence`, `replayPerBlockPolicy`, `epochInfoInProposal` and
+`blsRandao`. Each key is disabled when missing or null; a
 non-negative JSON integer sets its activation height. Node profiles and local options do not override
 these values. Unknown consensus or feature rule keys refuse startup.
 
@@ -1235,3 +1236,28 @@ core option mask. It changes no header, message, WAL or journal encoding.
 Reference stopped-engine observations keep their existing conformance meaning.
 Normal signature and Stop/Start controls do not establish every remote lifecycle
 or complete-profile acceptance.
+
+
+### Versioned BLS reveals
+
+`wbftRules.consensusRules.blsRandao=A` selects BLS reveals starting at the
+positive activation height A. It requires `rejectNumberJump` at or before A.
+The checked parent's full height plus one selects the format in proposal,
+import and light verification. Missing or null activation keeps ECDSA reveals;
+there is no signature-length fallback after activation. Genesis is unchanged.
+
+The message is `keccak256(RLP(["WBFT_RANDAO_BLS_V1", be_min(chainID),
+be_min(number)]))`, signed with the proposer's existing BLS key and ciphersuite.
+The verifier uses that height's registered validator key, including at epoch
+boundaries. A builder needs the optional `header.BLSRandaoSigner` extension;
+the built-in file signer implements the corresponding typed extension without
+changing vote-signing state or the legacy signer interface. The builder checks
+the produced signature against the registered key before returning a proposal.
+Reveals are compressed G2 signatures (96 bytes). A verifier needs the same
+activation configuration and validator history as the chain.
+
+The parent-mix XOR hash-of-reveal calculation is unchanged. A unique reveal for
+the registered key and message does not eliminate block withholding or provide
+a general unbiased randomness beacon. This is a consensus format change with
+an additional BLS verification per checked header; it supplies no production
+activation default and never rewrites stored blocks.

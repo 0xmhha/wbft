@@ -31,7 +31,6 @@ import (
 
 	"github.com/0xmhha/wbft/chain/validator"
 	"github.com/0xmhha/wbft/codec"
-	"github.com/0xmhha/wbft/crypto/ecdsa"
 	"github.com/0xmhha/wbft/types"
 	"github.com/holiman/uint256"
 )
@@ -288,7 +287,7 @@ func verifySteps(env *Env, h *types.Header, parents []*types.Header, v, vp *vali
 	// H18
 	//
 	// Spec: WBFT-HDR-089
-	if err := ecdsa.CheckSigner(codec.RandaoData(env.Config.ChainID, h.Number), x.RandaoReveal, h.Coinbase); err != nil {
+	if err := verifyRandao(env.Config, h, parent, v, x.RandaoReveal); err != nil {
 		return stepErr("H18", "ErrInvalidRandaoReveal", fmt.Errorf("%w: %w", ErrInvalidRandaoReveal, err))
 	}
 	// H19

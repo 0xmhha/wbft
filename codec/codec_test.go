@@ -540,3 +540,25 @@ func TestBlockHashCoverage(t *testing.T) {
 		}
 	}
 }
+
+func TestBLSRandaoData(t *testing.T) {
+	for _, test := range []struct{ chain, number, want string }{
+		{"8282", "0", "85704b479a64bc05ff0ff6c415d5f5388cb7760fc807102e497e8c0d67e30212"},
+		{"8282", "1", "efb3ee970730d5d6c00e1f3735f1bdb21d0560ebfa9d325f61d49c009decfb6d"},
+		{"8282", "256", "ad6d006632ebc9ea7f638b606122d3d39a9198c8a0013cda79cbe6c88025119b"},
+		{"8283", "1", "823507e59a3384f33ee8a93720dc4a5061c9ab0e9d310a4e7bdead10fd035ec8"},
+		{"8282", "18446744073709551619", "ffeaf2926e4b0f877e746a047545c35d1b6833b676b89cb998e142bb89d7ca0d"},
+		{"0", "1", "7ad9f2ceec763c8312de37a4075ef1669e6fa2755a26e3d50f9b3beb7311d4be"},
+	} {
+		chain, _ := new(big.Int).SetString(test.chain, 10)
+		number, _ := new(big.Int).SetString(test.number, 10)
+		h := types.MustHeightFromBig(number)
+		got := BLSRandaoData(chain, h)
+		if hex.EncodeToString(got) != test.want || bytes.Equal(got, RandaoData(chain, h)) {
+			t.Fatal("versioned data differs from fixed vector or legacy domain", test)
+		}
+	}
+	if !bytes.Equal(BLSRandaoData(nil, types.HeightFromUint64(1)), BLSRandaoData(new(big.Int), types.HeightFromUint64(1))) {
+		t.Fatal("empty chain ID encoding differs")
+	}
+}

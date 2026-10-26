@@ -36,6 +36,11 @@ type Signer interface {
 	SignRandao(chainID *big.Int, number types.Height) ([]byte, error)
 }
 
+// BLSRandaoSigner extends Signer without changing its legacy contract.
+type BLSRandaoSigner interface {
+	SignBLSRandao(chainID *big.Int, number types.Height) ([]byte, error)
+}
+
 // VoteRequest is one message to sign.
 type VoteRequest struct {
 	// Msg is the unsigned message of the core. Its Seal and Signature are
@@ -201,6 +206,12 @@ func (s *FileSigner) BLSPublicKey() []byte { return bytes.Clone(s.blsPub) }
 // deterministic.
 func (s *FileSigner) SignRandao(chainID *big.Int, number types.Height) ([]byte, error) {
 	return ecdsa.SignData(codec.RandaoData(chainID, number), s.key)
+}
+
+// SignBLSRandao signs the versioned reveal message with the existing BLS key.
+// Like the legacy reveal, this deterministic value does not change vote state.
+func (s *FileSigner) SignBLSRandao(chainID *big.Int, number types.Height) ([]byte, error) {
+	return s.bls.Sign(codec.BLSRandaoData(chainID, number)).Bytes(), nil
 }
 
 // Empty reports that the sign state holds no signature record and no floor:
