@@ -90,6 +90,10 @@ type randaoSigner struct {
 
 func (r randaoSigner) SignRandao([]byte) ([]byte, error) { return r.s.SignRandao(r.chainID, r.number) }
 
+func (r randaoSigner) SignBLSRandao([]byte) ([]byte, error) {
+	return r.s.SignBLSRandao(r.chainID, r.number)
+}
+
 // EpochInfo computes the EpochInfo of epoch block h whose execution is in
 // progress in ctx; it returns nil for a block that is not an epoch block.
 func (s *service) EpochInfo(ctx context.Context, h *types.Header) (*types.EpochInfo, error) {

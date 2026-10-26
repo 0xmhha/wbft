@@ -102,6 +102,20 @@ func RandaoData(chainID *big.Int, number types.Height) []byte {
 	return keccak.Sum256Bytes(cid, []byte{0x01}, number.Bytes())
 }
 
+// BLSRandaoData is keccak256(RLP(["WBFT_RANDAO_BLS_V1", be_min(chainID),
+// be_min(number)])). The RLP tuple separates the full chain ID and height;
+// its versioned message domain is independent of vote and seal data.
+func BLSRandaoData(chainID *big.Int, number types.Height) []byte {
+	var cid []byte
+	if chainID != nil {
+		cid = chainID.Bytes()
+	}
+	return keccak.Sum256Bytes(rlp.EncodeList(
+		rlp.EncodeString([]byte("WBFT_RANDAO_BLS_V1")),
+		rlp.EncodeString(cid), rlp.EncodeString(number.Bytes()),
+	))
+}
+
 // DedupKey is keccak256(rlp_string(payload)): the key under which a node
 // records a consensus message payload as seen.
 //

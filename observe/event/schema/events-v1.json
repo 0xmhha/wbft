@@ -290,6 +290,7 @@
         "rule_activations": {
           "type": "object",
           "properties": {
+            "blsRandao": { "$ref": "#/$defs/decimal" },
             "committedEpochDiligence": { "$ref": "#/$defs/decimal" },
             "epochInfoInProposal": { "$ref": "#/$defs/decimal" },
             "firstProposerDiligenceCap": { "$ref": "#/$defs/decimal" },

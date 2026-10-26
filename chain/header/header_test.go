@@ -781,3 +781,11 @@ func TestBlockPeriodConfigAt(t *testing.T) {
 		t.Errorf("block 3 at parent + 9: %v", err)
 	}
 }
+
+func (s keySigner) SignBLSRandao(data []byte) ([]byte, error) {
+	key, err := bls.DeriveSecretKey(ecdsa.PrivateKeyBytes(s.k))
+	if err != nil {
+		return nil, err
+	}
+	return key.Sign(data).Bytes(), nil
+}

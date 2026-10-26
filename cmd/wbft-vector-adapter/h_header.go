@@ -9,6 +9,7 @@ import (
 	"github.com/0xmhha/wbft/chain/validator"
 	"github.com/0xmhha/wbft/chain/validator/source"
 	"github.com/0xmhha/wbft/codec"
+	"github.com/0xmhha/wbft/crypto/bls"
 	"github.com/0xmhha/wbft/crypto/ecdsa"
 	"github.com/0xmhha/wbft/internal/snetpartb"
 	"github.com/0xmhha/wbft/types"
@@ -148,6 +149,14 @@ func hVerifyLight(_ string, input json.RawMessage) (any, error) {
 type keySigner struct{ key *ecdsa.PrivateKey }
 
 func (s keySigner) SignRandao(data []byte) ([]byte, error) { return ecdsa.SignData(data, s.key) }
+
+func (s keySigner) SignBLSRandao(data []byte) ([]byte, error) {
+	key, err := bls.DeriveSecretKey(ecdsa.PrivateKeyBytes(s.key))
+	if err != nil {
+		return nil, err
+	}
+	return key.Sign(data).Bytes(), nil
+}
 
 func hBuildProposalHeader(_ string, input json.RawMessage) (any, error) {
 	type sealIn struct {

@@ -370,3 +370,25 @@ func TestCrashAroundPersist(t *testing.T) {
 		}
 	}
 }
+
+func TestBLSRandaoUsesRegisteredKeyWithoutVoteState(t *testing.T) {
+	s := newTestSigner(t, fsys.NewMem())
+	for _, number := range []types.Height{types.HeightFromUint64(1), types.HeightFromUint64(5), types.MustHeightFromBig(new(big.Int).Lsh(big.NewInt(1), 80))} {
+		a, err := s.SignBLSRandao(big.NewInt(8282), number)
+		if err != nil {
+			t.Fatal(err)
+		}
+		b, err := s.SignBLSRandao(big.NewInt(8282), number)
+		if err != nil || !bytes.Equal(a, b) || !s.Empty() {
+			t.Fatal("normal repeated reveal changed signature or vote state", err)
+		}
+		pk, err := bls.DecodePublicKey(s.BLSPublicKey())
+		if err != nil {
+			t.Fatal(err)
+		}
+		sig, err := bls.DecodeSignature(a)
+		if err != nil || !bls.Verify(pk, codec.BLSRandaoData(big.NewInt(8282), number), sig) {
+			t.Fatal("registered-key reveal does not verify", err)
+		}
+	}
+}

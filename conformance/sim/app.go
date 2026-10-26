@@ -4,6 +4,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"math/big"
 	"time"
 
 	"github.com/0xmhha/wbft/chain/epoch"
@@ -161,6 +162,13 @@ func (r randao) SignRandao([]byte) ([]byte, error) {
 		return nil, fmt.Errorf("sim: node is down")
 	}
 	return r.n.signerRandao(r.number)
+}
+
+func (r randao) SignBLSRandao([]byte) ([]byte, error) {
+	if r.n.r == nil {
+		return nil, fmt.Errorf("sim: node is down")
+	}
+	return r.n.signer.SignBLSRandao(big.NewInt(ChainID), r.number)
 }
 
 // ReadyToBuild implements runner.App: after the wait and the build time the

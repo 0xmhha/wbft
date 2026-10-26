@@ -242,3 +242,46 @@ func TestReplayPolicyRuleConfiguration(t *testing.T) {
 		t.Fatal("activation omitted from digest")
 	}
 }
+
+func TestBLSRandaoRuleConfiguration(t *testing.T) {
+	for _, value := range []string{"1", "3", "9007199254740993", "18446744073709551619"} {
+		c := ruleConfig(t, `"wbftRules":{"consensusRules":{"rejectNumberJump":0,"blsRandao":`+value+`}}`)
+		at, ok := c.RuleActivation(BLSRandao)
+		if !ok || at.String() != value || !c.Rules(BLSRandao, at) {
+			t.Fatal("activation lost precision", value)
+		}
+		before, _ := at.Sub(HeightFromUint64(1))
+		if c.Rules(BLSRandao, before) {
+			t.Fatal("activated early")
+		}
+		copy := c.RuleActivations()
+		copy[BLSRandao] = "1"
+		if h, _ := c.RuleActivation(BLSRandao); h.Cmp(at) != 0 {
+			t.Fatal("activation aliases returned map")
+		}
+	}
+	for _, extra := range []string{`"chainId":1`, `"wbftRules":{"consensusRules":{"blsRandao":null}}`} {
+		if _, ok := ruleConfig(t, extra).RuleActivation(BLSRandao); ok {
+			t.Fatal("disabled rule configured")
+		}
+	}
+	for _, rules := range []string{
+		`"blsRandao":0,"rejectNumberJump":0`,
+		`"blsRandao":3`, `"blsRandao":3,"rejectNumberJump":null`,
+		`"blsRandao":3,"rejectNumberJump":4`,
+		`"blsRandao":-1,"rejectNumberJump":0`,
+		`"blsRandao":"3","rejectNumberJump":0`,
+		`"blsRandao":true,"rejectNumberJump":0`,
+		`"blsRandao":1.5,"rejectNumberJump":0`,
+		`"blsRandao":1e2,"rejectNumberJump":0`,
+	} {
+		if _, err := ParseChainConfig([]byte(`{"wbftRules":{"consensusRules":{` + rules + `}}}`)); err == nil {
+			t.Fatal("invalid rule accepted", rules)
+		}
+	}
+	a := ruleConfig(t, `"wbftRules":{"consensusRules":{"rejectNumberJump":1,"blsRandao":3}}`)
+	b := ruleConfig(t, `"wbftRules":{"consensusRules":{"rejectNumberJump":1,"blsRandao":4}}`)
+	if a.RulesDigest() == b.RulesDigest() {
+		t.Fatal("reveal activation absent from digest")
+	}
+}
