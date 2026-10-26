@@ -1261,3 +1261,17 @@ the registered key and message does not eliminate block withholding or provide
 a general unbiased randomness beacon. This is a consensus format change with
 an additional BLS verification per checked header; it supplies no production
 activation default and never rewrites stored blocks.
+
+`bind_fresh_proposal_author` is an independent, default-off local option. After
+normal proposer and round-change justification checks, a fresh proposal must
+have the authenticated PRE-PREPARE sender as its Coinbase. A prepared block may
+retain its original author across later rounds only with a distinct-member
+PREPARE quorum for the same full sequence, earlier prepared round and block
+hash. The local send and receive paths apply the same check. The block and its
+Coinbase are never rewritten.
+
+Select the same option on validators that should enforce this acceptance
+policy. Existing header imports, standalone header checks and fee distribution
+remain unchanged; this option does not reconstruct historical proposal authors
+from headers. The node reports the selected option in its normal runtime and
+journal metadata, allowing replay to preserve the selected behavior.

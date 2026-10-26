@@ -124,6 +124,10 @@ func TestDelayedRoundProposalPair(t *testing.T) {
 					h.roundTimeout()
 					b := h.proposal(1)
 					b.Header.ParentHash = blockHash(h.env.head)
+					if mode != "prepared_priority" {
+						// A fresh round-1 builder block belongs to its current proposer.
+						b.Header.Coinbase = h.addrs[1]
+					}
 					var ps []*codec.Message
 					if mode == "prepared_priority" {
 						for _, i := range []int{0, 1, 2} {
