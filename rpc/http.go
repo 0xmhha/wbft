@@ -56,6 +56,13 @@ func Handler(apis []API) http.Handler {
 		}
 		if s, ok := a.Service.(*Service); ok {
 			methods[a.Namespace+"_nodeInfo"] = none(func() any { return s.NodeInfo() })
+			methods[a.Namespace+"_observationBand"] = func(params []json.RawMessage) (any, error) {
+				var request ObservationBandRequest
+				if len(params) != 1 || json.Unmarshal(params[0], &request) != nil {
+					return nil, errParams
+				}
+				return s.ObservationBand(request)
+			}
 			methods[a.Namespace+"_consensusState"] = none(func() any { return s.ConsensusState() })
 			methods[a.Namespace+"_peers"] = none(func() any { return s.Peers() })
 			ranged := func(f func(from, to HeightArg) (any, error)) method {

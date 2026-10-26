@@ -166,3 +166,33 @@ measurements. Local witness queues require separate item, byte and verification
 budgets. Do not add overlapping aggregate signatures. Select an intact verified
 aggregate or aggregate distinct individual signatures. Lost constructor data
 does not prove a signer was absent.
+
+### Read-only observation-band RPC
+
+`wbft_observationBand` takes one object with `address`, `view`, `minimum`,
+`numerator` and `denominator`. All fields are required. Views are `settled`
+and `recent_preview`. Integers are canonical positive decimal strings; minimum
+is at most 256 decimal digits and cannot exceed configured H. The threshold
+uses uint64 values, satisfies 0 < numerator <= denominator, and is normalized
+in the diagnostic response. The object is bounded to 1024 bytes and rejects
+unknown fields, client-provided counts and verification claims.
+
+The method reads one address at the currently adopted observation state. It
+starts no history walk, proof collection or state transition. Responses separate
+`UNSUPPORTED`, `DISABLED`, `BEFORE_ACTIVATION`, `UNAVAILABLE` and `AVAILABLE`.
+The first four contain no diagnostic. AVAILABLE may contain NO_HISTORY or
+INSUFFICIENT_HISTORY with a null band; unavailable data is never a zero score.
+A state that has not caught up with the captured application head is unavailable.
+
+The source envelope carries chain identity, core version and
+`verification_scope: node_adopted_observation_state`. This describes the node's
+local provenance claim, not independent verification by a remote client.
+Retain the source identity and transport provenance. Authenticate/replay the
+chain independently before treating remote counts as verified chain evidence.
+Observation bands are diagnostic choices and do not change eligibility,
+diligence, committees, fees, block acceptance or production parameters.
+
+Optional backend capability keeps existing RPC backends explicitly unsupported.
+The built-in HTTP handler and servers reflecting the exported Service method
+use the same closed request type. Existing participation-record methods retain
+their meaning.
