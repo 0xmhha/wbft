@@ -70,6 +70,29 @@ The open proof interval remains bounded by k. Retention does not delete the
 application's canonical headers, authenticated history or block archive.
 Increasing H can exhaust explicit capacity and must be measured before use.
 
+### Read-only observation bands
+
+`Engine.DiagnoseRecent(state, address, view, policy)` reads either the complete
+`settled` snapshot or the independently labelled `recent_preview` snapshot.
+`BandPolicy` requires a positive minimum number of eligible targets, at most H,
+and an explicit inclusive rational threshold in (0, 1]. Each phase must meet
+that threshold separately; a high prepare count cannot hide a low commit count.
+Exact integer products avoid rounded percentages and uint64 product overflow.
+
+Zero opportunities produce `NO_HISTORY`; a positive count below the minimum
+produces `INSUFFICIENT_HISTORY`. Both have a null `observed_band`. Sufficient
+history produces `IN_OBSERVED_BAND` or `BELOW_OBSERVED_BAND`. These are inclusion
+observations, not evidence of deliberate nonparticipation or blacklist status.
+Invalid policy, unavailable state and cumulative mode remain errors.
+
+The result carries full decimal integers, a normalized threshold, the selected
+interval, carrier identity, state root and observation policy digest. These
+identities do not authenticate a caller-provided checkpoint: the caller still
+supplies authenticated history or an independently trusted anchor. External
+adapters must bound requests and keep unverified models distinct from verified
+chain observations. This library method does not expose an RPC or UI, enable a
+network policy, change state, or produce diligence, validator sets or fee weights.
+
 The filtered hash changes only the nested current round and current prepare
 and commit certificates. Proofs, settlement and state roots remain hash-bound.
 `Build` refuses candidates with current certificates; the caller must freeze
