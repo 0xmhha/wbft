@@ -109,6 +109,9 @@ func TestAppQueueNormalCoreSourcesAndFiniteRetainedHorizon(t *testing.T) {
 	// Public normal notification semantics also permit a queued input while
 	// stopped. It is retained, not invented as a dispatched core input.
 	n.r.PeerConnected(k.addrs[2])
+	n.r.appMu.Lock()
+	stoppedSequence := n.r.appSourceSequence
+	n.r.appMu.Unlock()
 	if err := n.r.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -123,9 +126,57 @@ func TestAppQueueNormalCoreSourcesAndFiniteRetainedHorizon(t *testing.T) {
 		t.Fatal(err)
 	}
 	limits := journal.AppQueueLimits{Core: journal.CoreSourceLimits{Records: 1000, Runs: 4, Steps: 100, Environments: 100, Outputs: 1000, Bytes: 1 << 20}, Operations: 100, Entries: 16, Bytes: 1 << 20}
-	check, err := journal.CheckAppQueueSources(records, limits)
+	// Freeze the observed finite Stop horizon before invoking terminal Close.
+	// Keep its original retained-input assertion on that actual prefix.
+	boundary := -1
+	for i, record := range records {
+		if r, ok := record.Body.(*journal.AppQueueRec); ok && r.Sequence == stoppedSequence {
+			boundary = i + 1
+			break
+		}
+	}
+	if boundary < 0 {
+		t.Fatal("frozen stopped-time queue boundary missing")
+	}
+	check, err := journal.CheckAppQueueSources(records[:boundary], limits)
 	if err != nil || check.Status != "consistent" || check.Appended != 3 || check.Coalesced != 1 || check.Popped != 2 || check.Clears != 1 || check.Retained != 1 || check.PhysicalStatus != "unavailable" || check.ScheduleStatus != "unavailable" {
 		t.Fatal("normal source reconstruction or retained horizon changed", check, err)
+	}
+	check, err = journal.CheckAppQueueSources(records, limits)
+	if err != nil || check.Status != "consistent" || check.Appended != 3 || check.Coalesced != 1 || check.Popped != 2 || check.Clears != 1 || check.Closes != 1 || check.Retained != 0 || check.ClearedInputs != 1 || check.PhysicalStatus != "unavailable" || check.ScheduleStatus != "unavailable" {
+		t.Fatal("terminal queue closure did not dispose of actual retained work", check, err)
+	}
+	var terminal *journal.AppQueueRec
+	for _, record := range records[boundary:] {
+		if r, ok := record.Body.(*journal.AppQueueRec); ok {
+			if terminal != nil || r.Action != "close" || r.Version != journal.AppQueueCloseSourceVersion || r.Before != 1 || r.After != 0 {
+				t.Fatal("unexpected queue operation after frozen finite horizon", r)
+			}
+			terminal = r
+		}
+	}
+	if terminal == nil {
+		t.Fatal("terminal queue source missing")
+	}
+	// These are independent, offline metadata copies. No live input, WAL or
+	// original transcript is changed to exercise the strict source checker.
+	duplicate := *terminal
+	duplicate.Sequence++
+	copies := append(append([]journal.Record(nil), records...), journal.Record{Body: &duplicate})
+	check, err = journal.CheckAppQueueSources(copies, limits)
+	if err == nil || check.Status != "inconsistent" || check.Reason != "application_queue_mutation_after_close" {
+		t.Fatal("duplicate terminal closure accepted", check, err)
+	}
+	missingClear := make([]journal.Record, 0, len(records))
+	for _, record := range records {
+		if r, ok := record.Body.(*journal.AppQueueRec); ok && r.Action == "clear" {
+			continue
+		}
+		missingClear = append(missingClear, record)
+	}
+	check, err = journal.CheckAppQueueSources(missingClear, limits)
+	if err != nil || check.Status != "unavailable" || check.Reason != "application_queue_sequence_gap" {
+		t.Fatal("missing Stop clear did not preserve its actual source gap", check, err)
 	}
 }
 

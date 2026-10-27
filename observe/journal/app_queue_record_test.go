@@ -93,3 +93,39 @@ func TestAppQueueRecordQueueBudgetAndKindGap(t *testing.T) {
 	}
 	t.Fatal("bounded writer did not retain the application queue source gap")
 }
+
+func TestAppQueueTerminalCloseStrictVersionAndUnavailableCodec(t *testing.T) {
+	for _, r := range []*AppQueueRec{
+		{Version: AppQueueCloseSourceVersion, Sequence: 9, EngineRun: 1, Step: 8, Action: "close", Before: 3, Mono: 23},
+		{Version: AppQueueCloseSourceVersion, Sequence: 1, Action: "close", Unavailable: "stop_source_missing"},
+		{Version: AppQueueCloseSourceVersion, Action: "close", Unavailable: "metadata_exhausted"},
+	} {
+		raw, err := encodeBody(Record{Body: r}, 11)
+		if err != nil {
+			t.Fatal(err)
+		}
+		decoded, err := decodeBody(KindAppQueue, raw)
+		if err != nil {
+			t.Fatal("valid terminal closure rejected", err)
+		}
+		again, err := encodeBody(decoded, 11)
+		if err != nil || !bytes.Equal(raw, again) {
+			t.Fatal("terminal closure roundtrip changed source bytes", err)
+		}
+		// Only offline record values change here; no live queue or WAL is used.
+		for _, change := range []func(*AppQueueRec){
+			func(v *AppQueueRec) { v.Version = AppQueueSourceVersion },
+			func(v *AppQueueRec) { v.Version = AppQueueCloseSourceVersion + 1 },
+			func(v *AppQueueRec) { v.Action = "clear" },
+			func(v *AppQueueRec) { v.After = 1 },
+			func(v *AppQueueRec) { v.Request = 1 },
+			func(v *AppQueueRec) { v.InputKind = inputlog.KindCommitResult },
+		} {
+			copy := *r
+			change(&copy)
+			if _, err := encodeBody(Record{Body: &copy}, 11); err == nil {
+				t.Fatal("invalid terminal closure encoding accepted", copy)
+			}
+		}
+	}
+}

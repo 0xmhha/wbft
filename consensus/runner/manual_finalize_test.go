@@ -47,7 +47,7 @@ func TestManualFinalizePausesInputsAndSerializesCommitCalls(t *testing.T) {
 	if err := n.r.Stop(); !errors.Is(err, ErrFinalizePending) || !n.r.Running() {
 		t.Fatal("stop discarded outstanding call", err)
 	}
-	if err := n.r.Close(); !errors.Is(err, ErrFinalizePending) || n.r.closed {
+	if err := n.r.Close(); !errors.Is(err, ErrFinalizePending) || n.r.closed || n.r.appClosing {
 		t.Fatal("close discarded outstanding call", err)
 	}
 	n.clock.advance(time.Second)

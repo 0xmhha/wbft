@@ -1282,3 +1282,17 @@ The optional `bind_prior_head` local improvement retains the adopted header's
 historical sealing authority separately from the successor validator set. It
 requires the matching WAL replay profile and is disabled by default. See
 [prior-head seal provenance](docs/prior-head.md) for recovery and reader scope.
+
+### Runner terminal queue closure
+
+`Runner.Close` stops admission through `Submit`, `NewHead` and `PeerConnected`,
+waits for its existing workers, and disposes of remaining application inputs.
+An application finalization already in progress keeps its ordinary return and
+notification path. A later `Start` is refused. A rejected manual Close with
+pending work leaves admission unchanged; ordinary `Stop` remains restartable.
+
+Optional application queue sources retain version 1 for append, pop, coalesce
+and Stop clear. The terminal `close` operation alone uses version 2. Its
+independent check binds the last original core Stop and clear, refuses later
+queue mutation, and does not claim physical or complete schedule termination.
+Older readers refuse the new operation; absent Stop evidence stays unavailable.

@@ -291,6 +291,8 @@ type Runner struct {
 	hkGen    atomic.Uint64                // generation of the periodic tasks
 
 	appMu              sync.Mutex // runner.app.mu
+	appClosing         bool       // terminal admission gate, protected by appMu
+	appQueueClosed     bool       // final queue closure recorded once, protected by appMu
 	appSourceSequence  uint64
 	appSourceExhausted bool
 	appQ               []queued
@@ -526,6 +528,10 @@ func (r *Runner) halt(err error) {
 // Submit hands a proposal of the block builder to the core.
 func (r *Runner) Submit(b *types.Block) {
 	r.appMu.Lock()
+	if r.appClosing {
+		r.appMu.Unlock()
+		return
+	}
 	observation := r.appendAppLocked(consensus.Request{Block: b})
 	r.appMu.Unlock()
 	r.publishAppQueue(observation)
@@ -538,6 +544,10 @@ func (r *Runner) Submit(b *types.Block) {
 // sees the latest head.
 func (r *Runner) NewHead(h *types.Header) {
 	r.appMu.Lock()
+	if r.appClosing {
+		r.appMu.Unlock()
+		return
+	}
 	before := len(r.appQ)
 	action, request := "coalesce", r.firstHeadSourceLocked()
 	if r.headNote == nil {
@@ -554,6 +564,10 @@ func (r *Runner) NewHead(h *types.Header) {
 // PeerConnected reports that a validator peer (re)connected.
 func (r *Runner) PeerConnected(a types.Address) {
 	r.appMu.Lock()
+	if r.appClosing {
+		r.appMu.Unlock()
+		return
+	}
 	observation := r.appendAppLocked(consensus.PeerConnected{Addr: a})
 	r.appMu.Unlock()
 	r.publishAppQueue(observation)
@@ -629,6 +643,9 @@ func (r *Runner) Close() error {
 		return ErrFinalizePending
 	}
 	r.closed = true
+	r.appMu.Lock()
+	r.appClosing = true
+	r.appMu.Unlock()
 	r.ctlMu.Unlock()
 	if r.running.Load() {
 		_ = r.Stop()
@@ -651,6 +668,10 @@ func (r *Runner) Close() error {
 		r.loopDone.Wait()
 		r.stopLoop = nil
 	}
+	// Finalization workers may have returned and queued results after Stop.
+	// Their original return/notify sources remain intact; this terminal
+	// boundary disposes of that actual remaining queue after every join.
+	r.closeAppQueue()
 	if r.receiveCache != nil {
 		r.receiveCache.Close()
 	}
