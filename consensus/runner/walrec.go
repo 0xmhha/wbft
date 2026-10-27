@@ -7,6 +7,7 @@ import (
 	"github.com/0xmhha/wbft/chain/validator"
 	"github.com/0xmhha/wbft/codec"
 	"github.com/0xmhha/wbft/codec/rlp"
+	"github.com/0xmhha/wbft/consensus"
 	"github.com/0xmhha/wbft/consensus/wal"
 	"github.com/0xmhha/wbft/internal/fsys"
 	"github.com/0xmhha/wbft/types"
@@ -81,9 +82,10 @@ func encodeCommit(b *types.Block, round types.Round) (wal.Record, error) {
 // of the height below. It carries what a replay needs to start a core at
 // From: the head and the validator set of From.
 type boundaryRec struct {
-	From       types.Height
-	Head       *types.Header
-	Validators *validator.Set
+	From        types.Height
+	Head        *types.Header
+	Validators  *validator.Set
+	PriorSource *consensus.PriorHeadSource
 	// Replayed is false for a run start whose core did not continue from a
 	// replay: the records before it do not describe its state.
 	Replayed bool
@@ -198,7 +200,7 @@ func InspectWAL(fs fsys.FS, dir string) (WALState, error) {
 		return st, err
 	}
 	for _, rec := range recs {
-		if rec.Format != walFormat && rec.Format != nextHeightFormat {
+		if rec.Format != walFormat && rec.Format != nextHeightFormat && rec.Format != priorHeadFormat {
 			continue
 		}
 		switch rec.Kind {

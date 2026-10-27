@@ -451,7 +451,7 @@ func runTimedEntries(entries []timedSourceEntry, j JournalReader, opts TimedOpti
 		if suppression != "" {
 			result, e = scheduledEmpty(state, original, true, suppression)
 		} else {
-			env := &traceEnv{cfg: cfg, blocks: opts.Blocks, head: head, session: session, source: answerStep{context: answerContext{writer, engine, head.Number.String(), codec.BlockHash(head), consensus.ValsetDigest(state.Snapshot().Validators)}}}
+			env := &traceEnv{cfg: cfg, blocks: opts.Blocks, head: head, session: session, priorProfile: state.Enabled(consensus.BindPriorHead), source: answerStep{context: answerContext{writer, engine, head.Number.String(), codec.BlockHash(head), consensus.ValsetDigest(state.Snapshot().Validators)}}}
 			if original != nil {
 				known, err := session.source(writer, original)
 				if err != nil {
@@ -459,6 +459,18 @@ func runTimedEntries(entries []timedSourceEntry, j JournalReader, opts TimedOpti
 				}
 				if known.context == env.source.context {
 					env.source = known
+				}
+			}
+
+			if env.priorProfile && original != nil {
+				for _, raw := range original.Env {
+					c, err := inputlog.DecodeEnv(raw)
+					if err != nil {
+						return err
+					}
+					if c.Kind == inputlog.EnvValidatorsAt {
+						env.authorities = append(env.authorities, c)
+					}
 				}
 			}
 			if reference == nil {
@@ -471,7 +483,9 @@ func runTimedEntries(entries []timedSourceEntry, j JournalReader, opts TimedOpti
 					if err != nil {
 						return err
 					}
-					env.answers = append(env.answers, answer)
+					if !env.priorProfile || answer.Kind != inputlog.EnvValidatorsAt {
+						env.answers = append(env.answers, answer)
+					}
 				}
 				result.ContextAnswers = false
 			}
@@ -479,6 +493,9 @@ func runTimedEntries(entries []timedSourceEntry, j JournalReader, opts TimedOpti
 			result.Outputs = state.Step(env, in)
 			if env.err != nil {
 				return env.err
+			}
+			if env.priorProfile && len(env.authorities) != 0 {
+				return ErrTraceEnvSource
 			}
 			result.EnvCalls = env.calls
 			result.AnswerSources = env.sources

@@ -1275,3 +1275,10 @@ policy. Existing header imports, standalone header checks and fee distribution
 remain unchanged; this option does not reconstruct historical proposal authors
 from headers. The node reports the selected option in its normal runtime and
 journal metadata, allowing replay to preserve the selected behavior.
+
+### Prior-head seal provenance
+
+The optional `bind_prior_head` local improvement retains the adopted header's
+historical sealing authority separately from the successor validator set. It
+requires the matching WAL replay profile and is disabled by default. See
+[prior-head seal provenance](docs/prior-head.md) for recovery and reader scope.

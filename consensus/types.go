@@ -220,6 +220,9 @@ const (
 	// BindFreshProposalAuthor checks the author of a fresh proposal and preserves
 	// the original author of a justified prepared block across later rounds.
 	BindFreshProposalAuthor
+	// BindPriorHead binds previous-height seals to the adopted header and its
+	// historical sealing set, including through supported WAL recovery.
+	BindPriorHead
 )
 
 // RestartSafety is the set of the restart-safety rules of the core. Nodes
@@ -250,6 +253,7 @@ var improvementNames = [...]string{
 	PreserveRoundDeadline:     "preserve_round_deadline",
 	KeepStoppedPeers:          "keep_stopped_peers",
 	BindFreshProposalAuthor:   "bind_fresh_proposal_author",
+	BindPriorHead:             "bind_prior_head",
 }
 
 // ParseImprovement finds a known local behavior by its reported name.

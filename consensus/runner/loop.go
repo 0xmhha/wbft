@@ -313,7 +313,7 @@ func (r *Runner) endHeight(snap *consensus.Snapshot, gens [4]uint64) {
 	h := r.env.head
 	faultpoint.Hit(r.d.Faults, faultpoint.EndHeightBefore)
 	if r.d.WAL != nil {
-		b := boundaryRec{From: h.Number.AddUint64(1), Head: h, Validators: snap.Validators, Replayed: true}
+		b := boundaryRec{From: h.Number.AddUint64(1), Head: h, Validators: snap.Validators, PriorSource: snap.PriorSource, Replayed: true}
 		copy(b.Gens[:], gens[:])
 		if r.cfg.Core.Improvements.Has(consensus.ValidateRoundProposals) {
 			b.LocalTimer, b.LocalGen = true, gens[3]
@@ -680,7 +680,7 @@ func (r *Runner) journalStep(sc *stepCtx, kind string, body []byte, after *conse
 	}
 	var envs [][]byte
 	for _, a := range sc.env {
-		if a.call.Kind == inputlog.EnvValidatorsAt {
+		if a.call.Kind == inputlog.EnvValidatorsAt && !r.cfg.Core.Improvements.Has(consensus.BindPriorHead) {
 			continue
 		}
 		b, err := inputlog.EncodeEnv(a.call)

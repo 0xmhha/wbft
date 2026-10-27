@@ -64,6 +64,7 @@ type restorePlan struct {
 	boundary uint64
 	head     *types.Header
 	vs       *validator.Set
+	prior    *consensus.PriorHeadSource
 	gens     []uint64
 	steps    []restoreStep
 }
@@ -211,6 +212,9 @@ func reconstructRestoreSources(records []Record, limits CoreSourceLimits) (Resto
 				}
 			}
 			plan, err := independentRestorePlan(root.read, s.From)
+			if errors.Is(err, errRestoreNextHeight) {
+				return unavailable("next_height_not_supported")
+			}
 			if err != nil {
 				return bad("original_boundary_or_input_invalid")
 			}
@@ -341,11 +345,11 @@ func independentRestorePlan(root *WALReadRec, from string) (*restorePlan, error)
 	start := -1
 	var boundary restoreBoundary
 	for i, f := range root.Source.Frames {
-		if f.Bytes[8] != 1 || (f.Bytes[9] != 1 && f.Bytes[9] != 6) {
+		if f.Bytes[8] != 1 && f.Bytes[8] != 3 || (f.Bytes[9] != 1 && f.Bytes[9] != 6) {
 			continue
 		}
-		var b restoreBoundary
-		if err := rlp.DecodeStrict(f.Bytes[10:], &b); err != nil {
+		b, prior, err := decodeRestoreBoundary(f.Bytes[8], f.Bytes[10:])
+		if err != nil {
 			return nil, err
 		}
 		if b.From == nil || b.From.Sign() < 0 || len(b.Gens) != 3 && len(b.Gens) != 4 || b.HasSet > 1 || b.Replayed > 1 {
@@ -353,6 +357,7 @@ func independentRestorePlan(root *WALReadRec, from string) (*restorePlan, error)
 		}
 		if b.From.String() == from && (f.Bytes[9] == 6 || b.Replayed == 0) {
 			start, boundary = i, b
+			p.prior = prior
 		}
 	}
 	if start < 0 {
@@ -373,6 +378,19 @@ func independentRestorePlan(root *WALReadRec, from string) (*restorePlan, error)
 	}
 	for i := start + 1; i < len(root.Source.Frames); i++ {
 		f := root.Source.Frames[i]
+		if f.Bytes[8] == 3 && (f.Bytes[9] == 1 || f.Bytes[9] == 6) {
+			b, prior, err := decodeRestoreBoundary(3, f.Bytes[10:])
+			if err != nil {
+				return nil, err
+			}
+			if f.Bytes[9] == 6 || b.Replayed != 1 || b.From == nil || b.From.String() != from {
+				return p, nil
+			}
+			if p.prior == nil || prior == nil || p.prior.ValidateHead(p.head) != nil || prior.ValidateHead(p.head) != nil || consensus.ValsetDigest(p.prior.Validators) != consensus.ValsetDigest(prior.Validators) || (p.prior.Validators == nil) != (prior.Validators == nil) {
+				return nil, ErrRestoreSource
+			}
+			continue
+		}
 		if f.Bytes[8] != 1 {
 			continue
 		}
@@ -419,10 +437,24 @@ func independentRestorePlan(root *WALReadRec, from string) (*restorePlan, error)
 
 type restoreStartEnv struct {
 	*coreSourceEnv
-	vs *validator.Set
+	vs     *validator.Set
+	prior  *consensus.PriorHeadSource
+	strict bool
 }
 
-func (e *restoreStartEnv) ValidatorsAt(types.Height, types.Hash) (*validator.Set, error) {
+func (e *restoreStartEnv) ValidatorsAt(n types.Height, parent types.Hash) (*validator.Set, error) {
+	if e.strict {
+		if e.prior != nil && e.prior.ValidateHead(e.head) == nil && e.prior.MatchesLookup(n, parent) {
+			if e.prior.Validators == nil {
+				return nil, ErrRestoreSource
+			}
+			return e.prior.Validators, nil
+		}
+		if e.head == nil || n.Cmp(e.head.Number.AddUint64(1)) != 0 || parent != codec.BlockHash(e.head) {
+			e.err = ErrRestoreSource
+			return nil, e.err
+		}
+	}
 	if e.vs == nil {
 		return nil, ErrRestoreSource
 	}
@@ -436,6 +468,9 @@ func (e *restoreStartEnv) IsBadBlock(types.Hash) bool { return false }
 var errRestoreOutputLimit = errors.New("restore output limit")
 
 func independentRestoreAttempt(p *restorePlan, count int, options consensus.Options, outputLimit uint64, capture func([]consensus.Output)) (*consensus.State, RestoreAttempt, uint64, error) {
+	if options.Improvements.Has(consensus.BindPriorHead) != (p.prior != nil) {
+		return nil, RestoreAttempt{}, 0, ErrRestoreSource
+	}
 	core := consensus.NewState(options)
 	a := RestoreAttempt{Inputs: uint64(count), Generations: make([]uint64, 4), Timers: make([][]byte, 4)}
 	own := map[uint64][]byte{}
@@ -492,7 +527,11 @@ func independentRestoreAttempt(p *restorePlan, count int, options consensus.Opti
 		a.Failed = 1
 		return finish()
 	}
-	outs := core.Step(&restoreStartEnv{&coreSourceEnv{head: p.head}, p.vs}, consensus.Start{})
+	startEnv := &restoreStartEnv{coreSourceEnv: &coreSourceEnv{head: p.head}, vs: p.vs, prior: p.prior, strict: options.Improvements.Has(consensus.BindPriorHead)}
+	outs := core.Step(startEnv, consensus.Start{})
+	if startEnv.err != nil {
+		return nil, a, outputCount, startEnv.err
+	}
 	if err := track(outs); err != nil {
 		return core, a, outputCount, err
 	}

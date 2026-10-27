@@ -8,6 +8,7 @@ import (
 	"errors"
 	"io"
 
+	"github.com/0xmhha/wbft/consensus"
 	"github.com/0xmhha/wbft/consensus/inputlog"
 	"github.com/0xmhha/wbft/observe/journal"
 	"github.com/0xmhha/wbft/types"
@@ -108,6 +109,7 @@ func NewAnswerPool(j JournalReader) (*AnswerPool, error) {
 	}
 	p := &AnswerPool{configurations: map[string][32]byte{}, steps: map[answerCoordinate]answerStep{}, keys: map[answerKey][]int{}}
 	writer := ""
+	priorProfile := false
 	var lastSeq, lastStep, lastEngine uint64
 	totalBytes := 0
 	for count := 0; ; count++ {
@@ -130,6 +132,7 @@ func NewAnswerPool(j JournalReader) (*AnswerPool, error) {
 		lastSeq = rec.JSeq
 		switch b := rec.Body.(type) {
 		case *journal.SegmentRec:
+			priorProfile = consensus.ImprovementSet(b.Core.Improvements).Has(consensus.BindPriorHead)
 			if err := b.Core.ValidateRuntimeProfiles(); err != nil {
 				return nil, err
 			}
@@ -183,6 +186,16 @@ func NewAnswerPool(j JournalReader) (*AnswerPool, error) {
 				call, err := inputlog.DecodeEnv(raw)
 				if err != nil {
 					return nil, err
+				}
+				if call.Kind == inputlog.EnvValidatorsAt {
+					if !priorProfile || call.Result != 0 || call.Future != 0 || call.Step != "" || call.Class != "" || call.Bad {
+						return nil, ErrTraceEnvSource
+					}
+					encoded, err := inputlog.EncodeEnv(call)
+					if err != nil || !bytes.Equal(encoded, raw) {
+						return nil, ErrTraceEnvSource
+					}
+					continue
 				}
 				if call.Kind != inputlog.EnvValidateProposal && call.Kind != inputlog.EnvIsBadBlock {
 					return nil, ErrTraceEnvSource

@@ -327,6 +327,14 @@ type deferredBoundary struct {
 }
 
 func (r *Runner) encodeRunnerBoundary(kind uint8, b boundaryRec) (wal.Record, error) {
+	rec, err := r.encodeBaseBoundary(kind, b)
+	if err != nil || !r.cfg.Core.Improvements.Has(consensus.BindPriorHead) {
+		return rec, err
+	}
+	return encodePriorBoundary(rec, b.PriorSource, b.Head)
+}
+
+func (r *Runner) encodeBaseBoundary(kind uint8, b boundaryRec) (wal.Record, error) {
 	rec, err := encodeBoundary(kind, b)
 	if err != nil || r.nextHeight == nil {
 		return rec, err
@@ -347,6 +355,16 @@ func (r *Runner) encodeRunnerBoundary(kind uint8, b boundaryRec) (wal.Record, er
 }
 
 func decodeRunnerBoundary(rec wal.Record) (boundaryRec, *deferredBoundary, error) {
+	if rec.Format == priorHeadFormat {
+		base, source, err := decodePriorBoundary(rec)
+		if err != nil {
+			return boundaryRec{}, nil, err
+		}
+		b, pending, err := decodeRunnerBoundary(base)
+		b.PriorSource = source
+		return b, pending, err
+	}
+
 	if rec.Format == walFormat {
 		b, err := decodeBoundary(rec.Body)
 		return b, nil, err
@@ -374,12 +392,15 @@ func (r *Runner) pendingFromWAL(records []wal.Record) ([]deferredRecord, error) 
 	start := -1
 	var checkpoint deferredBoundary
 	for i, rec := range records {
-		if rec.Format != nextHeightFormat || (rec.Kind != walRunStart && rec.Kind != walEndHeight) {
+		if (rec.Format != nextHeightFormat && rec.Format != priorHeadFormat) || (rec.Kind != walRunStart && rec.Kind != walEndHeight) {
 			continue
 		}
 		_, cp, err := decodeRunnerBoundary(rec)
 		if err != nil {
 			return nil, err
+		}
+		if cp == nil {
+			continue
 		}
 		if r.nextHeight == nil || cp.Limits != r.nextHeight.limits {
 			return nil, errNextHeightWAL

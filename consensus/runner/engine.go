@@ -42,6 +42,9 @@ func (r *Runner) startEngine(_ context.Context, head *types.Header) (startErr er
 		fs, dir := r.d.WAL.FS()
 		records, _, _ := wal.ReadAll(fs, dir)
 		for _, rec := range records {
+			if rec.Format == priorHeadFormat {
+				return errPriorHeadWAL
+			}
 			if rec.Format == nextHeightFormat {
 				return errNextHeightWAL
 			}
@@ -52,7 +55,7 @@ func (r *Runner) startEngine(_ context.Context, head *types.Header) (startErr er
 		p, err := r.planReplay(from)
 		r.observeRestorePlan(p, err)
 		if err != nil {
-			if r.nextHeight != nil || errors.Is(err, errNextHeightWAL) {
+			if r.nextHeight != nil || r.cfg.Core.Improvements.Has(consensus.BindPriorHead) || errors.Is(err, errPriorHeadWAL) || errors.Is(err, errNextHeightWAL) {
 				return err
 			}
 			r.replay.Stopped = err.Error()
@@ -65,14 +68,14 @@ func (r *Runner) startEngine(_ context.Context, head *types.Header) (startErr er
 	var replayTimers [4]*consensus.ArmTimer
 	if plan != nil && len(plan.steps) > 0 {
 		core, recs, res := r.runReplayObserved(plan)
-		if res.err != nil && res.lastPartial && r.nextHeight == nil {
+		if res.err != nil && res.lastPartial && r.nextHeight == nil && !r.cfg.Core.Improvements.Has(consensus.BindPriorHead) {
 			// The last step was cut short by the crash: replay without it.
 			plan.steps = plan.steps[:len(plan.steps)-1]
 			core, recs, res = r.runReplayObserved(plan)
 		}
 		r.replay.Records = res.fed
 		if res.err != nil {
-			if r.nextHeight != nil {
+			if r.nextHeight != nil || r.cfg.Core.Improvements.Has(consensus.BindPriorHead) {
 				return res.err
 			}
 			r.replay.Stopped = res.err.Error()
@@ -168,7 +171,7 @@ func (r *Runner) writeRunStart(from types.Height, head *types.Header, snap *cons
 	if r.d.WAL == nil {
 		return nil
 	}
-	rec, err := r.encodeRunnerBoundary(walRunStart, boundaryRec{From: from, Head: head, Validators: snap.Validators, Replayed: replayed, LocalTimer: r.cfg.Core.Improvements.Has(consensus.ValidateRoundProposals)})
+	rec, err := r.encodeRunnerBoundary(walRunStart, boundaryRec{From: from, Head: head, Validators: snap.Validators, PriorSource: snap.PriorSource, Replayed: replayed, LocalTimer: r.cfg.Core.Improvements.Has(consensus.ValidateRoundProposals)})
 	if err != nil {
 		return err
 	}
@@ -237,12 +240,13 @@ func (r *Runner) stopEngine(reason string) {
 
 // replayPlan is the part of the log a replay feeds.
 type replayPlan struct {
-	boundary int // original record index; -1 when no eligible boundary
-	pending  []deferredRecord
-	head     *types.Header
-	vs       *validator.Set
-	gens     []uint64
-	steps    []walStep
+	boundary    int // original record index; -1 when no eligible boundary
+	pending     []deferredRecord
+	head        *types.Header
+	vs          *validator.Set
+	priorSource *consensus.PriorHeadSource
+	gens        []uint64
+	steps       []walStep
 }
 
 // planReplay finds the last boundary of height from (an end-of-height
@@ -261,17 +265,20 @@ func (r *Runner) planReplay(from types.Height) (*replayPlan, error) {
 	start := -1
 	var b boundaryRec
 	for i, rec := range recs {
+		if rec.Format == priorHeadFormat && !r.cfg.Core.Improvements.Has(consensus.BindPriorHead) {
+			return nil, errPriorHeadWAL
+		}
 		if rec.Format == nextHeightFormat && r.nextHeight == nil {
 			return nil, errNextHeightWAL
 		}
-		if (rec.Format != walFormat && rec.Format != nextHeightFormat) || (rec.Kind != walEndHeight && rec.Kind != walRunStart) {
+		if (rec.Format != walFormat && rec.Format != nextHeightFormat && rec.Format != priorHeadFormat) || (rec.Kind != walEndHeight && rec.Kind != walRunStart) {
 			continue
 		}
 		x, cp, err := decodeRunnerBoundary(rec)
 		if err != nil {
 			return nil, fmt.Errorf("wal boundary record: %w", err)
 		}
-		if cp != nil && cp.Limits != r.nextHeight.limits {
+		if cp != nil && (r.nextHeight == nil || cp.Limits != r.nextHeight.limits) {
 			return nil, errors.New("runner: next-height checkpoint limits differ")
 		}
 		if x.From.Cmp(from) != 0 {
@@ -288,7 +295,10 @@ func (r *Runner) planReplay(from types.Height) (*replayPlan, error) {
 	if start < 0 {
 		return &replayPlan{pending: pending, boundary: -1}, nil
 	}
-	plan := &replayPlan{boundary: start, head: b.Head, vs: b.Validators, gens: b.timerGenerations()}
+	if r.cfg.Core.Improvements.Has(consensus.BindPriorHead) && b.PriorSource == nil {
+		return nil, errPriorHeadWAL
+	}
+	plan := &replayPlan{boundary: start, head: b.Head, vs: b.Validators, priorSource: b.PriorSource, gens: b.timerGenerations()}
 	var cur *walStep
 	flush := func() {
 		if cur != nil {
@@ -299,7 +309,7 @@ func (r *Runner) planReplay(from types.Height) (*replayPlan, error) {
 loop:
 	for i := start + 1; i < len(recs); i++ {
 		rec := recs[i]
-		if rec.Format != walFormat && rec.Format != nextHeightFormat {
+		if rec.Format != walFormat && rec.Format != nextHeightFormat && rec.Format != priorHeadFormat {
 			continue
 		}
 		switch rec.Kind {
@@ -384,13 +394,13 @@ func (r *Runner) runReplay(plan *replayPlan) (*consensus.State, []*journal.StepR
 	}
 	var recs []*journal.StepRec
 	var step uint64
-	senv := &startEnv{head: plan.head, vs: plan.vs}
+	senv := &startEnv{head: plan.head, vs: plan.vs, prior: plan.priorSource, strict: r.cfg.Core.Improvements.Has(consensus.BindPriorHead)}
 	record := func(kind string, body []byte, via string, outs []consensus.Output, env []inputlog.EnvCall, head *types.Header) {
 		step++
 		d, _ := inputlog.OutDigest(outs)
 		var envs [][]byte
 		for _, c := range env {
-			if c.Kind == inputlog.EnvValidatorsAt {
+			if c.Kind == inputlog.EnvValidatorsAt && !r.cfg.Core.Improvements.Has(consensus.BindPriorHead) {
 				continue
 			}
 			if b, err := inputlog.EncodeEnv(c); err == nil {
@@ -418,9 +428,9 @@ func (r *Runner) runReplay(plan *replayPlan) (*consensus.State, []*journal.StepR
 	startBody, _ := inputlog.Encode(consensus.Start{})
 	outs := core.Step(senv, consensus.Start{})
 	track(outs)
-	record(inputlog.KindStart, startBody, viaWAL, outs, nil, plan.head)
+	record(inputlog.KindStart, startBody, viaWAL, outs, senv.calls, plan.head)
 	recs[0].TimerGens = append([]uint64(nil), plan.gens...)
-	env := &replayEnv{head: plan.head}
+	env := &replayEnv{head: plan.head, strict: r.cfg.Core.Improvements.Has(consensus.BindPriorHead)}
 	for i, s := range plan.steps {
 		in, err := inputlog.Decode(s.kind, s.body, nil)
 		if err != nil {

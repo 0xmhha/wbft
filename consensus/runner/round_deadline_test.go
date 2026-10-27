@@ -99,6 +99,7 @@ func assertRoundDeadlineJournalRuns(t *testing.T, n *tnode, wantRuns int) {
 	var engine uint64
 	runs, steps := 0, 0
 	env := &replayEnv{head: n.chain.head}
+	env.strict = n.opts.Improvements.Has(consensus.BindPriorHead)
 	for _, record := range records {
 		step, ok := record.Body.(*journal.StepRec)
 		if !ok {
@@ -126,7 +127,11 @@ func assertRoundDeadlineJournalRuns(t *testing.T, n *tnode, wantRuns int) {
 			if err := core.RestoreTimerGenerations(step.TimerGens); err != nil {
 				t.Fatal(err)
 			}
-			out = core.Step(&startEnv{head: n.chain.head, vs: n.k.vs}, input)
+			if env.strict {
+				out = core.Step(env, input)
+			} else {
+				out = core.Step(&startEnv{head: n.chain.head, vs: n.k.vs}, input)
+			}
 		} else {
 			if core == nil || step.EngineRun != engine {
 				t.Fatal("step lost engine ownership", step)
