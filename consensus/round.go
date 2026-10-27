@@ -206,7 +206,9 @@ func (st *step) updateRoundState(nextVS *validator.Set, view types.View, roundCh
 		n.badBlockReleased = c.badBlockReleased
 		s.cur = n
 	} else {
-		if s.cur != nil {
+		if s.opt.Improvements.Has(BindPriorHead) {
+			st.bindPriorHead(s.head.Header)
+		} else if s.cur != nil {
 			s.prior.round = s.cur.view.Round
 			if s.cur.preprepare != nil {
 				s.prior.proposal = s.cur.preprepare.Msg.Proposal

@@ -341,6 +341,10 @@ type commitJob struct {
 
 // New returns a stopped runner.
 func New(cfg Config, d Deps) (*Runner, error) {
+	if cfg.Core.Improvements.Has(consensus.BindPriorHead) && (!cfg.ReplayWAL || d.WAL == nil) {
+		return nil, errPriorHeadWAL
+	}
+
 	if d.Transport != nil && d.Transport.CompletedWritesClosed() {
 		return nil, fmt.Errorf("runner: completed-write cache lifetime is closed")
 	}

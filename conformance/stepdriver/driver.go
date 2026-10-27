@@ -72,6 +72,10 @@ const (
 // and processed only when a step names them; timers expire only through
 // steps.
 func Run(handler string, input json.RawMessage, opts Options) (any, error) {
+	if opts.Improvements.Has(consensus.BindPriorHead) {
+		return nil, ErrUnsupported
+	}
+
 	var network bool
 	switch handler {
 	case HandlerRounds:

@@ -167,6 +167,7 @@ type Snapshot struct {
 	Validators      *validator.Set
 	PriorRound      types.Round
 	PriorValidators *validator.Set
+	PriorSource     *PriorHeadSource
 	ExtraPrepare    []ExtraSealEntry
 	ExtraCommit     []ExtraSealEntry
 	// Backlog is the number of backlogged messages of all sources.
@@ -195,6 +196,7 @@ func (s *State) Snapshot() *Snapshot {
 	snap.Validators = s.validators
 	snap.PriorRound = s.prior.round
 	snap.PriorValidators = s.prior.validators
+	snap.PriorSource = s.prior.source.Copy()
 	conv := func(m map[types.Address]*Verified) []ExtraSealEntry {
 		out := make([]ExtraSealEntry, 0, len(m))
 		for _, a := range sortedAddrs(m) {
@@ -223,6 +225,9 @@ func (snap *Snapshot) ExtraSeals(head *types.Header) (prepared, committed []type
 	}
 	target := types.View{Sequence: head.Number, Round: snap.PriorRound}
 	hash := codec.BlockHash(head)
+	if snap.PriorSource != nil && snap.PriorSource.ValidateHead(head) != nil {
+		return prepared, committed
+	}
 	pick := func(in []ExtraSealEntry) []types.SealEntry {
 		out := []types.SealEntry{}
 		for _, e := range in {

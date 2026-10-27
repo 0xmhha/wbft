@@ -99,6 +99,7 @@ type replayEnv struct {
 	answers []inputlog.EnvCall
 	used    []inputlog.EnvCall
 	err     error
+	strict  bool
 }
 
 func (e *replayEnv) pop(kind uint8, key types.Hash) (inputlog.EnvCall, bool) {
@@ -130,6 +131,10 @@ func (e *replayEnv) ValidatorsAt(n types.Height, parent types.Hash) (*validator.
 	if !ok {
 		return nil, errReplayValidators
 	}
+	if e.strict && c.Number.Cmp(n) != 0 {
+		e.err = errReplayValidators
+		return nil, e.err
+	}
 	if c.Validators == nil {
 		return nil, fmt.Errorf("%w: %s", errReplayValidators, c.Err)
 	}
@@ -159,15 +164,35 @@ func (e *replayEnv) CommitHeader(b *types.Block, round types.Round, _ *validator
 
 // startEnv answers the synthetic Start of a replay from a boundary record.
 type startEnv struct {
-	head *types.Header
-	vs   *validator.Set
+	head   *types.Header
+	vs     *validator.Set
+	prior  *consensus.PriorHeadSource
+	strict bool
+	calls  []inputlog.EnvCall
 }
 
 func (e *startEnv) Head() consensus.HeadInfo {
 	return consensus.HeadInfo{Header: e.head, Proposer: types.ProposerOf(e.head)}
 }
 
-func (e *startEnv) ValidatorsAt(types.Height, types.Hash) (*validator.Set, error) {
+func (e *startEnv) ValidatorsAt(n types.Height, parent types.Hash) (*validator.Set, error) {
+	if e.strict {
+		var vs *validator.Set
+		if e.prior != nil && e.prior.ValidateHead(e.head) == nil && e.prior.MatchesLookup(n, parent) {
+			vs = e.prior.Validators
+		} else if e.head != nil && n.Cmp(e.head.Number.AddUint64(1)) == 0 && parent == codec.BlockHash(e.head) {
+			vs = e.vs
+		}
+		call := inputlog.EnvCall{Kind: inputlog.EnvValidatorsAt, Number: n, Key: parent, Validators: vs}
+		if vs == nil {
+			call.Err = "prior_source_unavailable"
+		}
+		e.calls = append(e.calls, call)
+		if vs == nil {
+			return nil, errReplayValidators
+		}
+		return vs, nil
+	}
 	if e.vs == nil {
 		return nil, errReplayValidators
 	}

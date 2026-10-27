@@ -390,7 +390,7 @@ func replayStepExecution(core *consensus.State, cfg *types.Config, blocks BlockS
 	if err != nil {
 		return StepResult{}, err
 	}
-	env := &traceEnv{cfg: cfg, blocks: blocks, session: session}
+	env := &traceEnv{cfg: cfg, blocks: blocks, session: session, priorProfile: core.Enabled(consensus.BindPriorHead)}
 	if session != nil {
 		env.source, err = session.source(writer, b)
 		if err != nil {
@@ -424,12 +424,20 @@ func replayStepExecution(core *consensus.State, cfg *types.Config, blocks BlockS
 		if err != nil {
 			return StepResult{}, err
 		}
-		env.answers = append(env.answers, c)
+		if env.priorProfile && c.Kind == inputlog.EnvValidatorsAt {
+			env.authorities = append(env.authorities, c)
+		} else {
+			env.answers = append(env.answers, c)
+		}
 	}
 	outs := core.Step(env, in)
 	if env.err != nil {
 		return StepResult{}, env.err
 	}
+	if env.priorProfile && len(env.authorities) != 0 {
+		return StepResult{}, ErrTraceEnvSource
+	}
+
 	d, err := inputlog.OutDigest(outs)
 	if err != nil {
 		return StepResult{}, err
@@ -460,15 +468,17 @@ func headOf(blocks BlockSource, n types.Height, h types.Hash) (*types.Header, er
 
 // traceEnv answers a replayed step.
 type traceEnv struct {
-	session *answerSession
-	source  answerStep
-	sources []AnswerSource
-	cfg     *types.Config
-	blocks  BlockSource
-	head    *types.Header
-	answers []inputlog.EnvCall
-	calls   []inputlog.EnvCall
-	err     error
+	priorProfile bool
+	authorities  []inputlog.EnvCall
+	session      *answerSession
+	source       answerStep
+	sources      []AnswerSource
+	cfg          *types.Config
+	blocks       BlockSource
+	head         *types.Header
+	answers      []inputlog.EnvCall
+	calls        []inputlog.EnvCall
+	err          error
 }
 
 func (e *traceEnv) Head() consensus.HeadInfo {
@@ -476,6 +486,24 @@ func (e *traceEnv) Head() consensus.HeadInfo {
 }
 
 func (e *traceEnv) ValidatorsAt(n types.Height, parent types.Hash) (*validator.Set, error) {
+	if e.priorProfile {
+		if len(e.authorities) == 0 {
+			e.err = ErrTraceEnvSource
+			return nil, e.err
+		}
+		c := e.authorities[0]
+		if c.Kind != inputlog.EnvValidatorsAt || c.Number.Cmp(n) != 0 || c.Key != parent {
+			e.err = ErrTraceEnvSource
+			return nil, e.err
+		}
+		e.authorities = e.authorities[1:]
+		e.calls = append(e.calls, c)
+		if c.Validators == nil {
+			return nil, errors.New("stepdriver: recorded authority unavailable")
+		}
+		return c.Validators, nil
+	}
+
 	vs, err := validator.ValidatorsAt(chainOf{e.blocks}, e.cfg, n, parent, nil)
 	c := inputlog.EnvCall{Kind: inputlog.EnvValidatorsAt, Number: n, Key: parent, Validators: vs}
 	if err != nil {

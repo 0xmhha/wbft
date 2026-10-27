@@ -109,6 +109,7 @@ type priorState struct {
 	round      types.Round
 	proposal   *types.Block
 	validators *validator.Set
+	source     *PriorHeadSource
 }
 
 type pendingRequest struct {
@@ -116,6 +117,9 @@ type pendingRequest struct {
 	prio  int64
 	seq   uint64
 }
+
+// Enabled reports one immutable local behavior selected for this core.
+func (s *State) Enabled(i Improvement) bool { return s.opt.Improvements.Has(i) }
 
 // NewState returns a stopped core. Step(Start) starts it.
 func NewState(opt Options) *State {
