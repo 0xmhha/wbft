@@ -163,9 +163,6 @@ func exportR01(fs fsys.FS, dir, out, fromArg, toArg string) (*exportResult, erro
 	if w.to, err = parseHeight("--to", toArg); err != nil {
 		return nil, err
 	}
-	if err := fs.MkdirAll(filepath.Join(out, "payloads"), 0o700); err != nil {
-		return nil, err
-	}
 	w.own = w.indexOwnInputs(fs, dir)
 	if w.schedulerErr != nil {
 		return nil, w.schedulerErr
@@ -175,6 +172,9 @@ func exportR01(fs fsys.FS, dir, out, fromArg, toArg string) (*exportResult, erro
 	}
 	if w.syncErr != nil {
 		return nil, w.syncErr
+	}
+	if err := fs.MkdirAll(filepath.Join(out, "payloads"), 0o700); err != nil {
+		return nil, err
 	}
 	var werr error
 	stream := sha256.New()

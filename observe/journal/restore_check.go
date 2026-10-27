@@ -35,13 +35,14 @@ var ErrRestoreSource = errors.New("journal: inconsistent restore source")
 // These private types decode the public WAL wire contract independently of the
 // runner's planner and replay helpers. No runner-owned state or output is fed in.
 type restoreBoundary struct {
-	From           *big.Int
-	Head           []byte
-	HasSet, Policy uint64
-	Addrs          []types.Address
-	Keys           [][]byte
-	Replayed       uint64
-	Gens           []uint64
+	retryMaximumMs, retryImprovements uint64
+	From                              *big.Int
+	Head                              []byte
+	HasSet, Policy                    uint64
+	Addrs                             []types.Address
+	Keys                              [][]byte
+	Replayed                          uint64
+	Gens                              []uint64
 }
 type restoreInput struct {
 	Kind string
@@ -61,12 +62,13 @@ type restoreStep struct {
 	ownFrames []int
 }
 type restorePlan struct {
-	boundary uint64
-	head     *types.Header
-	vs       *validator.Set
-	prior    *consensus.PriorHeadSource
-	gens     []uint64
-	steps    []restoreStep
+	retryMaximumMs uint64
+	boundary       uint64
+	head           *types.Header
+	vs             *validator.Set
+	prior          *consensus.PriorHeadSource
+	gens           []uint64
+	steps          []restoreStep
 }
 type restoredCoreSeed struct {
 	model     *coreSourceRun
@@ -132,8 +134,14 @@ func reconstructRestoreSources(records []Record, limits CoreSourceLimits) (Resto
 			if !charge(uint64(len(s.Core.ChainConfig))) {
 				return unavailable("byte_limit")
 			}
-			w := coreSourceWriter{config: bytes.Clone(s.Core.ChainConfig), self: s.Core.Self, improvements: s.Core.Improvements, backlog: s.Core.BacklogLimit}
-			if old, ok := configs[writer]; ok && (old.self != w.self || old.improvements != w.improvements || old.backlog != w.backlog || !bytes.Equal(old.config, w.config)) {
+			w := coreSourceWriter{config: bytes.Clone(s.Core.ChainConfig), self: s.Core.Self, improvements: s.Core.Improvements, backlog: s.Core.BacklogLimit, proposerProfile: s.Core.ProposerPolicyProfile}
+			if s.Core.RoundChangeRetry != nil {
+				if s.Core.RoundChangeRetry.Validate() != nil {
+					return unavailable("unsupported_retry_profile")
+				}
+				w.retry = *s.Core.RoundChangeRetry
+			}
+			if old, ok := configs[writer]; ok && (old.self != w.self || old.improvements != w.improvements || old.backlog != w.backlog || old.retry != w.retry || old.proposerProfile != w.proposerProfile || !bytes.Equal(old.config, w.config)) {
 				return bad("writer_configuration_changed")
 			}
 			configs[writer] = w
@@ -211,7 +219,11 @@ func reconstructRestoreSources(records []Record, limits CoreSourceLimits) (Resto
 					return unavailable("next_height_not_supported")
 				}
 			}
-			plan, err := independentRestorePlan(root.read, s.From)
+			w, ok := configs[writer]
+			if !ok || w.backlog > math.MaxInt {
+				return unavailable("core_configuration_missing")
+			}
+			plan, err := independentRestorePlan(root.read, s.From, w)
 			if errors.Is(err, errRestoreNextHeight) {
 				return unavailable("next_height_not_supported")
 			}
@@ -237,13 +249,13 @@ func reconstructRestoreSources(records []Record, limits CoreSourceLimits) (Resto
 			if len(s.Attempts) == 0 {
 				return unavailable("restore_attempt_missing")
 			}
-			w, ok := configs[writer]
-			if !ok || w.backlog > math.MaxInt {
-				return unavailable("core_configuration_missing")
-			}
-			cfg, err := types.ParseChainConfig(w.config)
+			cfg, err := w.configuration()
 			if err != nil || cfg.CheckTransitions() != nil || cfg.CheckProposerPolicy() != nil {
 				return unavailable("unsupported_core_configuration")
+			}
+			options, err := w.options(cfg)
+			if err != nil {
+				return unavailable("unsupported_retry_configuration")
 			}
 			count := len(plan.steps)
 			var core *consensus.State
@@ -251,7 +263,7 @@ func reconstructRestoreSources(records []Record, limits CoreSourceLimits) (Resto
 			var restoredTimers [4]*consensus.ArmTimer
 			for i, attempt := range s.Attempts {
 				if i > 0 {
-					if expected.Failed == 0 || expected.LastPartial == 0 || count == 0 {
+					if w.retry.Profile != 0 || expected.Failed == 0 || expected.LastPartial == 0 || count == 0 {
 						return bad("unexpected_restore_retry")
 					}
 					count--
@@ -267,7 +279,7 @@ func reconstructRestoreSources(records []Record, limits CoreSourceLimits) (Resto
 				}
 				var outCount uint64
 				restoredTimers = [4]*consensus.ArmTimer{}
-				core, expected, outCount, err = independentRestoreAttempt(plan, count, consensus.Options{Config: cfg, Self: w.self, Improvements: consensus.ImprovementSet(w.improvements), BacklogLimit: int(w.backlog)}, limits.Outputs-outputs, func(outs []consensus.Output) {
+				core, expected, outCount, err = independentRestoreAttempt(plan, count, options, limits.Outputs-outputs, func(outs []consensus.Output) {
 					for _, out := range outs {
 						switch o := out.(type) {
 						case consensus.ArmTimer:
@@ -340,17 +352,31 @@ func reconstructRestoreSources(records []Record, limits CoreSourceLimits) (Resto
 
 func planHeadBytes(p *restorePlan) []byte { b, _ := codec.EncodeHeader(p.head); return b }
 
-func independentRestorePlan(root *WALReadRec, from string) (*restorePlan, error) {
+func independentRestorePlan(root *WALReadRec, from string, expected coreSourceWriter) (*restorePlan, error) {
 	p := new(restorePlan)
 	start := -1
 	var boundary restoreBoundary
 	for i, f := range root.Source.Frames {
-		if f.Bytes[8] != 1 && f.Bytes[8] != 3 || (f.Bytes[9] != 1 && f.Bytes[9] != 6) {
+		if f.Bytes[8] == 4 && f.Bytes[9] != 1 && f.Bytes[9] != 6 {
+			return nil, ErrRestoreSource
+		}
+		if expected.retry.Profile != 0 && (f.Bytes[9] == 1 || f.Bytes[9] == 6) && f.Bytes[8] != 1 && f.Bytes[8] != 2 && f.Bytes[8] != 3 && f.Bytes[8] != 4 {
+			return nil, ErrRestoreSource
+		}
+		if f.Bytes[8] != 1 && f.Bytes[8] != 3 && f.Bytes[8] != 4 || (f.Bytes[9] != 1 && f.Bytes[9] != 6) {
 			continue
 		}
 		b, prior, err := decodeRestoreBoundary(f.Bytes[8], f.Bytes[10:])
 		if err != nil {
 			return nil, err
+		}
+		if expected.retry.Profile == 0 {
+			if f.Bytes[8] == 4 || b.retryMaximumMs != 0 {
+				return nil, ErrRestoreSource
+			}
+		} else if f.Bytes[8] != 4 || b.retryMaximumMs != expected.retry.MaxIntervalMs || b.retryImprovements != expected.improvements ||
+			(prior != nil) != consensus.ImprovementSet(expected.improvements).Has(consensus.BindPriorHead) {
+			return nil, ErrRestoreSource
 		}
 		if b.From == nil || b.From.Sign() < 0 || len(b.Gens) != 3 && len(b.Gens) != 4 || b.HasSet > 1 || b.Replayed > 1 {
 			return nil, ErrRestoreSource
@@ -358,6 +384,7 @@ func independentRestorePlan(root *WALReadRec, from string) (*restorePlan, error)
 		if b.From.String() == from && (f.Bytes[9] == 6 || b.Replayed == 0) {
 			start, boundary = i, b
 			p.prior = prior
+			p.retryMaximumMs = b.retryMaximumMs
 		}
 	}
 	if start < 0 {
@@ -378,15 +405,15 @@ func independentRestorePlan(root *WALReadRec, from string) (*restorePlan, error)
 	}
 	for i := start + 1; i < len(root.Source.Frames); i++ {
 		f := root.Source.Frames[i]
-		if f.Bytes[8] == 3 && (f.Bytes[9] == 1 || f.Bytes[9] == 6) {
-			b, prior, err := decodeRestoreBoundary(3, f.Bytes[10:])
+		if (f.Bytes[8] == 3 || f.Bytes[8] == 4) && (f.Bytes[9] == 1 || f.Bytes[9] == 6) {
+			b, prior, err := decodeRestoreBoundary(f.Bytes[8], f.Bytes[10:])
 			if err != nil {
 				return nil, err
 			}
 			if f.Bytes[9] == 6 || b.Replayed != 1 || b.From == nil || b.From.String() != from {
 				return p, nil
 			}
-			if p.prior == nil || prior == nil || p.prior.ValidateHead(p.head) != nil || prior.ValidateHead(p.head) != nil || consensus.ValsetDigest(p.prior.Validators) != consensus.ValsetDigest(prior.Validators) || (p.prior.Validators == nil) != (prior.Validators == nil) {
+			if (p.prior == nil) != (prior == nil) || p.prior != nil && (p.prior.ValidateHead(p.head) != nil || prior.ValidateHead(p.head) != nil || consensus.ValsetDigest(p.prior.Validators) != consensus.ValsetDigest(prior.Validators) || (p.prior.Validators == nil) != (prior.Validators == nil)) {
 				return nil, ErrRestoreSource
 			}
 			continue
@@ -468,6 +495,13 @@ func (e *restoreStartEnv) IsBadBlock(types.Hash) bool { return false }
 var errRestoreOutputLimit = errors.New("restore output limit")
 
 func independentRestoreAttempt(p *restorePlan, count int, options consensus.Options, outputLimit uint64, capture func([]consensus.Output)) (*consensus.State, RestoreAttempt, uint64, error) {
+	maximum := uint64(0)
+	if options.RoundChangeRetry != nil {
+		maximum = options.RoundChangeRetry.MaxIntervalMs
+	}
+	if maximum != p.retryMaximumMs {
+		return nil, RestoreAttempt{}, 0, ErrRestoreSource
+	}
 	if options.Improvements.Has(consensus.BindPriorHead) != (p.prior != nil) {
 		return nil, RestoreAttempt{}, 0, ErrRestoreSource
 	}

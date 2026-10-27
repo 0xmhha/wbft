@@ -144,6 +144,7 @@ type segStats struct {
 // starts in a new segment; damaged segments of an earlier run are moved
 // aside as package wal does.
 func Open(opt Options, id Identity) (*FileWriter, error) {
+	id.Core = cloneCoreOptions(id.Core)
 	if id.Core.Observation != nil {
 		options := *id.Core.Observation
 		options.Checkpoint = bytes.Clone(options.Checkpoint)
@@ -245,6 +246,32 @@ func (w *FileWriter) writeIndex(seg uint64) {
 // CaptureRun returns the immutable writer-run identifier for capture metadata.
 // It does not acknowledge that a queued frame has been written or synced.
 func (w *FileWriter) CaptureRun() string { return w.id.Run }
+
+// CoreDeclaration returns detached frozen header values, not functional
+// authorization. Owners must compare them with their actual runtime options.
+func (w *FileWriter) CoreDeclaration() CoreOptions { return cloneCoreOptions(w.id.Core) }
+
+func cloneCoreOptions(o CoreOptions) CoreOptions {
+	o.ChainConfig = bytes.Clone(o.ChainConfig)
+	if o.RoundChangeRetry != nil {
+		v := *o.RoundChangeRetry
+		o.RoundChangeRetry = &v
+	}
+	if o.NextHeight != nil {
+		v := *o.NextHeight
+		o.NextHeight = &v
+	}
+	if o.CachePolicy != nil {
+		v := *o.CachePolicy
+		o.CachePolicy = &v
+	}
+	if o.Observation != nil {
+		v := *o.Observation
+		v.Checkpoint = bytes.Clone(v.Checkpoint)
+		o.Observation = &v
+	}
+	return o
+}
 
 // SetEngineRun sets the engine run number written in later segment
 // records.

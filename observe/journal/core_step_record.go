@@ -32,6 +32,7 @@ type CoreStepRec struct {
 	CoreSelf        types.Address
 	Improvements    uint64
 	BacklogLimit    int64
+	RetryMaximumMs  uint64
 	Head            []byte
 	EngineRun, Step uint64
 	ReplayedPrefix  bool
@@ -116,9 +117,13 @@ type coreStepRLP struct {
 	Before, After                                        validationContextRLP
 	EntryMono, EntryWall, ObservedMono, ObservedWall     uint64
 	Unavailable                                          string
+	RetryMaximumMs                                       uint64 `rlp:"optional"`
 }
 
 func validCoreStepSource(s *CoreStepRec) bool {
+	if s.RetryMaximumMs != 0 && (&RoundChangeRetryOptions{Profile: RoundChangeRetryProfile, MaxIntervalMs: s.RetryMaximumMs}).Validate() != nil {
+		return false
+	}
 	if s.EngineRun == 0 || s.Step == 0 || !validReceiveOrigin(s.Origin) || s.StreamRun != "" && s.Stream == 0 {
 		return false
 	}
@@ -174,6 +179,7 @@ func encodeCoreStepRec(s *CoreStepRec, jseq uint64) ([]byte, error) {
 	}
 	w := coreStepRLP{Format: Format, Profile: 1, JSeq: jseq, EngineRun: s.EngineRun, Step: s.Step, Via: s.Via, InputKind: s.InputKind, Input: s.Input, Outputs: s.Outputs, OutDigest: s.OutDigest, Origin: s.Origin, StreamRun: s.StreamRun, Stream: s.Stream, Before: receiveContextWire(s.Before), After: receiveContextWire(s.After), EntryMono: uint64(s.Entry.Mono), EntryWall: uint64(s.Entry.WallNs), ObservedMono: uint64(s.Observed.Mono), ObservedWall: uint64(s.Observed.WallNs), Unavailable: s.Unavailable}
 	w.CoreSelf, w.Improvements, w.BacklogLimit, w.Head = s.CoreSelf, s.Improvements, uint64(s.BacklogLimit), s.Head
+	w.RetryMaximumMs = s.RetryMaximumMs
 	w.ReceiveLedgerRun, w.ReceiveLedger, w.ReceiveScopeBefore, w.ReceiveScopeAfter = s.ReceiveLedgerRun, s.ReceiveLedger, s.ReceiveScopeBefore, s.ReceiveScopeAfter
 	for i, flag := range []bool{s.ReplayedPrefix, s.BeforeKnown, s.AfterKnown} {
 		if flag {
@@ -200,6 +206,7 @@ func decodeCoreStepRec(body []byte) (Record, error) {
 	}
 	s := &CoreStepRec{EngineRun: w.EngineRun, Step: w.Step, ReplayedPrefix: w.Flags&1 != 0, BeforeKnown: w.Flags&2 != 0, AfterKnown: w.Flags&4 != 0, Via: w.Via, InputKind: w.InputKind, Input: w.Input, Outputs: w.Outputs, OutDigest: w.OutDigest, Origin: w.Origin, StreamRun: w.StreamRun, Stream: w.Stream, Before: receiveContextValue(w.Before), After: receiveContextValue(w.After), Entry: CoreStepMoment{Mono: int64(w.EntryMono), WallNs: int64(w.EntryWall)}, Observed: CoreStepMoment{Mono: int64(w.ObservedMono), WallNs: int64(w.ObservedWall)}, Unavailable: w.Unavailable}
 	s.CoreSelf, s.Improvements, s.BacklogLimit, s.Head = w.CoreSelf, w.Improvements, int64(w.BacklogLimit), w.Head
+	s.RetryMaximumMs = w.RetryMaximumMs
 	s.ReceiveLedgerRun, s.ReceiveLedger, s.ReceiveScopeBefore, s.ReceiveScopeAfter = w.ReceiveLedgerRun, w.ReceiveLedger, w.ReceiveScopeBefore, w.ReceiveScopeAfter
 	for _, e := range w.Environment {
 		env := CoreEnvObservation{Bytes: e.Bytes}

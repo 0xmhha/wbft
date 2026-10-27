@@ -10,6 +10,7 @@ import (
 	"github.com/0xmhha/wbft/app"
 	"github.com/0xmhha/wbft/chain/validator"
 	"github.com/0xmhha/wbft/chain/validator/source"
+	"github.com/0xmhha/wbft/consensus"
 	"github.com/0xmhha/wbft/consensus/runner"
 	"github.com/0xmhha/wbft/internal/faultpoint"
 	"github.com/0xmhha/wbft/internal/fsys"
@@ -21,7 +22,10 @@ import (
 
 // Config configures a Node.
 type Config struct {
-	Observation *ObservationConfig `json:",omitempty"`
+	// RoundChangeRetry opts into bounded current-own retry attempts. The
+	// maximum is explicit; subsequent restarts require matching WAL options.
+	RoundChangeRetry *consensus.RoundChangeRetryOptions `json:",omitempty"`
+	Observation      *ObservationConfig                 `json:",omitempty"`
 	// CachePolicy enables code-aware accepted-input and actual-write caches.
 	// Nil preserves the original policy. The compatible journal profile is
 	// not available yet, so this runtime API requires Journal.Disabled.

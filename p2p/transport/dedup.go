@@ -46,6 +46,9 @@ const (
 type DedupOptions struct {
 	// Self is the node's address; it is never a gossip target.
 	Self types.Address
+	// RoundChangeRetry permits the dedicated current-own signed retry route.
+	// Generic Broadcast/Gossip calls always retain recent-cache suppression.
+	RoundChangeRetry bool
 	// Suppressed, when set, is called for each send left out because the
 	// peer's recent cache holds the message (wbft_send_suppressed_total).
 	Suppressed func(cause event.SendCause)
@@ -201,8 +204,12 @@ func (d *Dedup) Gossip(vs *validator.Set, code uint64, payload []byte, cause eve
 // GossipTargets returns the actual attached-validator candidate set and cache
 // exclusions from this call. Targets are send attempts, not delivery receipts.
 func (d *Dedup) GossipTargets(vs *validator.Set, code uint64, payload []byte, cause event.SendCause) GossipTargets {
+	return d.gossipTargets(vs, code, payload, cause, nil)
+}
+
+func (d *Dedup) gossipTargets(vs *validator.Set, code uint64, payload []byte, cause event.SendCause, retry *RoundChangeRetrySource) GossipTargets {
 	if d.completedWrites != nil {
-		return d.gossipCompleted(vs, code, payload, cause)
+		return d.gossipCompleted(vs, code, payload, cause, retry)
 	}
 	plan := GossipTargets{Available: vs != nil}
 	key := codec.DedupKey(payload)
@@ -224,7 +231,7 @@ func (d *Dedup) GossipTargets(vs *validator.Set, code uint64, payload []byte, ca
 		for _, a := range candidates {
 			m, ok := d.recent.Get(a)
 			if ok {
-				if _, seen := m.Get(key); seen {
+				if _, seen := m.Get(key); seen && retry == nil {
 					suppressed = append(suppressed, a)
 					continue
 				}
@@ -238,7 +245,11 @@ func (d *Dedup) GossipTargets(vs *validator.Set, code uint64, payload []byte, ca
 	}
 	var operation uint64
 	if d.cacheObserver != nil && d.cacheInstance != 0 {
-		operation = d.recordCache(CacheOperation{Action: "gossip", Code: code, Key: key, PayloadSHA256: payloadSHA256(payload), Cause: cause, Known: known, Available: plan.Available, Candidates: append([]types.Address(nil), plan.Candidates...), Targets: append([]types.Address(nil), targets...), Suppressed: append([]types.Address(nil), suppressed...)})
+		op := CacheOperation{Action: "gossip", Code: code, Key: key, PayloadSHA256: payloadSHA256(payload), Cause: cause, Known: known, Available: plan.Available, Candidates: append([]types.Address(nil), plan.Candidates...), Targets: append([]types.Address(nil), targets...), Suppressed: append([]types.Address(nil), suppressed...)}
+		if retry != nil {
+			op.Retry = *retry
+		}
+		operation = d.recordCache(op)
 	}
 	d.mu.Unlock()
 	out := code

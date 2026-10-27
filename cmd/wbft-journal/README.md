@@ -111,3 +111,56 @@ context hashes against original authority history, check the actual core
 step/output and signatures, or resolve captures against physical frame bytes.
 Its result is not a functional runtime replay or a completed cache-policy
 acceptance. The node journal restriction remains in place.
+
+
+# Round-change retry source checks
+
+`wbft-journal check-round-change-retry --dir DIR --source-limits limits.json`
+checks original retry ownership, timer lifetimes, independently recomputed
+core outputs, public signer state and later original own-message WAL frames.
+It binds the old timer generation and unsigned signing identity separately
+from the raw signed payload's cache key and SHA-256. A decision must fall
+inside its original core step after signing. Repeated or mixed decisions,
+non-validator targets and changed signed bytes contradict the retained source.
+The completed-write path also rebuilds the original pending/recent ledger.
+
+All inspection limits must be positive and explicit. For example:
+
+```json
+{
+  "Timers": {
+    "Core": {
+      "Records": 100000, "Runs": 32, "Steps": 100000,
+      "Environments": 400000, "Outputs": 400000, "Bytes": 67108864
+    },
+    "Operations": 400000, "Bindings": 400000, "Bytes": 67108864
+  },
+  "Signer": {
+    "Lifetimes": 64, "Operations": 400000,
+    "Records": 400000, "Bytes": 67108864
+  },
+  "Writes": { "Records": 100000, "Ledgers": 64, "Reordered": 256 }
+}
+```
+
+These example values are offline inspection bounds, not operating defaults.
+The limits file is capped at 64 KiB, accepts one JSON object and rejects unknown
+fields. Segment decoding occurs before retained-input limits apply; this is
+not a process heap or WAL disk bound. The loader caps record count; byte
+inspection budgets are checked after collection by the independent checkers.
+Missing declarations, owner coordinates,
+original signer/WAL evidence or inspection capacity produce `unavailable`
+and exit 69. Conditional consistency exits 0, contradictions exit 1, and
+usage or input I/O errors exit 2. `physical_status` stays `unavailable`.
+The result does not establish physical writes, remote delivery, physical
+durability or functional accepted-cache replay. Legacy cache binding is not
+an independent replay of its entire LRU history.
+
+R01 cannot preserve the core/signing/WAL source chain of this mode. An input
+declaring a round-change retry profile, including an unknown profile, or
+containing a retry cache source is rejected before output is created. Height
+filters and segment rotation cannot turn it into a legacy cache trace.
+Existing disabled-mode R01 output retains its original format. Use a retained
+original journal or `export --format bundle` for the new check and compatible
+readers. Bundles preserve selected original segments; missing retained sources
+remain unavailable and are not reconstructed from event labels.

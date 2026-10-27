@@ -184,10 +184,21 @@ func (rcs *roundChangeSet) clearLowerThan(r types.Round) {
 //
 // Spec: WBFT-SM-052, WBFT-SM-053
 func (st *step) broadcastRoundChange(round types.Round) {
+	st.broadcastRoundChangeWithRetry(round, nil)
+}
+
+func (st *step) broadcastRoundChangeWithRetry(round types.Round, expiry *Timeout) {
 	s := st.s
-	st.armRetryTimer()
+	if s.opt.RoundChangeRetry == nil {
+		st.armRetryTimer()
+	}
 	c := s.cur
 	if c.view.Round.Cmp(round) > 0 {
+		if s.opt.RoundChangeRetry != nil {
+			// A legacy stale expiry may rearm, but never resets or shortens
+			// the current candidate's backoff using the old target round.
+			st.armRetryTimer()
+		}
 		return
 	}
 	m := &codec.Message{
@@ -203,7 +214,21 @@ func (st *step) broadcastRoundChange(round types.Round) {
 		m.Prepares = sortByEncoding(messagesOf(certificate), codec.EncodeMessage)
 	}
 	released := s.opt.Improvements.Has(BadBlockReleaseMark) && c.badBlockReleased && c.preparedBlock == nil
-	st.emitBroadcast(Broadcast{Msg: m, BadBlockReleased: released})
+	var retry *RoundChangeRetryIntent
+	if s.opt.RoundChangeRetry != nil {
+		if m.View.Cmp(c.view) == 0 {
+			if key, err := roundChangeRetryKey(m); err == nil {
+				r := &s.roundChangeRetry
+				same := r.valid && r.view.Cmp(c.view) == 0 && r.key == key
+				r.prepare(c.view, key, expiry != nil)
+				if expiry != nil && same {
+					retry = &RoundChangeRetryIntent{View: c.view, Generation: expiry.Gen, Key: key}
+				}
+			}
+		}
+		st.armRetryTimer()
+	}
+	st.emitBroadcast(Broadcast{Msg: m, BadBlockReleased: released, Retry: retry})
 }
 
 // handleRoundChange stores a ROUND-CHANGE of the current sequence and applies

@@ -82,10 +82,13 @@ func encodeCommit(b *types.Block, round types.Round) (wal.Record, error) {
 // of the height below. It carries what a replay needs to start a core at
 // From: the head and the validator set of From.
 type boundaryRec struct {
-	From        types.Height
-	Head        *types.Header
-	Validators  *validator.Set
-	PriorSource *consensus.PriorHeadSource
+	// These fields are present only in the versioned outer retry wrapper.
+	retryMaximumMs    uint64
+	retryImprovements uint64
+	From              types.Height
+	Head              *types.Header
+	Validators        *validator.Set
+	PriorSource       *consensus.PriorHeadSource
 	// Replayed is false for a run start whose core did not continue from a
 	// replay: the records before it do not describe its state.
 	Replayed bool
@@ -194,14 +197,53 @@ type WALState struct {
 
 // InspectWAL reads the write-ahead log in dir for the start-up handshake.
 func InspectWAL(fs fsys.FS, dir string) (WALState, error) {
+	return inspectWAL(fs, dir, nil)
+}
+
+// InspectWALForConfig validates the retry profile before returning handshake
+// actions. The caller must use the same configuration to start the runner;
+// application refinalization must not precede this validation.
+func InspectWALForConfig(fs fsys.FS, dir string, cfg Config) (WALState, error) {
+	if err := cfg.Core.RoundChangeRetry.Validate(cfg.Core.Config); err != nil {
+		return WALState{}, err
+	}
+	if cfg.Core.RoundChangeRetry != nil && (!cfg.ReplayWAL || cfg.Core.Improvements&^consensus.KnownImprovements() != 0) {
+		return WALState{}, errRoundChangeRetryWAL
+	}
+	r := &Runner{cfg: cfg}
+	if cfg.NextHeight != nil {
+		r.nextHeight = newNextHeightPool(*cfg.NextHeight)
+	}
+	return inspectWAL(fs, dir, r)
+}
+
+func inspectWAL(fs fsys.FS, dir string, profile *Runner) (WALState, error) {
 	var st WALState
 	recs, _, err := wal.ReadAll(fs, dir)
 	if err != nil {
 		return st, err
 	}
 	for _, rec := range recs {
-		if rec.Format != walFormat && rec.Format != nextHeightFormat && rec.Format != priorHeadFormat {
+		if rec.Format == roundChangeRetryFormat && (profile == nil || rec.Kind != walRunStart && rec.Kind != walEndHeight) {
+			return st, errRoundChangeRetryWAL
+		}
+		if rec.Format != walFormat && rec.Format != nextHeightFormat && rec.Format != priorHeadFormat && rec.Format != roundChangeRetryFormat {
+			if profile != nil && profile.cfg.Core.RoundChangeRetry != nil && (rec.Kind == walRunStart || rec.Kind == walEndHeight) {
+				return st, errRoundChangeRetryWAL
+			}
 			continue
+		}
+		if profile != nil && (rec.Kind == walRunStart || rec.Kind == walEndHeight) {
+			b, pending, err := decodeRunnerBoundary(rec)
+			if err != nil {
+				return st, err
+			}
+			if err := profile.checkRetryBoundary(rec, b, pending); err != nil {
+				return st, err
+			}
+			if pending != nil && (profile.nextHeight == nil || pending.Limits != profile.nextHeight.limits) {
+				return st, errNextHeightWAL
+			}
 		}
 		switch rec.Kind {
 		case walEndHeight:

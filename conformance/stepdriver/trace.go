@@ -201,6 +201,10 @@ func RunTrace(j JournalReader, opts TraceOptions, yield func(StepResult) error) 
 					return fmt.Errorf("stepdriver: observation profile: %w", err)
 				}
 				copts = consensus.Options{Config: cfg, Self: b.Core.Self, Improvements: consensus.ImprovementSet(b.Core.Improvements), BacklogLimit: int(b.Core.BacklogLimit)}
+				copts.RoundChangeRetry, err = b.Core.RetryOptions(cfg)
+				if err != nil {
+					return err
+				}
 				core = nil
 				approximate = false
 				run, last = 0, 0

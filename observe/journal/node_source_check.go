@@ -5,6 +5,7 @@ import "fmt"
 // NodeSourceLimits retain the bounds of each independent inspection. They do
 // not configure live queues, execution time, process memory or WAL retention.
 type NodeSourceLimits struct {
+	Retry    *RetrySourceLimits `json:"round_change_retry,omitempty"`
 	Dispatch ReceiveDispatchLimits
 	Write    WriteCacheCheckLimits
 	IO       WriteIOCheckLimits
@@ -18,6 +19,7 @@ type NodeSourceLimits struct {
 // it does not certify a runtime termination boundary or absent future callbacks.
 // Successful composition is not complete runtime replay or physical proof.
 type NodeSourceCheck struct {
+	Retry              *RetrySourceCheck        `json:"round_change_retry,omitempty"`
 	Status             string                   `json:"status"`
 	Reason             string                   `json:"reason,omitempty"`
 	Scope              string                   `json:"scope"`
@@ -108,6 +110,23 @@ func checkNodeSources(records []Record, limits NodeSourceLimits, restored bool) 
 	report.Timers, err = timerCheck(records, limits.Dispatch.Selections.Timer)
 	if err != nil || report.Timers.Status != "consistent" {
 		return result("timer", report.Timers.Status, report.Timers.Reason, err)
+	}
+	retry := false
+	for _, record := range records {
+		if segment, ok := record.Body.(*SegmentRec); ok && segment.Core.RoundChangeRetry != nil {
+			retry = true
+			break
+		}
+	}
+	if retry {
+		if limits.Retry == nil {
+			return result("retry", "unavailable", "inspection_limits_required", nil)
+		}
+		checked, checkErr := CheckRoundChangeRetrySources(records, *limits.Retry)
+		report.Retry = &checked
+		if checkErr != nil || checked.Status != "consistent" {
+			return result("retry", checked.Status, checked.Reason, checkErr)
+		}
 	}
 	report.SourceEnds = inspectNodeSourceEnds(records)
 	report.Status, report.Reason = "consistent", ""

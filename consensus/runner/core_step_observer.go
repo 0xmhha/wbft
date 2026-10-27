@@ -61,6 +61,9 @@ func (r *Runner) observeCoreStep(sc *stepCtx, kind string, body []byte, before, 
 	o.ReceiveLedgerRun, o.ReceiveLedger = ledger.WriterRun, ledger.Ledger
 	o.ReceiveScopeBefore, o.ReceiveScopeAfter = sc.receiveBefore, sc.receiveAfter
 	o.CoreSelf, o.Improvements, o.BacklogLimit = r.cfg.Core.Self, uint64(r.cfg.Core.Improvements), int64(r.cfg.Core.BacklogLimit)
+	if r.cfg.Core.RoundChangeRetry != nil {
+		o.RetryMaximumMs = r.cfg.Core.RoundChangeRetry.MaxIntervalMs
+	}
 	if r.env != nil && r.env.head != nil {
 		var err error
 		o.Head, err = codec.EncodeHeader(r.env.head)

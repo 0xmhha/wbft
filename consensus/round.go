@@ -182,6 +182,9 @@ func (st *step) validatorsAt(next types.Height, last *types.Header) *validator.S
 // Spec: WBFT-SM-005, WBFT-SM-006, WBFT-SM-024, WBFT-SM-025
 func (st *step) updateRoundState(nextVS *validator.Set, view types.View, roundChange bool) {
 	s := st.s
+	if s.opt.RoundChangeRetry != nil && (s.cur == nil || s.cur.view.Cmp(view) != 0) {
+		s.roundChangeRetry = roundChangeRetryState{}
+	}
 	if roundChange && s.cur != nil {
 		c := s.cur
 		if c.preparedBlock != nil && st.env.IsBadBlock(blockHash(c.preparedBlock)) {
@@ -289,7 +292,17 @@ func (st *step) armRetryTimer() {
 	s.gen[RetryTimer]++
 	s.retryLive = true
 	d := time.Duration(s.config(s.cur.view.Sequence).RequestTimeoutMs) * time.Millisecond
-	st.emit(ArmTimer{Kind: RetryTimer, View: s.cur.view, Round: s.cur.view.Round, Duration: d, Gen: s.gen[RetryTimer]})
+	var retry *RoundChangeRetryArm
+	if policy := s.opt.RoundChangeRetry; policy != nil {
+		r := s.roundChangeRetry
+		known := r.valid && r.view.Cmp(s.cur.view) == 0
+		retry = &RoundChangeRetryArm{MaxIntervalMs: policy.MaxIntervalMs}
+		if known {
+			retry.Known, retry.Key, retry.Exponent = true, r.key, r.exponent
+		}
+		d = retryInterval(s.config(s.cur.view.Sequence).RequestTimeoutMs, policy.MaxIntervalMs, retry.Exponent)
+	}
+	st.emit(ArmTimer{Kind: RetryTimer, View: s.cur.view, Round: s.cur.view.Round, Duration: d, Gen: s.gen[RetryTimer], Retry: retry})
 }
 
 // armFutureTimer arms the future-proposal timer for m, replacing an earlier
@@ -336,6 +349,8 @@ func (st *step) onTimeout(t Timeout) {
 			st.broadcastRoundChange(next)
 		}
 	case RetryTimer:
+		// Capture eligibility before cancellation or the next arm changes it.
+		live := s.CurrentRoundChangeRetry(t)
 		if s.opt.Improvements.Has(CancelStaleRetries) {
 			if !s.retryLive || t.Gen != s.gen[RetryTimer] || t.View.Cmp(s.cur.view) != 0 {
 				return
@@ -343,7 +358,11 @@ func (st *step) onTimeout(t Timeout) {
 			s.retryLive = false
 		}
 		// Without the option, retry expiries remain usable once queued.
-		st.broadcastRoundChange(t.Round)
+		var retry *Timeout
+		if s.opt.RoundChangeRetry != nil && live {
+			retry = &t
+		}
+		st.broadcastRoundChangeWithRetry(t.Round, retry)
 	case RoundProposalTimer:
 		if !s.opt.Improvements.Has(ValidateRoundProposals) || !s.roundProposalLive || t.Gen != s.gen[RoundProposalTimer] || t.View.Cmp(s.cur.view) != 0 || s.roundProposalView.Cmp(s.cur.view) != 0 {
 			return

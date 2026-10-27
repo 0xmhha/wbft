@@ -104,6 +104,7 @@ type Output interface{ isOutput() }
 //
 // Spec: WBFT-SM-014
 type Broadcast struct {
+	Retry      *RoundChangeRetryIntent `json:"retry,omitempty"`
 	Msg        *codec.Message
 	SealData   []byte
 	Validators *validator.Set
@@ -136,6 +137,7 @@ type Schedule struct{ In Input }
 // the deferred PRE-PREPARE); Round is the round a retry timer remembers;
 // Digest is the proposal of a future timer.
 type ArmTimer struct {
+	Retry    *RoundChangeRetryArm `json:"retry,omitempty"`
 	Kind     TimerKind
 	View     types.View
 	Round    types.Round

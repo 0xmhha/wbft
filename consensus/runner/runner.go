@@ -341,12 +341,36 @@ type commitJob struct {
 
 // New returns a stopped runner.
 func New(cfg Config, d Deps) (*Runner, error) {
+	cfg.Core.RoundChangeRetry = cfg.Core.RoundChangeRetry.Copy()
+	if err := cfg.Core.RoundChangeRetry.Validate(cfg.Core.Config); err != nil {
+		return nil, err
+	}
+	if cfg.Core.RoundChangeRetry != nil && (!cfg.ReplayWAL || d.WAL == nil) {
+		return nil, fmt.Errorf("runner: round-change retries require WAL replay")
+	}
+	if cfg.Core.RoundChangeRetry != nil && cfg.Core.Improvements&^consensus.KnownImprovements() != 0 {
+		return nil, fmt.Errorf("runner: round-change retry profile has unknown core options")
+	}
+	if d.Journal != nil {
+		declaration, ok := d.Journal.(interface{ CoreDeclaration() journal.CoreOptions })
+		if cfg.Core.RoundChangeRetry != nil || ok && declaration.CoreDeclaration().RoundChangeRetry != nil {
+			if !ok {
+				return nil, fmt.Errorf("runner: retry journal requires a frozen core declaration")
+			}
+			if err := declaration.CoreDeclaration().ValidateCoreDeclaration(cfg.Core); err != nil {
+				return nil, err
+			}
+		}
+	}
 	if cfg.Core.Improvements.Has(consensus.BindPriorHead) && (!cfg.ReplayWAL || d.WAL == nil) {
 		return nil, errPriorHeadWAL
 	}
 
 	if d.Transport != nil && d.Transport.CompletedWritesClosed() {
 		return nil, fmt.Errorf("runner: completed-write cache lifetime is closed")
+	}
+	if d.Transport != nil && d.Transport.RoundChangeRetryEnabled() != (cfg.Core.RoundChangeRetry != nil) {
+		return nil, fmt.Errorf("runner: round-change retry transport policy differs from core")
 	}
 	if d.Transport != nil && d.Transport.CompletedWritesEnabled() && (cfg.ReceiveCache == nil || !cfg.ReceiveCache.KeyWithCode) {
 		return nil, fmt.Errorf("runner: completed-write cache requires code-aware accepted reception")

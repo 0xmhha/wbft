@@ -2,8 +2,10 @@ package journal
 
 import (
 	"fmt"
+	"github.com/0xmhha/wbft/codec"
 	"github.com/0xmhha/wbft/codec/rlp"
 	"github.com/0xmhha/wbft/observe/event"
+	"github.com/0xmhha/wbft/p2p/transport"
 	"github.com/0xmhha/wbft/types"
 	"time"
 )
@@ -13,6 +15,7 @@ const CacheTraceVersion uint64 = 1
 // CacheRec is either an empty-cache declaration (no clock) or a mutation
 // observed under its actual mutex. The instance lives within one writer run.
 type CacheRec struct {
+	Retry                           transport.RoundChangeRetrySource
 	Instance, Sequence              uint64
 	Action                          string
 	Self, Peer                      types.Address
@@ -35,9 +38,13 @@ type cacheRLP struct {
 	Known, Recent, Available            uint64
 	Candidates, Targets, Suppressed     []types.Address
 	Mono, WallNs                        uint64
+	Retry                               []byte `rlp:"optional"`
 }
 
 func validCacheRec(r *CacheRec) bool {
+	if !validRetrySource(r.Retry) || r.Retry.Version != 0 && (r.Action != "gossip" || r.Code != uint64(codec.CodeRoundChange) || r.Cause != event.CauseRetry || len(r.Suppressed) != 0) {
+		return false
+	}
 	if r.Instance == 0 || r.Mono < 0 {
 		return false
 	}
@@ -60,14 +67,22 @@ func encodeCacheRec(r *CacheRec, jseq uint64) ([]byte, error) {
 	if !validCacheRec(r) {
 		return nil, fmt.Errorf("journal: invalid cache operation")
 	}
-	return rlp.Encode(&cacheRLP{Format: Format, JSeq: jseq, Instance: r.Instance, Sequence: r.Sequence, Action: r.Action, Self: r.Self, Peer: r.Peer, PeerCapacity: r.PeerCapacity, MessageCapacity: r.MessageCapacity, Code: r.Code, Key: r.Key, PayloadSHA256: r.PayloadSHA256, Cause: string(r.Cause), Known: boolUint(r.Known), Recent: boolUint(r.Recent), Available: boolUint(r.Available), Candidates: cacheAddresses(r.Candidates), Targets: cacheAddresses(r.Targets), Suppressed: cacheAddresses(r.Suppressed), Mono: uint64(r.Mono), WallNs: uint64(r.WallNs)})
+	retry, err := encodeRetrySource(r.Retry)
+	if err != nil {
+		return nil, err
+	}
+	return rlp.Encode(&cacheRLP{Format: Format, JSeq: jseq, Instance: r.Instance, Sequence: r.Sequence, Action: r.Action, Self: r.Self, Peer: r.Peer, PeerCapacity: r.PeerCapacity, MessageCapacity: r.MessageCapacity, Code: r.Code, Key: r.Key, PayloadSHA256: r.PayloadSHA256, Cause: string(r.Cause), Known: boolUint(r.Known), Recent: boolUint(r.Recent), Available: boolUint(r.Available), Candidates: cacheAddresses(r.Candidates), Targets: cacheAddresses(r.Targets), Suppressed: cacheAddresses(r.Suppressed), Mono: uint64(r.Mono), WallNs: uint64(r.WallNs), Retry: retry})
 }
 func decodeCacheRec(body []byte) (Record, error) {
 	var w cacheRLP
 	if err := rlp.DecodeStrict(body, &w); err != nil {
 		return Record{}, fmt.Errorf("%w: cache: %v", ErrRecord, err)
 	}
-	r := &CacheRec{Instance: w.Instance, Sequence: w.Sequence, Action: w.Action, Self: w.Self, Peer: w.Peer, PeerCapacity: w.PeerCapacity, MessageCapacity: w.MessageCapacity, Code: w.Code, Key: w.Key, PayloadSHA256: w.PayloadSHA256, Cause: event.SendCause(w.Cause), Known: w.Known == 1, Recent: w.Recent == 1, Available: w.Available == 1, Candidates: w.Candidates, Targets: w.Targets, Suppressed: w.Suppressed, Mono: time.Duration(w.Mono), WallNs: int64(w.WallNs)}
+	retry, err := decodeRetrySource(w.Retry)
+	if err != nil {
+		return Record{}, err
+	}
+	r := &CacheRec{Retry: retry, Instance: w.Instance, Sequence: w.Sequence, Action: w.Action, Self: w.Self, Peer: w.Peer, PeerCapacity: w.PeerCapacity, MessageCapacity: w.MessageCapacity, Code: w.Code, Key: w.Key, PayloadSHA256: w.PayloadSHA256, Cause: event.SendCause(w.Cause), Known: w.Known == 1, Recent: w.Recent == 1, Available: w.Available == 1, Candidates: w.Candidates, Targets: w.Targets, Suppressed: w.Suppressed, Mono: time.Duration(w.Mono), WallNs: int64(w.WallNs)}
 	if w.Format != Format || w.Known > 1 || w.Recent > 1 || w.Available > 1 || !validCacheRec(r) {
 		return Record{}, fmt.Errorf("%w: invalid cache operation", ErrRecord)
 	}

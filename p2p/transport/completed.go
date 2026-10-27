@@ -35,7 +35,7 @@ func (d *Dedup) SentOrReceivedCode(peer types.Address, code uint64, payload []by
 	return d.SentOrReceived(peer, payload)
 }
 
-func (d *Dedup) gossipCompleted(vs *validator.Set, code uint64, payload []byte, cause event.SendCause) GossipTargets {
+func (d *Dedup) gossipCompleted(vs *validator.Set, code uint64, payload []byte, cause event.SendCause, retry *RoundChangeRetrySource) GossipTargets {
 	plan := GossipTargets{Available: vs != nil}
 	if vs == nil || CheckOutbound(code, payload) != nil {
 		return plan
@@ -55,7 +55,7 @@ func (d *Dedup) gossipCompleted(vs *validator.Set, code uint64, payload []byte, 
 	slices.SortStableFunc(candidates, func(a, b WritePeer) int { return bytes.Compare(a.Addr[:], b.Addr[:]) })
 	for _, target := range candidates {
 		plan.Candidates = append(plan.Candidates, target.Addr)
-		ticket, decision := d.completedWrites.Prepare(target, code, payload)
+		ticket, decision := d.completedWrites.prepare(target, code, payload, retry)
 		switch decision {
 		case WriteAlreadyRecent:
 			plan.Suppressed = append(plan.Suppressed, target.Addr)

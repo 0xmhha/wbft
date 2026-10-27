@@ -209,6 +209,7 @@ func (r *Runner) processOne() bool {
 
 // stepCtx carries what the output execution of one step needs.
 type stepCtx struct {
+	retry                       *retryStepContext
 	q                           queued
 	step                        uint64
 	output                      uint64 // original one-based output, retained through own-message signing
@@ -275,6 +276,7 @@ func (r *Runner) handle(q queued) {
 		receiveBefore = r.currentReceiveScopeObservation()
 	}
 	gens := r.core.AllTimerGens()
+	retry := r.roundChangeRetryBefore(q, before, gens)
 	r.env.begin(true)
 	outs := r.core.Step(r.env, q.in)
 	answers := r.env.end()
@@ -282,7 +284,7 @@ func (r *Runner) handle(q queued) {
 		r.completeReceiveCheck(ticket, received, outs)
 		r.updateReceiveContext(r.core.Snapshot())
 	}
-	sc := &stepCtx{q: q, step: step, outs: outs, env: answers, seqIn: before.View.Sequence}
+	sc := &stepCtx{q: q, step: step, outs: outs, env: answers, seqIn: before.View.Sequence, retry: retry}
 	if r.d.CoreSteps != nil {
 		sc.receiveBefore, sc.receiveAfter = receiveBefore, r.currentReceiveScopeObservation()
 	}
@@ -370,7 +372,9 @@ func (r *Runner) execute(sc *stepCtx) {
 			r.appendInternal(o.In, "schedule", uint64(index)+1)
 		case consensus.ArmTimer:
 			r.lastGen[o.Kind] = o.Gen
-			r.timers.arm(o, r.stepAt.Mono)
+			if !r.armTimer(o, r.stepAt.Mono) {
+				return
+			}
 			f := map[string]any{"timer": o.Kind.String(), "duration_ms": o.Duration.Milliseconds(),
 				"deadline_mono_ns": int64(r.stepAt.Mono + o.Duration), "gen": o.Gen, "engine_run": r.engineRun}
 			if o.Kind == consensus.RetryTimer {
@@ -482,7 +486,15 @@ func (r *Runner) broadcast(sc *stepCtx, b consensus.Broadcast) {
 	}
 	faultpoint.Hit(r.d.Faults, faultpoint.SendBefore)
 	if r.d.Transport != nil {
-		r.d.Transport.Broadcast(b.Validators, uint64(c.Code), payload, cause)
+		if r.currentOwnRetry(sc, b, &c, payload) {
+			r.d.Transport.RetryOwnRoundChange(b.Validators, payload, transport.RoundChangeRetryRequest{
+				View: b.Retry.View, Generation: b.Retry.Generation, SigningKey: b.Retry.Key,
+				PreviousPayload: r.lastOwn[ownKey{code: uint64(c.Code)}],
+				Source:          transport.RoundChangeRetrySource{EngineRun: r.engineRun, Step: sc.step, Output: sc.output},
+			})
+		} else {
+			r.d.Transport.Broadcast(b.Validators, uint64(c.Code), payload, cause)
+		}
 	}
 	faultpoint.Hit(r.d.Faults, faultpoint.SendAfter)
 	r.sendEvent(sc, uint64(c.Code), payload, cause, &c.View)
