@@ -49,6 +49,8 @@ type coreSourceRun struct {
 	head  []byte
 }
 type coreSourceWriter struct {
+	retry                 RoundChangeRetryOptions
+	proposerProfile       string
 	config                []byte
 	self                  types.Address
 	improvements, backlog uint64
@@ -139,8 +141,14 @@ func inspectCoreSourceStatesRestored(records []Record, limits CoreSourceLimits, 
 			if s.Core.BacklogLimit > math.MaxInt {
 				return unavailable("core_backlog_range")
 			}
-			w := coreSourceWriter{config: bytes.Clone(s.Core.ChainConfig), self: s.Core.Self, improvements: s.Core.Improvements, backlog: s.Core.BacklogLimit}
-			if old, ok := writers[writer]; ok && (old.self != w.self || old.improvements != w.improvements || old.backlog != w.backlog || !bytes.Equal(old.config, w.config)) {
+			w := coreSourceWriter{config: bytes.Clone(s.Core.ChainConfig), self: s.Core.Self, improvements: s.Core.Improvements, backlog: s.Core.BacklogLimit, proposerProfile: s.Core.ProposerPolicyProfile}
+			if s.Core.RoundChangeRetry != nil {
+				if s.Core.RoundChangeRetry.Validate() != nil {
+					return unavailable("unsupported_retry_profile")
+				}
+				w.retry = *s.Core.RoundChangeRetry
+			}
+			if old, ok := writers[writer]; ok && (old.self != w.self || old.improvements != w.improvements || old.backlog != w.backlog || old.retry != w.retry || old.proposerProfile != w.proposerProfile || !bytes.Equal(old.config, w.config)) {
 				return inconsistent("writer_configuration_changed")
 			}
 			writers[writer] = w
@@ -192,7 +200,7 @@ func inspectCoreSourceStatesRestored(records []Record, limits CoreSourceLimits, 
 			if !ok {
 				return unavailable("core_writer_missing")
 			}
-			if s.CoreSelf != w.self || s.Improvements != w.improvements || s.BacklogLimit != int64(w.backlog) {
+			if s.CoreSelf != w.self || s.Improvements != w.improvements || s.BacklogLimit != int64(w.backlog) || s.RetryMaximumMs != w.retry.MaxIntervalMs {
 				return inconsistent("actual_core_options_changed")
 			}
 			if len(s.Head) == 0 {
@@ -210,7 +218,7 @@ func inspectCoreSourceStatesRestored(records []Record, limits CoreSourceLimits, 
 			model := runs[key]
 			if model == nil {
 				if seed, ok := seeds[key]; ok {
-					if seed.config.self != w.self || seed.config.improvements != w.improvements || seed.config.backlog != w.backlog || !bytes.Equal(seed.config.config, w.config) {
+					if seed.config.self != w.self || seed.config.improvements != w.improvements || seed.config.backlog != w.backlog || seed.config.retry != w.retry || seed.config.proposerProfile != w.proposerProfile || !bytes.Equal(seed.config.config, w.config) {
 						return inconsistent("restore_configuration_changed")
 					}
 					if report.Runs >= limits.Runs {
@@ -228,7 +236,7 @@ func inspectCoreSourceStatesRestored(records []Record, limits CoreSourceLimits, 
 				if report.Runs >= limits.Runs {
 					return unavailable("run_limit")
 				}
-				config, err := types.ParseChainConfig(w.config)
+				config, err := w.configuration()
 				if err != nil {
 					return unavailable("unsupported_core_configuration")
 				}
@@ -238,7 +246,11 @@ func inspectCoreSourceStatesRestored(records []Record, limits CoreSourceLimits, 
 				if err := config.CheckProposerPolicy(); err != nil {
 					return unavailable("unsupported_core_configuration")
 				}
-				model = &coreSourceRun{state: consensus.NewState(consensus.Options{Config: config, Self: w.self, Improvements: consensus.ImprovementSet(w.improvements), BacklogLimit: int(w.backlog)}), next: 1, head: bytes.Clone(s.Head)}
+				options, err := w.options(config)
+				if err != nil {
+					return unavailable("unsupported_retry_configuration")
+				}
+				model = &coreSourceRun{state: consensus.NewState(options), next: 1, head: bytes.Clone(s.Head)}
 				runs[key] = model
 				report.Runs++
 			}
@@ -425,4 +437,26 @@ func (e *coreSourceEnv) IsBadBlock(h types.Hash) bool {
 }
 func (e *coreSourceEnv) CommitHeader(b *types.Block, round types.Round, _ *validator.Set, prepared, committed []types.SealEntry) (*types.Block, error) {
 	return header.CommitHeader(b, round, prepared, committed)
+}
+
+func (w coreSourceWriter) options(config *types.Config) (consensus.Options, error) {
+	options := consensus.Options{Config: config, Self: w.self, Improvements: consensus.ImprovementSet(w.improvements), BacklogLimit: int(w.backlog)}
+	if w.retry != (RoundChangeRetryOptions{}) {
+		retry := w.retry
+		var err error
+		options.RoundChangeRetry, err = (CoreOptions{RoundChangeRetry: &retry}).RetryOptions(config)
+		if err != nil {
+			return options, err
+		}
+	}
+	return options, nil
+}
+
+func (w coreSourceWriter) configuration() (*types.Config, error) {
+	declaration := CoreOptions{ChainConfig: w.config, ProposerPolicyProfile: w.proposerProfile}
+	if w.retry != (RoundChangeRetryOptions{}) {
+		retry := w.retry
+		declaration.RoundChangeRetry = &retry
+	}
+	return declaration.Configuration()
 }

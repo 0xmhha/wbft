@@ -792,7 +792,11 @@ func runTimedEntries(entries []timedSourceEntry, j JournalReader, opts TimedOpti
 			armExecutions = map[[2]uint64]uint64{}
 			armOutputs = map[[2]uint64]uint64{}
 			armDeadlines = map[[2]uint64]time.Duration{}
-			state = consensus.NewState(consensus.Options{Config: cfg, Self: self, Improvements: consensus.ImprovementSet(entry.config.Improvements), BacklogLimit: int(entry.config.BacklogLimit)})
+			retry, err := entry.config.RetryOptions(cfg)
+			if err != nil {
+				return err
+			}
+			state = consensus.NewState(consensus.Options{Config: cfg, Self: self, Improvements: consensus.ImprovementSet(entry.config.Improvements), BacklogLimit: int(entry.config.BacklogLimit), RoundChangeRetry: retry})
 			if len(b.TimerGens) != 0 {
 				if err := state.RestoreTimerGenerations(b.TimerGens); err != nil {
 					return ErrTraceInvalidInput

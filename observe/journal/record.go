@@ -136,13 +136,14 @@ type Identity struct {
 // CoreOptions is the consensus.Options of the journaled core in a portable
 // form: the chain configuration as its JSON text (types.ParseChainConfig).
 type CoreOptions struct {
-	Observation           *ObservationOptions `json:"observation,omitempty"`
-	CachePolicy           *CachePolicyOptions `json:"cache_policy,omitempty"`
-	NextHeight            *DeferredOptions    `json:"next_height,omitempty"`
-	ProposerPolicyProfile string              `json:"proposer_policy_profile,omitempty"`
-	TimerTrace            uint64              `json:"timer_trace,omitempty"`
-	CacheTrace            uint64              `json:"cache_trace,omitempty"`
-	SyncTrace             uint64              `json:"sync_trace,omitempty"`
+	RoundChangeRetry      *RoundChangeRetryOptions `json:"round_change_retry,omitempty"`
+	Observation           *ObservationOptions      `json:"observation,omitempty"`
+	CachePolicy           *CachePolicyOptions      `json:"cache_policy,omitempty"`
+	NextHeight            *DeferredOptions         `json:"next_height,omitempty"`
+	ProposerPolicyProfile string                   `json:"proposer_policy_profile,omitempty"`
+	TimerTrace            uint64                   `json:"timer_trace,omitempty"`
+	CacheTrace            uint64                   `json:"cache_trace,omitempty"`
+	SyncTrace             uint64                   `json:"sync_trace,omitempty"`
 	ChainConfig           []byte
 	Self                  types.Address
 	Improvements          uint64
@@ -355,6 +356,7 @@ type segmentRLP struct {
 	NextHeight            []uint64 `rlp:"optional"`
 	CachePolicy           []uint64 `rlp:"optional"`
 	Observation           []byte   `rlp:"optional"`
+	RoundChangeRetry      []uint64 `rlp:"optional"`
 }
 
 type peerRLP struct {
@@ -596,7 +598,7 @@ func encodeBody(r Record, jseq uint64) ([]byte, error) {
 			BLSPublicKey: bytesOrEmpty(b.BLSPublicKey), Run: b.Run, Commit: b.Commit, ChainID: bigOrZero(b.ChainID),
 			GenesisHash: b.GenesisHash, Mode: b.Mode, WireOffset: b.WireOffset, ConfigDigest: b.ConfigDigest,
 			ChainConfig: bytesOrEmpty(b.Core.ChainConfig), CoreSelf: b.Core.Self, Improvements: b.Core.Improvements,
-			BacklogLimit: b.Core.BacklogLimit, Profile: b.Core.Profile, EngineRun: b.EngineRun, TimerTrace: b.Core.TimerTrace, CacheTrace: b.Core.CacheTrace, SyncTrace: b.Core.SyncTrace, ProposerPolicyProfile: b.Core.ProposerPolicyProfile, NextHeight: b.Core.NextHeight.encode(), CachePolicy: b.Core.CachePolicy.encode(), Observation: observation})
+			BacklogLimit: b.Core.BacklogLimit, Profile: b.Core.Profile, EngineRun: b.EngineRun, TimerTrace: b.Core.TimerTrace, CacheTrace: b.Core.CacheTrace, SyncTrace: b.Core.SyncTrace, ProposerPolicyProfile: b.Core.ProposerPolicyProfile, NextHeight: b.Core.NextHeight.encode(), CachePolicy: b.Core.CachePolicy.encode(), Observation: observation, RoundChangeRetry: b.Core.RoundChangeRetry.encode()})
 	case *PeerRec:
 		return rlp.Encode(&peerRLP{Format: Format, JSeq: jseq, PeerIdx: uint64(b.PeerIdx), Addr: b.Addr, NodeID: bytesOrEmpty(b.NodeID),
 			Remote: b.Remote, Event: b.Event, Reason: b.Reason, By: b.By, Cause: b.Cause})
@@ -737,10 +739,14 @@ func decodeBody(k Kind, body []byte) (Record, error) {
 		if err != nil {
 			return fail(err)
 		}
+		retry, err := decodeRoundChangeRetryOptions(w.RoundChangeRetry)
+		if err != nil {
+			return fail(err)
+		}
 		return Record{Kind: k, JSeq: w.JSeq, Body: &SegmentRec{EngineRun: w.EngineRun, Identity: Identity{
 			Self: w.Self, NodeID: w.NodeID, BLSPublicKey: w.BLSPublicKey, Run: w.Run, Commit: w.Commit, ChainID: w.ChainID,
 			GenesisHash: w.GenesisHash, Mode: w.Mode, WireOffset: w.WireOffset, ConfigDigest: w.ConfigDigest,
-			Core: CoreOptions{ChainConfig: w.ChainConfig, Self: w.CoreSelf, Improvements: w.Improvements, BacklogLimit: w.BacklogLimit, Profile: w.Profile, TimerTrace: w.TimerTrace, CacheTrace: w.CacheTrace, SyncTrace: w.SyncTrace, ProposerPolicyProfile: w.ProposerPolicyProfile, NextHeight: deferred, CachePolicy: cache, Observation: observation},
+			Core: CoreOptions{ChainConfig: w.ChainConfig, Self: w.CoreSelf, Improvements: w.Improvements, BacklogLimit: w.BacklogLimit, Profile: w.Profile, TimerTrace: w.TimerTrace, CacheTrace: w.CacheTrace, SyncTrace: w.SyncTrace, ProposerPolicyProfile: w.ProposerPolicyProfile, NextHeight: deferred, CachePolicy: cache, Observation: observation, RoundChangeRetry: retry},
 		}}}, nil
 	case KindPeer:
 		var w peerRLP
@@ -989,17 +995,21 @@ func size(r Record) int64 {
 	case *TimerRec:
 		return int64(len(b.Input)) + 256
 	case *CacheRec:
-		return 320 + int64(len(b.Candidates)+len(b.Targets)+len(b.Suppressed))*20
+		return 320 + int64(len(b.Candidates)+len(b.Targets)+len(b.Suppressed))*20 + retrySourceSize(b.Retry)
 	case *WriteCacheRec:
 		n := int64(512) + int64(len(b.Transition.Pruned))*8 + int64(len(b.Transition.Input.SessionRun)+len(b.Transition.Receipt.SessionRun))
 		if s := b.Transition.AcceptedSource; s != (transport.AcceptedInputSource{}) {
 			n += 160 + int64(len(s.LedgerRun)+len(s.Origin.WriterRun)+len(s.Core.Via))
 		}
+		n += retrySourceSize(b.Transition.Retry)
 		return n
 	case *ReceiveCacheRec:
 		return 640 + int64(len(b.Transition.Pruned))*8 + int64(len(b.Transition.Origin.WriterRun)+len(b.Transition.CheckedOrigin.WriterRun)+len(b.Transition.Source.Via)+len(b.Transition.Context.Sequence)+len(b.Transition.Context.Round)+len(b.Transition.Context.State)+len(b.Transition.Context.PriorRound)+len(b.Transition.Input.SessionRun)+len(b.Transition.Checked.SessionRun))
 	case *CoreStepRec:
 		n := int64(1024 + len(b.Head) + len(b.Input) + len(b.Outputs) + len(b.Origin.WriterRun) + len(b.StreamRun) + len(b.ReceiveLedgerRun) + len(b.InputKind) + len(b.Via) + len(b.Unavailable))
+		if b.RetryMaximumMs != 0 {
+			n += 8
+		}
 		n += int64(len(b.Before.Sequence) + len(b.Before.Round) + len(b.Before.State) + len(b.Before.PriorRound) + len(b.After.Sequence) + len(b.After.Round) + len(b.After.State) + len(b.After.PriorRound))
 		for _, e := range b.Environment {
 			n += int64(len(e.Bytes) + 8*len(e.ValidatorKeyPresent) + 32)

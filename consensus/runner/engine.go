@@ -42,6 +42,9 @@ func (r *Runner) startEngine(_ context.Context, head *types.Header) (startErr er
 		fs, dir := r.d.WAL.FS()
 		records, _, _ := wal.ReadAll(fs, dir)
 		for _, rec := range records {
+			if rec.Format == roundChangeRetryFormat {
+				return errRoundChangeRetryWAL
+			}
 			if rec.Format == priorHeadFormat {
 				return errPriorHeadWAL
 			}
@@ -55,7 +58,7 @@ func (r *Runner) startEngine(_ context.Context, head *types.Header) (startErr er
 		p, err := r.planReplay(from)
 		r.observeRestorePlan(p, err)
 		if err != nil {
-			if r.nextHeight != nil || r.cfg.Core.Improvements.Has(consensus.BindPriorHead) || errors.Is(err, errPriorHeadWAL) || errors.Is(err, errNextHeightWAL) {
+			if r.cfg.Core.RoundChangeRetry != nil || r.nextHeight != nil || r.cfg.Core.Improvements.Has(consensus.BindPriorHead) || errors.Is(err, errPriorHeadWAL) || errors.Is(err, errNextHeightWAL) || errors.Is(err, errRoundChangeRetryWAL) {
 				return err
 			}
 			r.replay.Stopped = err.Error()
@@ -68,14 +71,14 @@ func (r *Runner) startEngine(_ context.Context, head *types.Header) (startErr er
 	var replayTimers [4]*consensus.ArmTimer
 	if plan != nil && len(plan.steps) > 0 {
 		core, recs, res := r.runReplayObserved(plan)
-		if res.err != nil && res.lastPartial && r.nextHeight == nil && !r.cfg.Core.Improvements.Has(consensus.BindPriorHead) {
+		if res.err != nil && res.lastPartial && r.cfg.Core.RoundChangeRetry == nil && r.nextHeight == nil && !r.cfg.Core.Improvements.Has(consensus.BindPriorHead) {
 			// The last step was cut short by the crash: replay without it.
 			plan.steps = plan.steps[:len(plan.steps)-1]
 			core, recs, res = r.runReplayObserved(plan)
 		}
 		r.replay.Records = res.fed
 		if res.err != nil {
-			if r.nextHeight != nil || r.cfg.Core.Improvements.Has(consensus.BindPriorHead) {
+			if r.cfg.Core.RoundChangeRetry != nil || r.nextHeight != nil || r.cfg.Core.Improvements.Has(consensus.BindPriorHead) {
 				return res.err
 			}
 			r.replay.Stopped = res.err.Error()
@@ -148,6 +151,9 @@ func (r *Runner) startEngine(_ context.Context, head *types.Header) (startErr er
 			return err
 		}
 		r.afterReplayTimers(replayTimers[:], snap)
+		if r.cfg.Core.RoundChangeRetry != nil && r.Halted() != nil {
+			return r.Halted()
+		}
 	}
 	r.lastHead.Store(r.env.head)
 	if p := r.nextHeight; p != nil {
@@ -258,6 +264,9 @@ type replayPlan struct {
 func (r *Runner) planReplay(from types.Height) (*replayPlan, error) {
 	recs, _, err := r.readReplayWAL()
 	if err != nil {
+		if r.cfg.Core.RoundChangeRetry != nil {
+			return nil, fmt.Errorf("%w: %v", errRoundChangeRetryWAL, err)
+		}
 		// Damage the open did not repair (a torn tail being written now);
 		// use what was read.
 		r.log.Warn("wal read stopped early", "err", err)
@@ -265,18 +274,30 @@ func (r *Runner) planReplay(from types.Height) (*replayPlan, error) {
 	start := -1
 	var b boundaryRec
 	for i, rec := range recs {
+		if r.cfg.Core.RoundChangeRetry != nil && (rec.Kind == walRunStart || rec.Kind == walEndHeight) && rec.Format != walFormat && rec.Format != nextHeightFormat && rec.Format != priorHeadFormat && rec.Format != roundChangeRetryFormat {
+			return nil, errRoundChangeRetryWAL
+		}
+		if rec.Format == roundChangeRetryFormat && rec.Kind != walRunStart && rec.Kind != walEndHeight {
+			return nil, errRoundChangeRetryWAL
+		}
 		if rec.Format == priorHeadFormat && !r.cfg.Core.Improvements.Has(consensus.BindPriorHead) {
 			return nil, errPriorHeadWAL
 		}
 		if rec.Format == nextHeightFormat && r.nextHeight == nil {
 			return nil, errNextHeightWAL
 		}
-		if (rec.Format != walFormat && rec.Format != nextHeightFormat && rec.Format != priorHeadFormat) || (rec.Kind != walEndHeight && rec.Kind != walRunStart) {
+		if (rec.Format != walFormat && rec.Format != nextHeightFormat && rec.Format != priorHeadFormat && rec.Format != roundChangeRetryFormat) || (rec.Kind != walEndHeight && rec.Kind != walRunStart) {
 			continue
 		}
 		x, cp, err := decodeRunnerBoundary(rec)
 		if err != nil {
+			if rec.Format == roundChangeRetryFormat {
+				return nil, fmt.Errorf("%w: %v", errRoundChangeRetryWAL, err)
+			}
 			return nil, fmt.Errorf("wal boundary record: %w", err)
+		}
+		if err := r.checkRetryBoundary(rec, x, cp); err != nil {
+			return nil, err
 		}
 		if cp != nil && (r.nextHeight == nil || cp.Limits != r.nextHeight.limits) {
 			return nil, errors.New("runner: next-height checkpoint limits differ")
@@ -309,7 +330,7 @@ func (r *Runner) planReplay(from types.Height) (*replayPlan, error) {
 loop:
 	for i := start + 1; i < len(recs); i++ {
 		rec := recs[i]
-		if rec.Format != walFormat && rec.Format != nextHeightFormat && rec.Format != priorHeadFormat {
+		if rec.Format != walFormat && rec.Format != nextHeightFormat && rec.Format != priorHeadFormat && rec.Format != roundChangeRetryFormat {
 			continue
 		}
 		switch rec.Kind {
@@ -543,7 +564,9 @@ func (r *Runner) afterReplayTimers(timers []*consensus.ArmTimer, snap *consensus
 			// Keep the logical deadline separate from the later event-writing
 			// moment, just as for timers armed by a core step.
 			from := r.d.Clock.Mono()
-			r.timers.arm(*t, from)
+			if !r.armTimer(*t, from) {
+				return
+			}
 			fields := map[string]any{
 				"timer": t.Kind.String(), "duration_ms": t.Duration.Milliseconds(),
 				"deadline_mono_ns": int64(from + t.Duration),

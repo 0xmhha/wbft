@@ -10,6 +10,7 @@ import (
 // sequence is local to Instance; timestamps or frame order do not replace it.
 // The observer must not reenter Dedup, block on I/O, or mutate the slices.
 type CacheOperation struct {
+	Retry                           RoundChangeRetrySource
 	Instance, Sequence              uint64
 	Action                          string
 	Peer                            types.Address

@@ -2,6 +2,7 @@ package node
 
 import (
 	"fmt"
+	"github.com/0xmhha/wbft/consensus"
 
 	"github.com/0xmhha/wbft/consensus/privval"
 	"github.com/0xmhha/wbft/consensus/runner"
@@ -49,6 +50,16 @@ func freezeDiagnostics(cfg Config, d *Deps) error {
 	if o.Writer == nil || cfg.RunID == "" || o.Writer.CaptureRun() != cfg.RunID {
 		return fmt.Errorf("%w: diagnostics require an explicit matching writer run", ErrConfig)
 	}
+	declaration, declared := o.Writer.(interface{ CoreDeclaration() journal.CoreOptions })
+	if cfg.RoundChangeRetry != nil || declared && declaration.CoreDeclaration().RoundChangeRetry != nil {
+		if !declared {
+			return fmt.Errorf("%w: retry diagnostics require a frozen core declaration", ErrConfig)
+		}
+		policy := declaration.CoreDeclaration().RoundChangeRetry
+		if cfg.RoundChangeRetry == nil || policy == nil || policy.Validate() != nil || policy.MaxIntervalMs != cfg.RoundChangeRetry.MaxIntervalMs {
+			return fmt.Errorf("%w: diagnostic retry declaration differs from runtime", ErrConfig)
+		}
+	}
 	if o.WALRead.Frames == 0 || o.WALRead.Bytes == 0 || o.SignerRecords == 0 || o.SignerBytes == 0 || o.ApplicationBytes == 0 {
 		return fmt.Errorf("%w: diagnostic copy limits must be positive", ErrConfig)
 	}
@@ -59,6 +70,21 @@ func freezeDiagnostics(cfg Config, d *Deps) error {
 		return fmt.Errorf("%w: diagnostic transport observations are unavailable", ErrConfig)
 	}
 	d.Diagnostics = &o
+	return nil
+}
+
+func (n *Node) validateRetryDiagnostic(core consensus.Options) error {
+	if o := n.d.Diagnostics; o != nil {
+		declaration, ok := o.Writer.(interface{ CoreDeclaration() journal.CoreOptions })
+		if n.cfg.RoundChangeRetry != nil || ok && declaration.CoreDeclaration().RoundChangeRetry != nil {
+			if !ok {
+				return fmt.Errorf("%w: retry diagnostics require a frozen core declaration", ErrConfig)
+			}
+			if err := declaration.CoreDeclaration().ValidateCoreDeclaration(core); err != nil {
+				return fmt.Errorf("%w: retry diagnostic declaration: %v", ErrConfig, err)
+			}
+		}
+	}
 	return nil
 }
 

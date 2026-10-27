@@ -301,6 +301,9 @@ func (s ImprovementSet) With(i Improvement) ImprovementSet { return s | 1<<i }
 
 // Options configure a core. They are fixed for the life of the State.
 type Options struct {
+	// RoundChangeRetry is an explicit local current-own retry policy. Nil
+	// preserves original cache suppression and timer intervals.
+	RoundChangeRetry *RoundChangeRetryOptions `json:"round_change_retry,omitempty"`
 	// Config is the chain consensus configuration; timer durations and the
 	// block period are read from ConfigAt of the view's sequence.
 	Config *types.Config

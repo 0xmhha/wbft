@@ -313,20 +313,23 @@ func (l *eventLog) kinds(k event.Kind) []event.Record {
 
 // tnode is one runner in manual mode on a memory file system.
 type tnode struct {
-	t      *testing.T
-	k      *keys
-	self   int
-	fs     *fsys.Mem
-	clock  *manualClock
-	chain  *fakeChain
-	app    *fakeApp
-	net    *fakeNet
-	events *eventLog
-	jfs    *fsys.Mem
-	r      *Runner
-	signer *privval.FileSigner
-	log    *wal.Log
-	opts   consensus.Options
+	t     *testing.T
+	k     *keys
+	self  int
+	fs    *fsys.Mem
+	clock *manualClock
+	chain *fakeChain
+	app   *fakeApp
+	net   *fakeNet
+	// dedupTransport optionally wraps the normal network for detached sources.
+	dedupTransport transport.Transport
+	dedupOptions   *transport.DedupOptions
+	events         *eventLog
+	jfs            *fsys.Mem
+	r              *Runner
+	signer         *privval.FileSigner
+	log            *wal.Log
+	opts           consensus.Options
 	// noJournal boots the runner without a message journal.
 	noJournal              bool
 	receiveCache           *transport.ReceiveLedgerOptions
@@ -389,7 +392,15 @@ func (n *tnode) boot() {
 		t.Fatal(err)
 	}
 	n.log = log
-	dd, err := transport.NewDedup(n.net, transport.DedupOptions{Self: n.k.addrs[n.self]})
+	out := transport.Transport(n.net)
+	if n.dedupTransport != nil {
+		out = n.dedupTransport
+	}
+	options := transport.DedupOptions{Self: n.k.addrs[n.self], RoundChangeRetry: n.opts.RoundChangeRetry != nil}
+	if n.dedupOptions != nil {
+		options = *n.dedupOptions
+	}
+	dd, err := transport.NewDedup(out, options)
 	if err != nil {
 		t.Fatal(err)
 	}

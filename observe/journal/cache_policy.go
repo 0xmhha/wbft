@@ -52,6 +52,9 @@ func decodeCachePolicyOptions(raw []uint64) (*CachePolicyOptions, error) {
 // ValidateRuntimeProfiles checks functional replay capability independently
 // from record decoding. A recognized but unimplemented policy stays unavailable.
 func (o CoreOptions) ValidateRuntimeProfiles() error {
+	if err := o.RoundChangeRetry.Validate(); err != nil {
+		return err
+	}
 	if err := o.Observation.Validate(); err != nil {
 		return err
 	}

@@ -123,6 +123,7 @@ const (
 
 // New returns a node that is not started.
 func New(cfg Config, d Deps) (*Node, error) {
+	cfg.RoundChangeRetry = cfg.RoundChangeRetry.Copy()
 	if err := freezeObservation(&cfg); err != nil {
 		return nil, err
 	}
@@ -329,6 +330,9 @@ func (n *Node) start(ctx context.Context) error {
 	if err := consensus.CheckInitialRoundBudget(cfg, n.coreImprovements); err != nil {
 		return refuse("%v", err)
 	}
+	if err := n.cfg.RoundChangeRetry.Validate(cfg); err != nil {
+		return refuse("%v", err)
+	}
 	if err := types.CheckConsensusRules(info.ChainConfigJSON); err != nil {
 		return refuse("%v", err)
 	}
@@ -383,6 +387,13 @@ func (n *Node) start(ctx context.Context) error {
 	if n.signer != nil {
 		self = n.signer.Address()
 	}
+	core := consensus.Options{Config: cfg, Self: self, Improvements: n.coreImprovements, RoundChangeRetry: n.cfg.RoundChangeRetry}
+	if n.cfg.RoundChangeRetry != nil && n.signer == nil {
+		return refuse("round-change retries require a signing validator")
+	}
+	if err := n.validateRetryDiagnostic(core); err != nil {
+		return err
+	}
 	// The node always writes its events: to the recent records of
 	// wbft_events and, when configured, to Deps.Events. One goroutine
 	// writes them from a bounded queue, so that a slow event file does not
@@ -433,7 +444,7 @@ func (n *Node) start(ctx context.Context) error {
 	n.wal = log
 
 	// 4. Handshake.
-	st, err := runner.InspectWAL(n.fs, filepath.Join(n.cfg.DataDir, walDir))
+	st, err := runner.InspectWALForConfig(n.fs, filepath.Join(n.cfg.DataDir, walDir), runner.Config{Core: core, ReplayWAL: true, NextHeight: n.cfg.NextHeight})
 	if err != nil {
 		return fmt.Errorf("node: write-ahead log: %w", err)
 	}
@@ -490,7 +501,6 @@ func (n *Node) start(ctx context.Context) error {
 
 	// 6. Consensus core. With a journal, the transport's frames and peer
 	// streams are recorded too.
-	core := consensus.Options{Config: cfg, Self: self, Improvements: n.coreImprovements}
 	jw, err := n.openJournal(core, runID)
 	if err != nil {
 		return err
@@ -531,7 +541,7 @@ func (n *Node) start(ctx context.Context) error {
 				}
 			}
 		}
-		options := transport.DedupOptions{Self: self, Suppressed: func(c event.SendCause) { suppressed.Inc(string(c)) }, Inbound: inbound}
+		options := transport.DedupOptions{Self: self, RoundChangeRetry: n.cfg.RoundChangeRetry != nil, Suppressed: func(c event.SendCause) { suppressed.Inc(string(c)) }, Inbound: inbound}
 		if policy := n.cfg.CachePolicy; policy != nil {
 			write := policy.WriteOptions()
 			if n.diagnostic != nil {
@@ -623,6 +633,9 @@ func (n *Node) openJournal(core consensus.Options, runID string) (*journal.FileW
 		ChainID: info.ChainID, GenesisHash: info.GenesisHash, Mode: n.mode(), WireOffset: n.wireOffset(),
 		Core: journal.CoreOptions{ProposerPolicyProfile: journal.CheckedProposerPolicyProfile, SyncTrace: journal.SyncTraceVersion, CacheTrace: journal.CacheTraceVersion, TimerTrace: journal.TimerTraceVersion, ChainConfig: info.ChainConfigJSON, Self: core.Self, Improvements: uint64(core.Improvements),
 			BacklogLimit: uint64(core.BacklogLimit)}}
+	if core.RoundChangeRetry != nil {
+		id.Core.RoundChangeRetry = &journal.RoundChangeRetryOptions{Profile: journal.RoundChangeRetryProfile, MaxIntervalMs: core.RoundChangeRetry.MaxIntervalMs}
+	}
 	if l := n.cfg.NextHeight; l != nil {
 		id.Core.NextHeight = &journal.DeferredOptions{Profile: journal.DeferredInputProfile, Entries: l.Entries, Bytes: l.Bytes, PerPeer: l.PerPeer, PerSource: l.PerSource}
 	}
@@ -922,6 +935,9 @@ func (n *Node) mode() string {
 // effective proposer policy and integer thresholds, and the execution layer's.
 func (n *Node) improvements() []rpc.Improvement {
 	out := []rpc.Improvement{}
+	if n.cfg.RoundChangeRetry != nil {
+		out = append(out, rpc.Improvement{Name: "round_change_retry", Source: "node"})
+	}
 	for _, name := range n.coreImprovements.Names() {
 		i, _ := consensus.ParseImprovement(name)
 		source := "node"

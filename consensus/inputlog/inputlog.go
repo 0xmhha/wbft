@@ -548,6 +548,12 @@ func encodeOutput(o consensus.Output) (any, error) {
 			// do not change.
 			it = append(it, uint64(1))
 		}
+		if retry := v.Retry; retry != nil {
+			if !v.BadBlockReleased {
+				it = append(it, uint64(0))
+			}
+			it = append(it, []any{uint64(1), retry.View.Sequence.Big(), retry.View.Round.Big(), retry.Generation, retry.Key})
+		}
 		return it, nil
 	case consensus.Relay:
 		return []any{uint64(2), uint64(v.Code), v.Payload, consensus.ValsetDigest(v.Validators)}, nil
@@ -566,7 +572,15 @@ func encodeOutput(o consensus.Output) (any, error) {
 			}
 			msg = w.Payload
 		}
-		return []any{uint64(4), uint64(v.Kind), v.View.Sequence.Big(), v.View.Round.Big(), v.Round.Big(), uint64(int64(v.Duration)), v.Gen, v.Digest, msg}, nil
+		it := []any{uint64(4), uint64(v.Kind), v.View.Sequence.Big(), v.View.Round.Big(), v.Round.Big(), uint64(int64(v.Duration)), v.Gen, v.Digest, msg}
+		if retry := v.Retry; retry != nil {
+			known := uint64(0)
+			if retry.Known {
+				known = 1
+			}
+			it = append(it, []any{uint64(1), known, retry.Key, retry.Exponent, retry.MaxIntervalMs})
+		}
+		return it, nil
 	case consensus.CancelTimers:
 		ks := make([]uint64, len(v.Kinds))
 		for i, k := range v.Kinds {

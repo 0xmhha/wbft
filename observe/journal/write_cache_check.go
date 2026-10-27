@@ -33,6 +33,7 @@ type writeCacheOwner struct {
 type writeCacheProfile struct {
 	limits   transport.CachePolicyLimits
 	declared bool
+	retry    RoundChangeRetryOptions
 }
 type writeModelKey struct {
 	code uint64
@@ -43,6 +44,7 @@ type writeModelPeer struct {
 	keys []writeModelKey
 }
 type writeCacheModel struct {
+	retry    RoundChangeRetryOptions
 	next     uint64
 	closed   bool
 	limits   transport.CachePolicyLimits
@@ -93,6 +95,12 @@ func CheckWriteCacheTransitions(records []Record, limits WriteCacheCheckLimits) 
 				}
 				profile = writeCacheProfile{limits: body.Core.CachePolicy.Limits, declared: true}
 			}
+			if body.Core.RoundChangeRetry != nil {
+				if body.Core.RoundChangeRetry.Validate() != nil {
+					return unavailable("unsupported_retry_profile")
+				}
+				profile.retry = *body.Core.RoundChangeRetry
+			}
 			if old, ok := profiles[currentRun]; ok && old != profile {
 				return inconsistent("writer_profile_changed")
 			}
@@ -112,6 +120,9 @@ func CheckWriteCacheTransitions(records []Record, limits WriteCacheCheckLimits) 
 				return unavailable("profile_or_writer_missing")
 			}
 			t := body.Transition
+			if t.Retry.Version != 0 && profile.retry.Profile == 0 {
+				return unavailable("retry_profile_missing")
+			}
 			if body.Mono < 0 || !validWriteTransition(t) {
 				return inconsistent("invalid_transition_shape")
 			}
@@ -121,7 +132,7 @@ func CheckWriteCacheTransitions(records []Record, limits WriteCacheCheckLimits) 
 				if uint64(len(models)) >= limits.Ledgers {
 					return unavailable("ledger_limit")
 				}
-				model = &writeCacheModel{next: 1, limits: profile.limits, pending: make(map[uint64]transport.WriteIdentity), requests: make(map[uint64]transport.WriteIdentity), buffered: make(map[uint64]transport.WriteTransition)}
+				model = &writeCacheModel{next: 1, retry: profile.retry, limits: profile.limits, pending: make(map[uint64]transport.WriteIdentity), requests: make(map[uint64]transport.WriteIdentity), buffered: make(map[uint64]transport.WriteTransition)}
 				models[owner] = model
 				report.Ledgers++
 			}
@@ -248,7 +259,7 @@ func (m *writeCacheModel) apply(t transport.WriteTransition) error {
 		case transport.WritePrepare:
 			expected := transport.WriteUnavailable
 			if !m.closed && t.Valid && t.SessionActive {
-				if m.recent(t.Input) {
+				if recent := m.recent(t.Input); recent && t.Retry.Version == 0 {
 					expected = transport.WriteAlreadyRecent
 				} else {
 					expected = transport.WriteReserved

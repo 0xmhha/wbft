@@ -51,6 +51,7 @@ type State struct {
 	roundProposalLive bool
 	roundProposalView types.View
 	roundProposalHash types.Hash
+	roundChangeRetry  roundChangeRetryState
 
 	cur          *roundState
 	state        StateName
@@ -121,8 +122,13 @@ type pendingRequest struct {
 // Enabled reports one immutable local behavior selected for this core.
 func (s *State) Enabled(i Improvement) bool { return s.opt.Improvements.Has(i) }
 
-// NewState returns a stopped core. Step(Start) starts it.
+// NewState returns a stopped core. Step(Start) starts it. An invalid explicit
+// retry policy panics; runtime constructors return its validation error first.
 func NewState(opt Options) *State {
+	opt.RoundChangeRetry = opt.RoundChangeRetry.Copy()
+	if err := opt.RoundChangeRetry.Validate(opt.Config); err != nil {
+		panic(err) // Runtime constructors validate caller configuration first.
+	}
 	if opt.BacklogLimit < MinBacklogLimit {
 		opt.BacklogLimit = MinBacklogLimit
 	}
@@ -153,6 +159,7 @@ func (s *State) reset() {
 	s.roundProposalLive = false
 	s.roundProposalView = types.View{}
 	s.roundProposalHash = types.Hash{}
+	s.roundChangeRetry = roundChangeRetryState{}
 }
 
 func (s *State) newRoundChanges() *roundChangeSet {
@@ -204,7 +211,11 @@ func (s *State) RestoreTimerGenerations(g []uint64) error {
 func (s *State) Running() bool { return s.running }
 
 // Options returns the options the core was created with.
-func (s *State) Options() Options { return s.opt }
+func (s *State) Options() Options {
+	opt := s.opt
+	opt.RoundChangeRetry = opt.RoundChangeRetry.Copy()
+	return opt
+}
 
 // step collects the outputs of one Step.
 type step struct {

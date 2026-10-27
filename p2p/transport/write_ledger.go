@@ -126,6 +126,10 @@ func (l *WriteLedger) pruneClosed(t *WriteTransition) {
 // distinguish the decision when no ticket is returned; capacity refusal and
 // pending suppression are not evidence that a message was written.
 func (l *WriteLedger) Prepare(target WritePeer, code uint64, payload []byte) (ticket WriteTicket, decision WriteDecision) {
+	return l.prepare(target, code, payload, nil)
+}
+
+func (l *WriteLedger) prepare(target WritePeer, code uint64, payload []byte, retry *RoundChangeRetrySource) (ticket WriteTicket, decision WriteDecision) {
 	active := target.Session.Active()
 	valid := active && CheckOutbound(code, payload) == nil
 	if l.opt.Trace == nil && !valid {
@@ -134,6 +138,9 @@ func (l *WriteLedger) Prepare(target WritePeer, code uint64, payload []byte) (ti
 	key := l.key(code, payload)
 	l.mu.Lock()
 	event := l.transition(WritePrepare)
+	if retry != nil {
+		event.Retry = *retry
+	}
 	if l.opt.Trace != nil {
 		event.Input = l.identity(target, code, key, sha256.Sum256(payload))
 		event.Valid = valid
@@ -145,7 +152,7 @@ func (l *WriteLedger) Prepare(target WritePeer, code uint64, payload []byte) (ti
 	}
 	l.pruneClosed(&event)
 	if recent, ok := l.recent.Get(target.Addr); ok {
-		if _, exists := recent.Get(key); exists {
+		if _, exists := recent.Get(key); exists && retry == nil {
 			return WriteTicket{}, WriteAlreadyRecent
 		}
 	}

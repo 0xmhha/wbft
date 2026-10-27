@@ -289,7 +289,7 @@ func (t recordedTransport) BeginCache(self types.Address) uint64 {
 	return id
 }
 func (t recordedTransport) CacheOperation(op transport.CacheOperation) {
-	t.rec.jw.Put(journal.Record{Body: &journal.CacheRec{Instance: op.Instance, Sequence: op.Sequence, Action: op.Action, Peer: op.Peer, Code: op.Code, Key: op.Key, PayloadSHA256: op.PayloadSHA256, Cause: op.Cause, Known: op.Known, Recent: op.Recent, Available: op.Available, Candidates: op.Candidates, Targets: op.Targets, Suppressed: op.Suppressed, Mono: t.rec.clock.Mono(), WallNs: t.rec.clock.Now().UnixNano()}})
+	t.rec.jw.Put(journal.Record{Body: &journal.CacheRec{Retry: op.Retry, Instance: op.Instance, Sequence: op.Sequence, Action: op.Action, Peer: op.Peer, Code: op.Code, Key: op.Key, PayloadSHA256: op.PayloadSHA256, Cause: op.Cause, Known: op.Known, Recent: op.Recent, Available: op.Available, Candidates: op.Candidates, Targets: op.Targets, Suppressed: op.Suppressed, Mono: t.rec.clock.Mono(), WallNs: t.rec.clock.Now().UnixNano()}})
 }
 func (t recordedTransport) SuppressedCache(peer types.Address, _ uint64, payload []byte, cause event.SendCause, reason string, instance, operation uint64) {
 	t.rec.jw.Put(journal.Record{Body: &journal.SuppressedRec{PeerIdx: t.rec.peerIdx(peer), DedupKey: codec.DedupKey(payload), Cause: cause, Reason: reason, Cache: instance, Operation: operation}})

@@ -32,6 +32,14 @@ type Vars struct {
 	ExtraPrepareSeals []VoteVar
 	ExtraCommitSeals  []VoteVar
 	RoundProposalWait *RoundProposalWaitVar `json:"round_proposal_wait,omitempty"`
+	RoundChangeRetry  *RoundChangeRetryVar  `json:"round_change_retry,omitempty"`
+}
+
+// RoundChangeRetryVar is local intent state, not a remote delivery receipt.
+type RoundChangeRetryVar struct {
+	View     types.View
+	Key      types.Hash
+	Exponent uint64
 }
 
 // RoundProposalWaitVar describes a local timestamp wait, not a received frame.
@@ -88,6 +96,9 @@ func (s *State) Vars() *Vars {
 	}
 	if s.opt.Improvements.Has(ValidateRoundProposals) && s.roundProposalLive {
 		v.RoundProposalWait = &RoundProposalWaitVar{View: s.roundProposalView, Hash: s.roundProposalHash, Generation: s.gen[RoundProposalTimer]}
+	}
+	if r := s.roundChangeRetry; s.opt.RoundChangeRetry != nil && r.valid && r.view.Cmp(c.view) == 0 {
+		v.RoundChangeRetry = &RoundChangeRetryVar{View: r.view, Key: r.key, Exponent: r.exponent}
 	}
 	if c.preparedBlock != nil {
 		h := blockHash(c.preparedBlock)

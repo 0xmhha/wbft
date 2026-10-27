@@ -3,6 +3,8 @@ package journal
 import (
 	"bytes"
 	"errors"
+	"math"
+	"time"
 
 	"github.com/0xmhha/wbft/codec"
 	"github.com/0xmhha/wbft/codec/rlp"
@@ -25,10 +27,26 @@ type restorePriorWire struct {
 	Source   []byte
 }
 
+// This wire decoder intentionally shares no runner planner or boundary type.
+type restoreRetryWire struct {
+	Version, MaximumMs, Improvements, Format uint64
+	Boundary                                 []byte
+}
+
 func decodeRestoreBoundary(format uint8, body []byte) (restoreBoundary, *consensus.PriorHeadSource, error) {
 	var b restoreBoundary
 	var w restorePriorWire
 	switch format {
+	case 4:
+		var retry restoreRetryWire
+		if rlp.DecodeStrict(body, &retry) != nil || retry.Version != 1 || retry.MaximumMs == 0 ||
+			retry.MaximumMs > uint64(math.MaxInt64/int64(time.Millisecond)) || retry.Improvements&^uint64(consensus.KnownImprovements()) != 0 ||
+			retry.Format != 1 && retry.Format != 2 && retry.Format != 3 {
+			return b, nil, ErrRestoreSource
+		}
+		base, prior, err := decodeRestoreBoundary(uint8(retry.Format), retry.Boundary)
+		base.retryMaximumMs, base.retryImprovements = retry.MaximumMs, retry.Improvements
+		return base, prior, err
 	case 1:
 		err := rlp.DecodeStrict(body, &b)
 		return b, nil, err

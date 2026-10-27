@@ -228,6 +228,13 @@ func scan(b []byte) scanResult {
 	return res
 }
 
+// OpenOS opens a log on the operating-system filesystem. It has the same
+// recovery and synchronization semantics as Open and is suitable for external
+// runner integrations that cannot import the internal filesystem adapter.
+func OpenOS(dir string, opt Options) (*Log, Recovery, error) {
+	return Open(fsys.OS{}, dir, opt)
+}
+
 // Open opens the log in dir, creating the directory if needed, and repairs
 // it: an incomplete frame at the end of the last segment is cut off; a
 // segment with a damaged frame (or an incomplete one before the last
