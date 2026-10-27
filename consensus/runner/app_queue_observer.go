@@ -50,7 +50,11 @@ func (r *Runner) appQueueRecordLocked(action string, request uint64, in consensu
 	} else if !r.appSourceExhausted {
 		r.appSourceSequence++
 	}
-	rec := &journal.AppQueueRec{Version: journal.AppQueueSourceVersion, Sequence: r.appSourceSequence, Request: request, EngineRun: engine, Step: step, Action: action, Before: uint64(before), After: uint64(len(r.appQ)), Mono: r.d.Clock.Mono(), WallNs: r.d.Clock.Now().UnixNano()}
+	version := journal.AppQueueSourceVersion
+	if action == "close" {
+		version = journal.AppQueueCloseSourceVersion
+	}
+	rec := &journal.AppQueueRec{Version: version, Sequence: r.appSourceSequence, Request: request, EngineRun: engine, Step: step, Action: action, Before: uint64(before), After: uint64(len(r.appQ)), Mono: r.d.Clock.Mono(), WallNs: r.d.Clock.Now().UnixNano()}
 	if in != nil {
 		rec.InputKind = inputlog.Kind(in)
 		var err error
@@ -69,4 +73,23 @@ func (r *Runner) publishAppQueue(rec *journal.AppQueueRec) {
 	if rec != nil {
 		r.d.AppQueueSources.ObserveAppQueueSource(*rec)
 	}
+}
+
+// closeAppQueue runs only after the final worker joins. Unlike Stop's clear,
+// it is a terminal lifecycle operation and must not invent another core Stop.
+func (r *Runner) closeAppQueue() {
+	r.appMu.Lock()
+	if r.appQueueClosed {
+		r.appMu.Unlock()
+		return
+	}
+	r.appQueueClosed = true
+	before := len(r.appQ)
+	r.appQ, r.headNote = nil, nil
+	observation := r.appQueueRecordLocked("close", 0, nil, r.engineRun, r.step, before)
+	if observation != nil && observation.Unavailable == "" && (r.engineRun == 0 || r.step == 0) {
+		observation.Unavailable = "stop_source_missing"
+	}
+	r.appMu.Unlock()
+	r.publishAppQueue(observation)
 }

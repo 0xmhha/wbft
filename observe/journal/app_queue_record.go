@@ -10,6 +10,10 @@ import (
 
 const AppQueueSourceVersion uint64 = 1
 
+// AppQueueCloseSourceVersion extends only the terminal close operation.
+// Existing queue operations retain their original version and encoding.
+const AppQueueCloseSourceVersion uint64 = 2
+
 // AppQueueRec records the actual application-input queue mutex order. It is
 // diagnostic metadata, not proof of application execution or a complete schedule.
 // Request identifies the original append; engine/step bind a pop or Stop clear.
@@ -38,14 +42,19 @@ func appQueueInputKind(kind string) bool {
 }
 
 func validAppQueueRec(r *AppQueueRec) bool {
-	if r.Version != AppQueueSourceVersion || r.Mono < 0 {
+	if r.Mono < 0 || r.Version != AppQueueSourceVersion && r.Version != AppQueueCloseSourceVersion || (r.Version == AppQueueCloseSourceVersion) != (r.Action == "close") {
 		return false
 	}
-	if r.Unavailable != "" && r.Unavailable != "metadata_exhausted" && r.Unavailable != "input_encoding" {
+	if r.Unavailable != "" && r.Unavailable != "metadata_exhausted" && r.Unavailable != "input_encoding" && (r.Version != AppQueueCloseSourceVersion || r.Unavailable != "stop_source_missing") {
 		return false
 	}
 	if (r.Sequence == 0) != (r.Unavailable == "metadata_exhausted") {
 		return false
+	}
+	if r.Action == "close" {
+		bound := r.EngineRun > 0 && r.Step > 0
+		missing := r.Unavailable == "stop_source_missing" || r.Unavailable == "metadata_exhausted"
+		return r.Request == 0 && (bound || missing) && r.After == 0 && r.InputKind == "" && len(r.Input) == 0
 	}
 	if r.Action == "clear" {
 		return r.Request == 0 && r.EngineRun > 0 && r.Step > 0 && r.After == 0 && r.InputKind == "" && len(r.Input) == 0

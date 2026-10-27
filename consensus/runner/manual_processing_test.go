@@ -80,7 +80,7 @@ func TestManualProcessingReservesOneCoreInputAndIndependentCheckWorkers(t *testi
 	if err := n.r.Stop(); !errors.Is(err, ErrProcessingPending) || !n.r.Running() {
 		t.Fatal("stop overtook reserved core input", err)
 	}
-	if err := n.r.Close(); !errors.Is(err, ErrProcessingPending) || n.r.closed {
+	if err := n.r.Close(); !errors.Is(err, ErrProcessingPending) || n.r.closed || n.r.appClosing {
 		t.Fatal("close discarded reserved core input", err)
 	}
 	n.clock.advance(100 * time.Millisecond)

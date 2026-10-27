@@ -28,6 +28,7 @@ type AppQueueCheck struct {
 	Coalesced      uint64 `json:"coalesced,string"`
 	Popped         uint64 `json:"popped,string"`
 	Clears         uint64 `json:"clears,string"`
+	Closes         uint64 `json:"closes,omitempty,string"`
 	ClearedInputs  uint64 `json:"cleared_inputs,string"`
 	Retained       uint64 `json:"retained,string"`
 }
@@ -62,9 +63,14 @@ func checkAppQueueSources(records []Record, limits AppQueueLimits, restored bool
 	steps := map[appCoreKey]*CoreStepRec{}
 	wanted := map[appCoreKey]bool{}
 	stops := map[appCoreKey]bool{}
+	lastSteps := map[string]*CoreStepRec{}
 	base, _, err := inspectApplicationCoreOutputs(records, limits.Core, restored, func(writer string, source *CoreStepRec, _ []consensus.Output) {
 		key := appCoreKey{writer, source.EngineRun, source.Step}
 		steps[key] = source
+		last := lastSteps[writer]
+		if last == nil || source.EngineRun > last.EngineRun || source.EngineRun == last.EngineRun && source.Step > last.Step {
+			lastSteps[writer] = source
+		}
 		if source.Via == "app" {
 			wanted[key] = false
 		}
@@ -98,7 +104,7 @@ func checkAppQueueSources(records []Record, limits AppQueueLimits, restored bool
 			if operations >= limits.Operations {
 				return unavailable("application_queue_operation_limit")
 			}
-			if r.Version != AppQueueSourceVersion {
+			if r.Version != AppQueueSourceVersion && r.Version != AppQueueCloseSourceVersion {
 				return unavailable("application_queue_version")
 			}
 			if !validAppQueueRec(r) {
@@ -142,9 +148,13 @@ func checkAppQueueSources(records []Record, limits AppQueueLimits, restored bool
 		var queue []*AppQueueRec
 		var head []byte
 		headPresent := false
+		closed := false
 		var previous uint64
 		var mono time.Duration
 		for _, r := range items {
+			if closed {
+				return inconsistent("application_queue_mutation_after_close")
+			}
 			if r.Sequence == previous {
 				return inconsistent("application_queue_sequence_repeated")
 			}
@@ -156,7 +166,7 @@ func checkAppQueueSources(records []Record, limits AppQueueLimits, restored bool
 			}
 			previous, mono = r.Sequence, r.Mono
 			var decoded consensus.Input
-			if r.Action != "clear" {
+			if r.Action != "clear" && r.Action != "close" {
 				decoded, err = inputlog.Decode(r.InputKind, r.Input, nil)
 				if err != nil {
 					return inconsistent("application_queue_input_encoding")
@@ -220,6 +230,19 @@ func checkAppQueueSources(records []Record, limits AppQueueLimits, restored bool
 				wanted[key] = true
 				queue = queue[1:]
 				report.Popped++
+			case "close":
+				key := appCoreKey{name, r.EngineRun, r.Step}
+				step := steps[key]
+				if step == nil {
+					return unavailable("application_queue_close_stop_missing")
+				}
+				if step != lastSteps[name] || step.InputKind != inputlog.KindStop || !stops[key] || r.Mono < time.Duration(step.Observed.Mono) {
+					return inconsistent("application_queue_close_stop_changed")
+				}
+				report.ClearedInputs += uint64(len(queue))
+				queue, head, headPresent = nil, nil, false
+				closed = true
+				report.Closes++
 			case "clear":
 				key := appCoreKey{name, r.EngineRun, r.Step}
 				step := steps[key]
