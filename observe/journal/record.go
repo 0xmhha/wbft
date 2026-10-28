@@ -46,6 +46,8 @@ const (
 	KindSignerCall      Kind = 24 // original runner signing and own-message WAL call
 	KindApplication     Kind = 25 // original application request and response boundary
 	KindRuntime         Kind = 26 // original loop and shutdown call boundaries
+	KindReceiveFailure  Kind = 27 // separate failed-verification cache operations
+	KindInboxFailureHit Kind = 28 // inbox request consumed by a prior failed check
 )
 
 func (k Kind) String() string {
@@ -94,6 +96,10 @@ func (k Kind) String() string {
 		return "application_source"
 	case KindRuntime:
 		return "runtime_source"
+	case KindReceiveFailure:
+		return "receive_failure_cache"
+	case KindInboxFailureHit:
+		return "inbox_failure_hit"
 	case KindRestore:
 		return "restore_source"
 	case KindWALRead:
@@ -136,14 +142,15 @@ type Identity struct {
 // CoreOptions is the consensus.Options of the journaled core in a portable
 // form: the chain configuration as its JSON text (types.ParseChainConfig).
 type CoreOptions struct {
-	RoundChangeRetry      *RoundChangeRetryOptions `json:"round_change_retry,omitempty"`
-	Observation           *ObservationOptions      `json:"observation,omitempty"`
-	CachePolicy           *CachePolicyOptions      `json:"cache_policy,omitempty"`
-	NextHeight            *DeferredOptions         `json:"next_height,omitempty"`
-	ProposerPolicyProfile string                   `json:"proposer_policy_profile,omitempty"`
-	TimerTrace            uint64                   `json:"timer_trace,omitempty"`
-	CacheTrace            uint64                   `json:"cache_trace,omitempty"`
-	SyncTrace             uint64                   `json:"sync_trace,omitempty"`
+	ReceiveFailureCache   *ReceiveFailureCacheOptions `json:"receive_failure_cache,omitempty"`
+	RoundChangeRetry      *RoundChangeRetryOptions    `json:"round_change_retry,omitempty"`
+	Observation           *ObservationOptions         `json:"observation,omitempty"`
+	CachePolicy           *CachePolicyOptions         `json:"cache_policy,omitempty"`
+	NextHeight            *DeferredOptions            `json:"next_height,omitempty"`
+	ProposerPolicyProfile string                      `json:"proposer_policy_profile,omitempty"`
+	TimerTrace            uint64                      `json:"timer_trace,omitempty"`
+	CacheTrace            uint64                      `json:"cache_trace,omitempty"`
+	SyncTrace             uint64                      `json:"sync_trace,omitempty"`
 	ChainConfig           []byte
 	Self                  types.Address
 	Improvements          uint64
@@ -357,6 +364,7 @@ type segmentRLP struct {
 	CachePolicy           []uint64 `rlp:"optional"`
 	Observation           []byte   `rlp:"optional"`
 	RoundChangeRetry      []uint64 `rlp:"optional"`
+	ReceiveFailureCache   []uint64 `rlp:"optional"`
 }
 
 type peerRLP struct {
@@ -598,7 +606,7 @@ func encodeBody(r Record, jseq uint64) ([]byte, error) {
 			BLSPublicKey: bytesOrEmpty(b.BLSPublicKey), Run: b.Run, Commit: b.Commit, ChainID: bigOrZero(b.ChainID),
 			GenesisHash: b.GenesisHash, Mode: b.Mode, WireOffset: b.WireOffset, ConfigDigest: b.ConfigDigest,
 			ChainConfig: bytesOrEmpty(b.Core.ChainConfig), CoreSelf: b.Core.Self, Improvements: b.Core.Improvements,
-			BacklogLimit: b.Core.BacklogLimit, Profile: b.Core.Profile, EngineRun: b.EngineRun, TimerTrace: b.Core.TimerTrace, CacheTrace: b.Core.CacheTrace, SyncTrace: b.Core.SyncTrace, ProposerPolicyProfile: b.Core.ProposerPolicyProfile, NextHeight: b.Core.NextHeight.encode(), CachePolicy: b.Core.CachePolicy.encode(), Observation: observation, RoundChangeRetry: b.Core.RoundChangeRetry.encode()})
+			BacklogLimit: b.Core.BacklogLimit, Profile: b.Core.Profile, EngineRun: b.EngineRun, TimerTrace: b.Core.TimerTrace, CacheTrace: b.Core.CacheTrace, SyncTrace: b.Core.SyncTrace, ProposerPolicyProfile: b.Core.ProposerPolicyProfile, NextHeight: b.Core.NextHeight.encode(), CachePolicy: b.Core.CachePolicy.encode(), Observation: observation, RoundChangeRetry: b.Core.RoundChangeRetry.encode(), ReceiveFailureCache: b.Core.ReceiveFailureCache.encode()})
 	case *PeerRec:
 		return rlp.Encode(&peerRLP{Format: Format, JSeq: jseq, PeerIdx: uint64(b.PeerIdx), Addr: b.Addr, NodeID: bytesOrEmpty(b.NodeID),
 			Remote: b.Remote, Event: b.Event, Reason: b.Reason, By: b.By, Cause: b.Cause})
@@ -671,6 +679,10 @@ func encodeBody(r Record, jseq uint64) ([]byte, error) {
 		return encodeAppQueueRec(b, jseq)
 	case *InboxRec:
 		return encodeInboxRec(b, jseq)
+	case *ReceiveFailureCacheRec:
+		return encodeReceiveFailureRec(b, jseq)
+	case *InboxFailureHitRec:
+		return encodeInboxFailureHit(b, jseq)
 	case *InternalRec:
 		return encodeInternalRec(b, jseq)
 	case *SelectionRec:
@@ -743,10 +755,14 @@ func decodeBody(k Kind, body []byte) (Record, error) {
 		if err != nil {
 			return fail(err)
 		}
+		failure, err := decodeReceiveFailureCacheOptions(w.ReceiveFailureCache)
+		if err != nil {
+			return fail(err)
+		}
 		return Record{Kind: k, JSeq: w.JSeq, Body: &SegmentRec{EngineRun: w.EngineRun, Identity: Identity{
 			Self: w.Self, NodeID: w.NodeID, BLSPublicKey: w.BLSPublicKey, Run: w.Run, Commit: w.Commit, ChainID: w.ChainID,
 			GenesisHash: w.GenesisHash, Mode: w.Mode, WireOffset: w.WireOffset, ConfigDigest: w.ConfigDigest,
-			Core: CoreOptions{ChainConfig: w.ChainConfig, Self: w.CoreSelf, Improvements: w.Improvements, BacklogLimit: w.BacklogLimit, Profile: w.Profile, TimerTrace: w.TimerTrace, CacheTrace: w.CacheTrace, SyncTrace: w.SyncTrace, ProposerPolicyProfile: w.ProposerPolicyProfile, NextHeight: deferred, CachePolicy: cache, Observation: observation, RoundChangeRetry: retry},
+			Core: CoreOptions{ChainConfig: w.ChainConfig, Self: w.CoreSelf, Improvements: w.Improvements, BacklogLimit: w.BacklogLimit, Profile: w.Profile, TimerTrace: w.TimerTrace, CacheTrace: w.CacheTrace, SyncTrace: w.SyncTrace, ProposerPolicyProfile: w.ProposerPolicyProfile, NextHeight: deferred, CachePolicy: cache, Observation: observation, RoundChangeRetry: retry, ReceiveFailureCache: failure},
 		}}}, nil
 	case KindPeer:
 		var w peerRLP
@@ -880,6 +896,10 @@ func decodeBody(k Kind, body []byte) (Record, error) {
 		return decodeAppQueueRec(body)
 	case KindInbox:
 		return decodeInboxRec(body)
+	case KindReceiveFailure:
+		return decodeReceiveFailureRec(body)
+	case KindInboxFailureHit:
+		return decodeInboxFailureHit(body)
 	case KindInternal:
 		return decodeInternalRec(body)
 	case KindSelection:
@@ -948,6 +968,10 @@ func kindOf(body any) (Kind, bool) {
 		return KindAppQueue, true
 	case *InboxRec:
 		return KindInbox, true
+	case *ReceiveFailureCacheRec:
+		return KindReceiveFailure, true
+	case *InboxFailureHitRec:
+		return KindInboxFailureHit, true
 	case *InternalRec:
 		return KindInternal, true
 	case *SelectionRec:
@@ -1061,6 +1085,11 @@ func size(r Record) int64 {
 		return 256 + int64(len(b.Input)+len(b.Action)+len(b.Origin)+len(b.InputKind)+len(b.Unavailable))
 	case *InboxRec:
 		return 768 + int64(len(b.Payload)+len(b.Action)+len(b.Result)+len(b.Origin.WriterRun)+len(b.StreamRun)+len(b.ViewSequence)+len(b.ViewRound)+len(b.SnapshotPhase)+len(b.Unavailable)+20*(len(b.Order)+len(b.Candidates)))
+	case *ReceiveFailureCacheRec:
+		e := b.Transition
+		return 640 + int64(len(e.Run)+len(e.RequestedRun)+len(e.Reference.Run)+len(e.Action)+len(e.Unavailable))
+	case *InboxFailureHitRec:
+		return size(Record{Body: &b.Source}) + 128 + int64(len(b.Lookup.Run)+len(b.Original.Run)+len(b.Unavailable))
 	case *FinalizeRec:
 		return 256 + int64(len(b.Arguments)+len(b.Input)+len(b.QueueRun)+len(b.Action)+len(b.Unavailable))
 	case *SyncRec:
@@ -1073,6 +1102,9 @@ func size(r Record) int64 {
 		return n
 	case *SegmentRec:
 		size := int64(len(b.Core.ChainConfig)) + 256
+		if b.Core.ReceiveFailureCache != nil {
+			size += 32
+		}
 		if o := b.Core.Observation; o != nil {
 			size += int64(len(o.ChainID)+len(o.Activation)+len(o.Retention)+len(o.Checkpoint)) + 512
 		}

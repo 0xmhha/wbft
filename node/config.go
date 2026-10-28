@@ -30,6 +30,9 @@ type Config struct {
 	// Nil preserves the original policy. The compatible journal profile is
 	// not available yet, so this runtime API requires Journal.Disabled.
 	CachePolicy *transport.CachePolicyLimits `json:",omitempty"`
+	// ReceiveFailureCache separately retains classified failed checks within
+	// one published validation context. Nil preserves the original behavior.
+	ReceiveFailureCache *ReceiveFailureCacheConfig `json:",omitempty"`
 	// DataDir holds the durable state of the node: the write-ahead log in
 	// wal/, the sign state in privval/state and the message journal in
 	// journal/.

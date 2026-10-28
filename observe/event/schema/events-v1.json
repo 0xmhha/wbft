@@ -127,6 +127,17 @@
           "required": ["profile", "active", "limits"],
           "additionalProperties": false
         },
+        "receive_failure_cache": {
+          "description": "Separate opt-in local signature/membership failure cache. Entries bound retained keys, not memory, CPU, acceptance or diagnostic replay capability.",
+          "type": "object",
+          "properties": {
+            "profile": { "const": "scoped_failure_v1" },
+            "entries": { "type": "integer", "minimum": 1, "maximum": 1024 },
+            "active": { "type": "boolean" }
+          },
+          "required": ["profile", "entries", "active"],
+          "additionalProperties": false
+        },
         "write_queue_model": {
           "description": "Opt-in normal FIFO simulation service. Queue admission, simulated local completion and scenario link arrival are distinct; cache registration retains the legacy policy.",
           "type": "object",

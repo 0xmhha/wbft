@@ -38,6 +38,15 @@ func (w *r01Writer) indexCache(rec journal.Record, pos wal.Position) {
 	if w.cacheErr != nil {
 		return
 	}
+	if s, ok := rec.Body.(*journal.SegmentRec); ok && s.Core.ReceiveFailureCache != nil {
+		w.cacheErr = fmt.Errorf("receive failure sources are unavailable in R01 exports; use the original bundle/journal and check-receive-failures")
+		return
+	}
+	switch rec.Body.(type) {
+	case *journal.ReceiveFailureCacheRec, *journal.InboxFailureHitRec:
+		w.cacheErr = fmt.Errorf("receive failure sources are unavailable in R01 exports; use the original bundle/journal and check-receive-failures")
+		return
+	}
 	if s, ok := rec.Body.(*journal.SegmentRec); ok && s.Core.RoundChangeRetry != nil {
 		w.cacheErr = fmt.Errorf("round-change retry profiles are unavailable in R01 exports; use the original bundle/journal and check-round-change-retry")
 		return

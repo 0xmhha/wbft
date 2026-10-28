@@ -127,6 +127,9 @@ func New(cfg Config, d Deps) (*Node, error) {
 	if err := freezeObservation(&cfg); err != nil {
 		return nil, err
 	}
+	if err := freezeReceiveFailureCache(&cfg); err != nil {
+		return nil, err
+	}
 	if err := freezeDiagnostics(cfg, &d); err != nil {
 		return nil, err
 	}
@@ -391,7 +394,7 @@ func (n *Node) start(ctx context.Context) error {
 	if n.cfg.RoundChangeRetry != nil && n.signer == nil {
 		return refuse("round-change retries require a signing validator")
 	}
-	if err := n.validateRetryDiagnostic(core); err != nil {
+	if err := n.validateCoreDiagnostic(core); err != nil {
 		return err
 	}
 	// The node always writes its events: to the recent records of
@@ -589,6 +592,7 @@ func (n *Node) start(ctx context.Context) error {
 		accepted := n.metrics.Counter("wbft_cache_receive_accepted_total", "Message inputs accepted by the core and retained in the receive cache.", "code")
 		deps.ReceiveCacheRecorded = func(code uint64) { accepted.Inc(fmt.Sprintf("%#x", code)) }
 	}
+	n.connectReceiveFailures(&config, &deps)
 	r, err := runner.New(config, deps)
 	if err != nil {
 		return err
@@ -985,6 +989,9 @@ func (n *Node) startFields(act runner.HandshakeAction, recov wal.Recovery) map[s
 	f["validator"] = n.signer != nil
 	if n.cfg.CachePolicy != nil {
 		f["transport_cache"] = map[string]any{"profile": transport.CachePolicyProfile, "limits": *n.cfg.CachePolicy, "active": n.signer != nil}
+	}
+	if n.cfg.ReceiveFailureCache != nil {
+		f["receive_failure_cache"] = map[string]any{"profile": transport.ReceiveFailureProfile, "entries": n.cfg.ReceiveFailureCache.Entries, "active": n.signer != nil}
 	}
 	if n.chainCfg != nil {
 		f["rules_digest"] = n.chainCfg.RulesDigest()

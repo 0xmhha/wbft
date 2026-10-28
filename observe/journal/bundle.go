@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/0xmhha/wbft/codec"
 	"github.com/0xmhha/wbft/consensus/wal"
 	"github.com/0xmhha/wbft/internal/fsys"
 	"github.com/0xmhha/wbft/types"
@@ -33,7 +34,8 @@ const DefaultBundleWarmup = 2
 
 // BundleOptions select the heights of a bundle: the segments whose steps
 // decide heights in [From, To] (nil: no bound), and Warmup heights before
-// From.
+// From. With neither bound, all available segments are kept once a recorded
+// step head establishes a selectable journal, including heightless metadata.
 type BundleOptions struct {
 	From, To *types.Height
 	Warmup   uint64
@@ -134,18 +136,31 @@ func WriteBundle(fs fsys.FS, dir string, w io.Writer, opt BundleOptions) (*Bundl
 		if si == nil {
 			continue
 		}
+		noteHeight := func(h types.Height) {
+			if si.minH == nil || h.Cmp(*si.minH) < 0 {
+				si.minH = &h
+			}
+			if si.maxH == nil || h.Cmp(*si.maxH) > 0 {
+				si.maxH = &h
+			}
+		}
 		switch b := rec.Body.(type) {
 		case *SegmentRec:
 			if si.first == nil {
 				si.first = b
 			}
 		case *StepRec:
-			h := b.HeadNumber
-			if si.minH == nil || h.Cmp(*si.minH) < 0 {
-				si.minH = &h
-			}
-			if si.maxH == nil || h.Cmp(*si.maxH) > 0 {
-				si.maxH = &h
+			noteHeight(b.HeadNumber)
+		case *CoreStepRec:
+			// The diagnostic source retains its original encoded head. Use
+			// that head only for selection; do not synthesize a StepRec or
+			// grant source consistency or functional replay capability.
+			if len(b.Head) != 0 {
+				head, err := codec.DecodeHeader(b.Head)
+				if err != nil {
+					return nil, fmt.Errorf("journal: bundle: invalid core source head: %w", err)
+				}
+				noteHeight(head.Number)
 			}
 		case *GapRec:
 			si.gaps = append(si.gaps, BundleGap{Segment: si.seg.Name, Dropped: b.Dropped,
@@ -183,6 +198,12 @@ func WriteBundle(fs fsys.FS, dir string, w io.Writer, opt BundleOptions) (*Bundl
 	}
 	if first < 0 {
 		return nil, errors.New("journal: bundle: no segment holds steps in the requested heights")
+	}
+	// Without either range bound, preserve every available segment, including
+	// diagnostic operations before/after the height-bearing steps. A finite
+	// explicit range still selects by its original recorded head interval.
+	if from == nil && to == nil {
+		first, last = 0, len(infos)-1
 	}
 	// Segments without steps between chosen ones belong to the range.
 	chosen := infos[first : last+1]

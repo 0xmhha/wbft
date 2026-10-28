@@ -4,6 +4,7 @@ import (
 	"sync/atomic"
 
 	"github.com/0xmhha/wbft/consensus"
+	"github.com/0xmhha/wbft/p2p/transport"
 )
 
 // snapshotOwner identifies a publication, not a receive-cache validation scope.
@@ -28,8 +29,11 @@ const (
 // exact snapshot and its original owner across later steps and engine controls.
 // The synthetic initial/stopped snapshots are distinct from core snapshots.
 type snapshotPublication struct {
-	snapshot *consensus.Snapshot
-	owner    snapshotOwner
+	snapshot          *consensus.Snapshot
+	owner             snapshotOwner
+	failureContext    *transport.ReceiveFailureContext
+	failureValidation *receiveContext
+	failureSource     transport.ReceiveFailureSource
 }
 
 // publishedSnapshot keeps ownership coherent without a second atomic read or
@@ -55,5 +59,9 @@ func (p *publishedSnapshot) publish(snapshot *consensus.Snapshot, owner snapshot
 // Consumers load one immutable envelope and never infer its owner from the
 // currently running engine or an equivalent validation context.
 func (r *Runner) publishSnapshot(snapshot *consensus.Snapshot, phase string) {
+	if r.receiveFailures != nil {
+		r.publishFailureSnapshot(snapshot, phase)
+		return
+	}
 	r.snap.publish(snapshot, snapshotOwner{engine: r.engineRun, step: r.step, phase: phase, replayed: r.replay.Replayed})
 }

@@ -153,6 +153,10 @@ func (b *inbox) Offer(in transport.Inbound) bool {
 	entry := inboxEntry{in: in}
 	if observation != nil {
 		entry.request = observation.Request
+	} else if r.receiveFailures != nil {
+		// Keep an original append identity without allocating a payload copy
+		// for an absent observer. Exhausted metadata remains zero forever.
+		entry.request = b.nextSourceSequenceLocked()
 	}
 	p.q = append(p.q, entry)
 	p.bytes += int64(len(in.Payload))
@@ -330,11 +334,34 @@ func (b *inbox) check(entry inboxEntry) {
 		snapshotSource = inboxSnapshotSource(publication)
 	}
 	code := codec.Code(in.Code)
-	v, err := consensus.Recover(code, in.Payload, isMember)
+	failureSource := failureWorkerSource(publication, entry.request)
+	if context := r.currentFailureContext(publication); context != nil {
+		if hit, ok := r.receiveFailures.Lookup(context, in, failureSource); ok && r.currentFailureContext(publication) == context {
+			if reason := receiveFailureReason(hit.Class); reason != "" {
+				// Reuse has its own observer and record kind. The staged
+				// constructor still refuses unsupported diagnostic profiles.
+				b.publishFailureHit(entry, hit, publication)
+				r.prefilter(in, nil, event.Ignore, "cached_"+reason, false)
+				if r.d.ReceiveFailureHit != nil {
+					r.d.ReceiveFailureHit(in.Code, hit.Class)
+				}
+				return
+			}
+		}
+	}
+	v, failure, err := consensus.RecoverWithFailure(code, in.Payload, isMember)
+	if r.d.ReceiveRecoveryChecked != nil {
+		r.d.ReceiveRecoveryChecked(code, failure)
+	}
 	if err != nil {
 		reason := "signature"
 		if errors.Is(err, ecdsa.ErrUnauthorizedAddress) {
 			reason = "membership"
+		}
+		if class, ok := receiveFailureClass(failure); ok {
+			if context := r.currentFailureContext(publication); context != nil {
+				r.receiveFailures.Record(context, in, class, failureSource)
+			}
 		}
 		b.rejectedSource(entry, reason, snapshotSource)
 		r.prefilter(in, nil, event.Ignore, reason, false)

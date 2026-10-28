@@ -251,8 +251,16 @@ func (w *FileWriter) CaptureRun() string { return w.id.Run }
 // authorization. Owners must compare them with their actual runtime options.
 func (w *FileWriter) CoreDeclaration() CoreOptions { return cloneCoreOptions(w.id.Core) }
 
+// Copy returns detached declaration values for an immutable diagnostic owner.
+// It neither changes the writer header nor grants replay capability.
+func (o CoreOptions) Copy() CoreOptions { return cloneCoreOptions(o) }
+
 func cloneCoreOptions(o CoreOptions) CoreOptions {
 	o.ChainConfig = bytes.Clone(o.ChainConfig)
+	if o.ReceiveFailureCache != nil {
+		v := *o.ReceiveFailureCache
+		o.ReceiveFailureCache = &v
+	}
 	if o.RoundChangeRetry != nil {
 		v := *o.RoundChangeRetry
 		o.RoundChangeRetry = &v
@@ -337,6 +345,10 @@ func monoOf(r Record) time.Duration {
 		return b.Mono
 	case *InboxRec:
 		return time.Duration(b.Mono)
+	case *ReceiveFailureCacheRec:
+		return b.Mono
+	case *InboxFailureHitRec:
+		return time.Duration(b.Source.Mono)
 	case *InternalRec:
 		return time.Duration(b.Mono)
 	case *SelectionRec:
@@ -514,6 +526,16 @@ func (w *FileWriter) write(r Record) {
 			w.stats.first = int64(b.WallNs)
 		}
 		w.stats.last = int64(b.WallNs)
+	case *ReceiveFailureCacheRec:
+		if w.stats.first == 0 {
+			w.stats.first = b.WallNs
+		}
+		w.stats.last = b.WallNs
+	case *InboxFailureHitRec:
+		if w.stats.first == 0 {
+			w.stats.first = int64(b.Source.WallNs)
+		}
+		w.stats.last = int64(b.Source.WallNs)
 	case *FinalizeRec:
 		if w.stats.first == 0 {
 			w.stats.first = b.WallNs

@@ -2,6 +2,7 @@ package consensus
 
 import (
 	"encoding/hex"
+	"errors"
 
 	"github.com/0xmhha/wbft/codec"
 	"github.com/0xmhha/wbft/crypto/ecdsa"
@@ -27,54 +28,78 @@ type Verified struct {
 //
 // Spec: WBFT-SM-015, WBFT-SM-017
 func Recover(code codec.Code, payload []byte, isMember func(types.Address, types.View) bool) (*Verified, error) {
+	v, _, err := RecoverWithFailure(code, payload, isMember)
+	return v, err
+}
+
+// RecoverWithFailure performs Recover's complete checks and separately names
+// the first failing phase. The classification grants no cache or signer
+// authority. Existing error values and the order of checks are preserved.
+func RecoverWithFailure(code codec.Code, payload []byte, isMember func(types.Address, types.View) bool) (*Verified, RecoveryFailure, error) {
 	m, err := codec.DecodeMessage(code, payload)
 	if err != nil {
-		return nil, err
+		return nil, RecoveryDecode, err
 	}
-	return RecoverDecoded(m, isMember)
+	return RecoverDecodedWithFailure(m, isMember)
 }
 
 // RecoverDecoded is Recover for an already decoded message.
 func RecoverDecoded(m *codec.Message, isMember func(types.Address, types.View) bool) (*Verified, error) {
+	v, _, err := RecoverDecodedWithFailure(m, isMember)
+	return v, err
+}
+
+// RecoverDecodedWithFailure is RecoverWithFailure for an already decoded
+// message. Membership remains a check of the caller's current authority
+// context; a valid cryptographic signature alone does not satisfy it.
+func RecoverDecodedWithFailure(m *codec.Message, isMember func(types.Address, types.View) bool) (*Verified, RecoveryFailure, error) {
 	v := &Verified{Msg: m}
-	one := func(x *codec.Message) (types.Address, error) {
+	one := func(x *codec.Message) (types.Address, RecoveryFailure, error) {
 		payload, err := codec.SigningPayload(x, false, nil)
 		if err != nil {
-			return types.Address{}, err
+			return types.Address{}, RecoveryEncoding, err
 		}
 		member := func(a types.Address) bool { return isMember == nil || isMember(a, x.View) }
-		return ecdsa.CheckValidatorSignature(member, payload, x.Signature)
+		source, err := ecdsa.CheckValidatorSignature(member, payload, x.Signature)
+		if err != nil {
+			if errors.Is(err, ecdsa.ErrUnauthorizedAddress) {
+				return source, RecoveryMembership, err
+			}
+			return source, RecoverySignature, err
+		}
+		return source, RecoverySucceeded, nil
 	}
 	var err error
-	if v.Source, err = one(m); err != nil {
-		return nil, err
+	var failure RecoveryFailure
+	if v.Source, failure, err = one(m); err != nil {
+		return nil, failure, err
 	}
 	switch m.Code {
 	case codec.CodeRoundChange:
 		for _, p := range m.Prepares {
-			a, err := one(p)
+			a, failure, err := one(p)
 			if err != nil {
-				return nil, err
+				return nil, failure, err
 			}
 			v.PrepareSources = append(v.PrepareSources, a)
 		}
 	case codec.CodePreprepare:
 		for _, rc := range m.RoundChanges {
-			a, err := one(rc)
+			a, failure, err := one(rc)
 			if err != nil {
-				return nil, err
+				return nil, failure, err
 			}
 			v.RoundChangeSources = append(v.RoundChangeSources, a)
 		}
 		for _, p := range m.Prepares {
-			a, err := one(p)
+			a, failure, err := one(p)
 			if err != nil {
-				return nil, err
+				return nil, failure, err
 			}
 			v.PrepareSources = append(v.PrepareSources, a)
 		}
 	}
-	return v, nil
+	return v, RecoverySucceeded, nil
 }
 
 // Encode returns rlp_encode(v.Msg).

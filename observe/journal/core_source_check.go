@@ -98,6 +98,13 @@ func inspectCoreSourceStates(records []Record, limits CoreSourceLimits, capture 
 }
 
 func inspectCoreSourceStatesRestored(records []Record, limits CoreSourceLimits, capture func(string, *CoreStepRec, []consensus.Output), snapshots func(string, *CoreStepRec, *consensus.Snapshot), seeds map[coreSourceRunKey]restoredCoreSeed) (CoreSourceCheck, []coreSourceAccepted, error) {
+	return inspectCoreSourceProfile(records, limits, capture, snapshots, seeds, false)
+}
+
+// The private failure inspector reconstructs the same original core inputs.
+// Its separate cache/inbox proof must succeed before it reports consistency.
+// Ordinary callers retain the unsupported-profile guard.
+func inspectCoreSourceProfile(records []Record, limits CoreSourceLimits, capture func(string, *CoreStepRec, []consensus.Output), snapshots func(string, *CoreStepRec, *consensus.Snapshot), seeds map[coreSourceRunKey]restoredCoreSeed, failures bool) (CoreSourceCheck, []coreSourceAccepted, error) {
 	report := CoreSourceCheck{Status: "unavailable", Scope: "core_execution_on_recorded_inputs", PhysicalStatus: "unavailable", ScheduleStatus: "unavailable"}
 	unavailable := func(reason string) (CoreSourceCheck, []coreSourceAccepted, error) {
 		report.Status, report.Reason = "unavailable", reason
@@ -138,6 +145,16 @@ func inspectCoreSourceStatesRestored(records []Record, limits CoreSourceLimits, 
 			if len(s.Core.ChainConfig) == 0 {
 				return unavailable("core_configuration_missing")
 			}
+			if s.Core.ReceiveFailureCache != nil {
+				// Decoding the declaration does not make the existing source
+				// inspector understand cached failures or their inbox positions.
+				if !failures {
+					return unavailable("receive_failure_source_profile_unavailable")
+				}
+				if s.Core.validateReceiveFailureHeader() != nil {
+					return unavailable("unsupported_receive_failure_declaration")
+				}
+			}
 			if s.Core.BacklogLimit > math.MaxInt {
 				return unavailable("core_backlog_range")
 			}
@@ -152,6 +169,10 @@ func inspectCoreSourceStatesRestored(records []Record, limits CoreSourceLimits, 
 				return inconsistent("writer_configuration_changed")
 			}
 			writers[writer] = w
+		case *ReceiveFailureCacheRec, *InboxFailureHitRec:
+			if !failures {
+				return unavailable("receive_failure_source_profile_unavailable")
+			}
 		case *GapRec:
 			if s.Dropped > 0 && len(s.ByKind) == 0 {
 				return unavailable("unclassified_gap")
