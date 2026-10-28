@@ -13,6 +13,7 @@ import (
 	"github.com/0xmhha/wbft/chain/validator"
 	"github.com/0xmhha/wbft/chain/validator/source"
 	"github.com/0xmhha/wbft/codec"
+	"github.com/0xmhha/wbft/consensus"
 	"github.com/0xmhha/wbft/consensus/privval"
 	"github.com/0xmhha/wbft/observe/event"
 	"github.com/0xmhha/wbft/observe/journal"
@@ -63,7 +64,7 @@ func (s *service) PrepareConsensusFields(ctx context.Context, h *types.Header) (
 	}
 	return header.PrepareProposal(view.env(""), h, header.ProposalInputs{Coinbase: signer.Address(),
 		Signer: randaoSigner{signer, view.cfg.ChainID, h.Number}, ExtraPrepared: ep, ExtraCommitted: ec,
-		ParentGasTip: snap.GasTip()})
+		ParentGasTip: snap.GasTip(), VerifyMergedPrevSeals: s.n.coreImprovements.Has(consensus.VerifyMergedPrevSeals)})
 }
 
 // snapshot returns the authority snapshot of a block from the cache or the

@@ -61,11 +61,14 @@ type ProposalInputs struct {
 	// read, which fails the construction.
 	ParentGasTip *uint256.Int
 
-	// The following options are reserved for later protocol revisions.
-	// They must be false.
-	PrevSealByParentHash  bool
+	// PrevSealByParentHash remains reserved and must be false.
+	PrevSealByParentHash bool
+	// VerifyMergedPrevSeals checks merged seals against the actual parent,
+	// its header round and its historical sealing set. A failed candidate
+	// falls back only to a verified original aggregate.
 	VerifyMergedPrevSeals bool
-	Allow32ByteVanity     bool
+	// Allow32ByteVanity remains reserved and must be false.
+	Allow32ByteVanity bool
 }
 
 // PrepareProposal is prepare_proposal_header: it fills the consensus fields
@@ -79,10 +82,12 @@ type ProposalInputs struct {
 // The parent is looked up by ParentHash at Number - 1, so a skeleton whose
 // ParentHash or Number does not follow a stored parent fails with
 // ErrUnknownAncestor.
+// With VerifyMergedPrevSeals, previous seals use that exact parent and are
+// checked against its historical sealing set before a header is returned.
 //
 // Spec: WBFT-HDR-042, WBFT-HDR-010, WBFT-HDR-011, WBFT-HDR-012, WBFT-HDR-013, WBFT-HDR-014, WBFT-HDR-016, WBFT-HDR-018, WBFT-HDR-020, WBFT-HDR-021, WBFT-HDR-030, WBFT-HDR-031, WBFT-HDR-032, WBFT-HDR-033, WBFT-HDR-040
 func PrepareProposal(env *Env, skeleton *types.Header, in ProposalInputs) (*types.Header, error) {
-	if in.PrevSealByParentHash || in.VerifyMergedPrevSeals || in.Allow32ByteVanity {
+	if in.PrevSealByParentHash || in.Allow32ByteVanity {
 		return nil, ErrUnsupportedOption
 	}
 	if env.Config == nil || env.Chain == nil {
@@ -157,7 +162,10 @@ func PrepareProposal(env *Env, skeleton *types.Header, in ProposalInputs) (*type
 	}
 	fns := []func(*types.WBFTExtra) error{writeRandao}
 	if h.Number.CmpUint64(1) > 0 {
-		last := env.Chain.HeaderByNumber(h.Number.RefLow64() - 1) //wbft:low64 HH-31
+		last := parent
+		if !in.VerifyMergedPrevSeals {
+			last = env.Chain.HeaderByNumber(h.Number.RefLow64() - 1) //wbft:low64 HH-31
+		}
 		if last == nil {
 			return nil, ErrUnknownAncestor
 		}
@@ -172,8 +180,27 @@ func PrepareProposal(env *Env, skeleton *types.Header, in ProposalInputs) (*type
 			if lx.CommittedSeal == nil {
 				return nil, ErrEmptyCommittedSeals
 			}
-			prevPrepared := MergeSeals(lx.PreparedSeal, in.ExtraPrepared)
-			prevCommitted := MergeSeals(lx.CommittedSeal, in.ExtraCommitted)
+			var prevPrepared, prevCommitted *types.AggregatedSeal
+			if in.VerifyMergedPrevSeals {
+				vs, err := env.validatorsAt(last.Number, last.ParentHash, nil)
+				if err != nil {
+					return nil, fmt.Errorf("resolve parent sealing validators: %w", err)
+				}
+				if vs == nil {
+					return nil, fmt.Errorf("%w: parent sealing validators unavailable", ErrMissingConfig)
+				}
+				prevPrepared, err = verifiedPreviousSeal(vs, last, lx.Round, lx.PreparedSeal, in.ExtraPrepared, types.PrepareSeal)
+				if err != nil {
+					return nil, fmt.Errorf("%w: %w", ErrInvalidPrevPreparedSeals, err)
+				}
+				prevCommitted, err = verifiedPreviousSeal(vs, last, lx.Round, lx.CommittedSeal, in.ExtraCommitted, types.CommitSeal)
+				if err != nil {
+					return nil, fmt.Errorf("%w: %w", ErrInvalidPrevCommittedSeals, err)
+				}
+			} else {
+				prevPrepared = MergeSeals(lx.PreparedSeal, in.ExtraPrepared)
+				prevCommitted = MergeSeals(lx.CommittedSeal, in.ExtraCommitted)
+			}
 			prevRound := lx.Round
 			fns = append(fns, func(x *types.WBFTExtra) error {
 				x.PrevRound = prevRound
