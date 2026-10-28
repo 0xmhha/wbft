@@ -105,6 +105,13 @@ func inspectCoreSourceStatesRestored(records []Record, limits CoreSourceLimits, 
 // Its separate cache/inbox proof must succeed before it reports consistency.
 // Ordinary callers retain the unsupported-profile guard.
 func inspectCoreSourceProfile(records []Record, limits CoreSourceLimits, capture func(string, *CoreStepRec, []consensus.Output), snapshots func(string, *CoreStepRec, *consensus.Snapshot), seeds map[coreSourceRunKey]restoredCoreSeed, failures bool) (CoreSourceCheck, []coreSourceAccepted, error) {
+	return inspectCoreSourceProfileWithBefore(records, limits, capture, snapshots, seeds, failures, nil)
+}
+
+// The optional before-state observer runs only after the same actual step's
+// context, environment, outputs and after-state have all passed inspection.
+// Consumers must also require the complete inspection to be consistent.
+func inspectCoreSourceProfileWithBefore(records []Record, limits CoreSourceLimits, capture func(string, *CoreStepRec, []consensus.Output), snapshots func(string, *CoreStepRec, *consensus.Snapshot), seeds map[coreSourceRunKey]restoredCoreSeed, failures bool, beforeSnapshots func(string, *CoreStepRec, *consensus.Snapshot)) (CoreSourceCheck, []coreSourceAccepted, error) {
 	report := CoreSourceCheck{Status: "unavailable", Scope: "core_execution_on_recorded_inputs", PhysicalStatus: "unavailable", ScheduleStatus: "unavailable"}
 	unavailable := func(reason string) (CoreSourceCheck, []coreSourceAccepted, error) {
 		report.Status, report.Reason = "unavailable", reason
@@ -290,7 +297,8 @@ func inspectCoreSourceProfile(records []Record, limits CoreSourceLimits, capture
 			} else if !bytes.Equal(model.head, s.Head) {
 				return inconsistent("head_changed_without_input")
 			}
-			before, beforeKnown, err := coreSourceContext(model.state.Snapshot())
+			beforeSnapshot := model.state.Snapshot()
+			before, beforeKnown, err := coreSourceContext(beforeSnapshot)
 			if err != nil {
 				return unavailable("authority_digest_unavailable")
 			}
@@ -330,6 +338,9 @@ func inspectCoreSourceProfile(records []Record, limits CoreSourceLimits, capture
 			}
 			if afterKnown != s.AfterKnown || after != s.After {
 				return inconsistent("after_context_changed")
+			}
+			if beforeSnapshots != nil {
+				beforeSnapshots(writer, s, beforeSnapshot)
 			}
 			if snapshots != nil {
 				snapshots(writer, s, afterSnapshot)
