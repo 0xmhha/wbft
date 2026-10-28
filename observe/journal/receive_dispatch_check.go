@@ -52,6 +52,13 @@ type receiveDiscardKey struct {
 type receiveDiscardEvidence struct{ prepare, completion *ReceiveDispatchRec }
 type receiveDiscardEvidenceSet map[receiveDiscardKey]receiveDiscardEvidence
 
+// A distinct private phase of a checked real live step. It is never inserted
+// into the after-state map under an installation step that did not execute.
+type restoredReceiveBeforeState struct {
+	source   *CoreStepRec
+	snapshot *consensus.Snapshot
+}
+
 func sameReceiveDispatchIdentity(a, b *ReceiveDispatchRec) bool {
 	return a.Request == b.Request && a.EngineRun == b.EngineRun && a.BeforeStep == b.BeforeStep && a.Via == b.Via && a.Source == b.Source && a.Scope == b.Scope && a.Decision == b.Decision && a.ContextHash == b.ContextHash && a.Selection == b.Selection && a.InboxRequest == b.InboxRequest && a.InternalRequest == b.InternalRequest && a.Capture == b.Capture && a.Origin == b.Origin && a.StreamRun == b.StreamRun && a.Stream == b.Stream && a.InputKind == b.InputKind && bytes.Equal(a.Input, b.Input)
 }
@@ -115,13 +122,37 @@ func inspectReceiveDispatchSources(records []Record, limits ReceiveDispatchLimit
 	if internal.Status != "consistent" {
 		return unavailable("internal_" + internal.Reason)
 	}
+	// Reconstruct a separate private seed for qualification; do not reuse the
+	// mutable model that produced live snapshots or manufacture a live step.
+	restoredRuns := map[coreSourceRunKey]restoredCoreSeed{}
+	if restored {
+		restore, seeds, e := reconstructRestoreSources(records, limits.Receive.Core)
+		if e != nil {
+			return inconsistent("restore_" + restore.Reason)
+		}
+		if restore.Status != "consistent" {
+			return unavailable("restore_" + restore.Reason)
+		}
+		restoredRuns = seeds
+	}
 	snapshots := map[appCoreKey]inboxSourceSnapshot{}
 	wanted := map[appCoreKey]bool{}
-	core, accepted, err := inspectConditionalCoreStates(records, limits.Receive.Core, restored, nil, func(writer string, source *CoreStepRec, snapshot *consensus.Snapshot) {
+	installedSnapshots := map[coreSourceRunKey]*consensus.Snapshot{}
+	for key, seed := range restoredRuns { //wbft:unordered independent installation anchors
+		installedSnapshots[key] = seed.model.state.Snapshot()
+	}
+	firstBefore := map[appCoreKey]restoredReceiveBeforeState{}
+	core, accepted, err := inspectConditionalCoreStatesWithBefore(records, limits.Receive.Core, restored, nil, func(writer string, source *CoreStepRec, snapshot *consensus.Snapshot) {
 		key := appCoreKey{writer, source.EngineRun, source.Step}
 		snapshots[key] = inboxSourceSnapshot{source, snapshot}
 		if source.InputKind == inputlog.KindMessage && (source.Via == "peer" || source.Via == "internal") {
 			wanted[key] = false
+		}
+	}, func(writer string, source *CoreStepRec, snapshot *consensus.Snapshot) {
+		seed, found := restoredRuns[coreSourceRunKey{writer, source.EngineRun}]
+		if found && seed.installed.Replayed != 0 && source.ReplayedPrefix && source.Step == seed.installed.Steps+1 {
+			key := appCoreKey{writer, source.EngineRun, seed.installed.Steps}
+			firstBefore[key] = restoredReceiveBeforeState{source, snapshot}
 		}
 	})
 	if err != nil {
@@ -141,19 +172,6 @@ func inspectReceiveDispatchSources(records []Record, limits ReceiveDispatchLimit
 		}
 		outputs[key] = a
 	}
-	// Reconstruct a separate private seed for qualification; do not reuse the
-	// mutable model that produced live snapshots or manufacture a live step.
-	restoredRuns := map[coreSourceRunKey]restoredCoreSeed{}
-	if restored {
-		restore, seeds, e := reconstructRestoreSources(records, limits.Receive.Core)
-		if e != nil {
-			return inconsistent("restore_" + restore.Reason)
-		}
-		if restore.Status != "consistent" {
-			return unavailable("restore_" + restore.Reason)
-		}
-		restoredRuns = seeds
-	}
 	lookups := map[receivePreparationKey]*ReceiveCacheRec{}
 	selectionsByID := map[finalizeQueueKey]*SelectionRec{}
 	internalPops := map[finalizeQueueKey]*InternalRec{}
@@ -161,6 +179,8 @@ func inspectReceiveDispatchSources(records []Record, limits ReceiveDispatchLimit
 	usedSelections := map[finalizeQueueKey]bool{}
 	var selectionCount, internalCount, inboxCount uint64
 	groups := map[string][]*ReceiveDispatchRec{}
+	corePositions := map[*CoreStepRec]int{}
+	preparePositions := map[*ReceiveDispatchRec]int{}
 	registrations := map[receiveSourceOutputKey]bool{}
 	registrationFloors := map[receivePreparationKey][]receivePreparationFloor{}
 	writer := ""
@@ -178,6 +198,8 @@ func inspectReceiveDispatchSources(records []Record, limits ReceiveDispatchLimit
 					return unavailable("receive_dispatch_source_gap")
 				}
 			}
+		case *CoreStepRec:
+			corePositions[r] = index
 		case *SelectionRec:
 			if selectionCount >= limits.Selections.Operations {
 				return unavailable("selection_index_limit")
@@ -285,6 +307,9 @@ func inspectReceiveDispatchSources(records []Record, limits ReceiveDispatchLimit
 			}
 			operations++
 			groups[writer] = append(groups[writer], r)
+			if r.Action == "prepare" {
+				preparePositions[r] = index
+			}
 		}
 	}
 	// Each registered ACCEPT necessarily ran before a later lookup in this
@@ -394,17 +419,56 @@ func inspectReceiveDispatchSources(records []Record, limits ReceiveDispatchLimit
 				}
 				usedLookups[key] = true
 				state, found := snapshots[appCoreKey{name, r.EngineRun, r.BeforeStep}]
-				if !found {
-					return unavailable("preparation_core_context_missing")
+				var snapshot *consensus.Snapshot
+				var source *CoreStepRec
+				var scope, stateMono uint64
+				initialScope := false
+				if found {
+					snapshot, source = state.snapshot, state.source
+					scope, stateMono = source.ReceiveScopeAfter, uint64(source.Observed.Mono)
+					initialScope = source.InputKind == inputlog.KindStart && scope == 0
+				} else {
+					key := coreSourceRunKey{name, r.EngineRun}
+					seed, installed := restoredRuns[key]
+					before, live := firstBefore[appCoreKey{name, r.EngineRun, r.BeforeStep}]
+					if !installed || !live || seed.installed.Replayed == 0 || seed.installed.Steps != r.BeforeStep {
+						return unavailable("preparation_core_context_missing")
+					}
+					// This is the before-phase of the actual first live step, never
+					// a synthetic step or an arbitrary nearby snapshot.
+					snapshot, source = before.snapshot, before.source
+					firstIndex, firstFound := corePositions[source]
+					prepareIndex, prepareFound := preparePositions[r]
+					if !firstFound || !prepareFound || seed.ready >= prepareIndex || prepareIndex >= firstIndex || r.Mono < seed.installed.Mono || r.Mono > uint64(source.Entry.Mono) {
+						return inconsistent("preparation_outside_restored_boundary")
+					}
+					anchor := installedSnapshots[key]
+					context, known, e := coreSourceContext(anchor)
+					beforeContext, beforeKnown, beforeErr := coreSourceContext(snapshot)
+					if e != nil || beforeErr != nil || !known || !beforeKnown {
+						return unavailable("preparation_restored_context_unavailable")
+					}
+					anchorDigest, e := InboxSnapshotDigest(anchor)
+					beforeDigest, beforeErr := InboxSnapshotDigest(snapshot)
+					if e != nil || beforeErr != nil {
+						return unavailable("preparation_restored_context_encoding")
+					}
+					if context != beforeContext || anchorDigest != beforeDigest {
+						return inconsistent("preparation_restored_context_changed")
+					}
+					if source.ReceiveLedgerRun == "" || source.ReceiveLedger == 0 || source.ReceiveScopeBefore == 0 {
+						return unavailable("preparation_restored_owner_missing")
+					}
+					scope, stateMono = source.ReceiveScopeBefore, seed.installed.Mono
 				}
 				if !lookup.ScopeActive || lookup.Closed || !lookup.ContextKnown {
 					return unavailable("preparation_context_inactive_or_missing")
 				}
-				context, known, e := coreSourceContext(state.snapshot)
+				context, known, e := coreSourceContext(snapshot)
 				if e != nil || !known {
 					return unavailable("preparation_core_context_unavailable")
 				}
-				digest, e := InboxSnapshotDigest(state.snapshot)
+				digest, e := InboxSnapshotDigest(snapshot)
 				if e != nil {
 					return unavailable("preparation_context_encoding")
 				}
@@ -414,20 +478,19 @@ func inspectReceiveDispatchSources(records []Record, limits ReceiveDispatchLimit
 				if context != lookup.Context {
 					return inconsistent("preparation_lookup_context_changed")
 				}
-				if state.source.ReceiveLedgerRun != r.Source.WriterRun || state.source.ReceiveLedger != r.Source.Ledger {
+				if source.ReceiveLedgerRun != r.Source.WriterRun || source.ReceiveLedger != r.Source.Ledger {
 					return inconsistent("preparation_ledger_changed")
 				}
 				// Start publishes the core before its first checking scope is created.
 				// The original qualified lookup still proves that new scope's context;
 				// a dispatched message must also match the actual next step's scope.
-				initialScope := state.source.InputKind == inputlog.KindStart && state.source.ReceiveScopeAfter == 0
-				if (!initialScope && state.source.ReceiveScopeAfter != r.Scope) || lookup.Scope != r.Scope {
+				if (!initialScope && scope != r.Scope) || lookup.Scope != r.Scope {
 					return inconsistent("preparation_scope_changed")
 				}
 				if uint64(lookup.Decision) != r.Decision {
 					return inconsistent("preparation_decision_changed")
 				}
-				if r.Mono < uint64(state.source.Observed.Mono) {
+				if r.Mono < stateMono {
 					return inconsistent("preparation_precedes_core_state")
 				}
 				in, e := inputlog.Decode(r.InputKind, r.Input, nil)
@@ -445,7 +508,7 @@ func inspectReceiveDispatchSources(records []Record, limits ReceiveDispatchLimit
 				if r.Via == "peer" && (r.Capture == 0 || r.Origin.CaptureID != r.Capture || r.Origin.WriterRun == "" || r.InboxRequest == 0) {
 					return unavailable("preparation_original_frame_missing")
 				}
-				if r.Via == "internal" && (r.InternalRequest == 0 || m.Peer != state.source.CoreSelf) {
+				if r.Via == "internal" && (r.InternalRequest == 0 || m.Peer != source.CoreSelf) {
 					return inconsistent("preparation_internal_owner_changed")
 				}
 				pending[r.Request] = r
