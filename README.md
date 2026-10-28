@@ -1283,6 +1283,14 @@ historical sealing authority separately from the successor validator set. It
 requires the matching WAL replay profile and is disabled by default. See
 [prior-head seal provenance](docs/prior-head.md) for recovery and reader scope.
 
+### Verified previous seals
+
+The default-off `verify_merged_prev_seals` option checks both previous seal
+aggregates during proposal assembly, falling back only to a verified original
+parent aggregate. It can be selected with or without `bind_prior_head`. See
+[verified previous seals](docs/verified-previous-seals.md) for historical
+validator binding, failure behavior and recorded replay scope.
+
 ### Runner terminal queue closure
 
 `Runner.Close` stops admission through `Submit`, `NewHead` and `PeerConnected`,

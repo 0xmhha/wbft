@@ -223,6 +223,9 @@ const (
 	// BindPriorHead binds previous-height seals to the adopted header and its
 	// historical sealing set, including through supported WAL recovery.
 	BindPriorHead
+	// VerifyMergedPrevSeals validates the assembled previous seals against
+	// the committed parent before a node returns a new proposal header.
+	VerifyMergedPrevSeals
 )
 
 // RestartSafety is the set of the restart-safety rules of the core. Nodes
@@ -254,6 +257,7 @@ var improvementNames = [...]string{
 	KeepStoppedPeers:          "keep_stopped_peers",
 	BindFreshProposalAuthor:   "bind_fresh_proposal_author",
 	BindPriorHead:             "bind_prior_head",
+	VerifyMergedPrevSeals:     "verify_merged_prev_seals",
 }
 
 // ParseImprovement finds a known local behavior by its reported name.
