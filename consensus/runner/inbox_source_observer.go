@@ -21,17 +21,31 @@ type inboxEntry struct {
 
 // inboxSourceLocked never consults the loop's mutable engine/step. Only the
 // consensus-loop take/clear callers attach their own dispatch coordinates.
-func (b *inbox) inboxSourceLocked(action string, entry inboxEntry) *journal.InboxRec {
-	if b.r.d.InboxSources == nil {
-		return nil
-	}
+func (b *inbox) nextSourceSequenceLocked() uint64 {
 	if b.sourceSequence == ^uint64(0) {
 		b.sourceExhausted = true
 	} else if !b.sourceExhausted {
 		b.sourceSequence++
 	}
+	if b.sourceExhausted {
+		return 0
+	}
+	return b.sourceSequence
+}
+
+func (b *inbox) inboxSourceLocked(action string, entry inboxEntry) *journal.InboxRec {
+	if b.r.d.InboxSources == nil {
+		return nil
+	}
+	return b.sourceLocked(action, entry)
+}
+
+// sourceLocked allocates one identity in the shared inbox mutex order. Callers
+// choose their record kind; a cached failure is never published as Inbox/check.
+func (b *inbox) sourceLocked(action string, entry inboxEntry) *journal.InboxRec {
+	sequence := b.nextSourceSequenceLocked()
 	in := entry.in
-	rec := &journal.InboxRec{Version: journal.InboxSourceVersion, Sequence: b.sourceSequence, Request: entry.request, Action: action, Peer: in.Peer, Code: in.Code, Capture: in.Capture, RecvMono: uint64(in.RecvMono), Origin: in.Origin, StreamRun: in.Stream.ObservationRun(), Stream: in.Stream.ObservationID(), Order: slices.Clone(b.order), WorkerCursor: uint64(b.wIdx), ConsensusCursor: uint64(b.cIdx), Mono: uint64(b.r.d.Clock.Mono()), WallNs: uint64(b.r.d.Clock.Now().UnixNano())}
+	rec := &journal.InboxRec{Version: journal.InboxSourceVersion, Sequence: sequence, Request: entry.request, Action: action, Peer: in.Peer, Code: in.Code, Capture: in.Capture, RecvMono: uint64(in.RecvMono), Origin: in.Origin, StreamRun: in.Stream.ObservationRun(), Stream: in.Stream.ObservationID(), Order: slices.Clone(b.order), WorkerCursor: uint64(b.wIdx), ConsensusCursor: uint64(b.cIdx), Mono: uint64(b.r.d.Clock.Mono()), WallNs: uint64(b.r.d.Clock.Now().UnixNano())}
 	if action == "append" {
 		rec.Request, rec.Payload = rec.Sequence, bytes.Clone(in.Payload)
 	}
@@ -42,6 +56,14 @@ func (b *inbox) inboxSourceLocked(action string, entry inboxEntry) *journal.Inbo
 		}
 	}
 	return rec
+}
+
+func copyInboxSnapshotSource(rec *journal.InboxRec, snapshot journal.InboxRec) {
+	rec.SnapshotEngine, rec.SnapshotStep, rec.SnapshotPhase = snapshot.SnapshotEngine, snapshot.SnapshotStep, snapshot.SnapshotPhase
+	rec.SnapshotReplayed, rec.SnapshotContextHash = snapshot.SnapshotReplayed, snapshot.SnapshotContextHash
+	if rec.Unavailable == "" {
+		rec.Unavailable = snapshot.Unavailable
+	}
 }
 
 func inboxSnapshotSource(publication *snapshotPublication) journal.InboxRec {
@@ -66,11 +88,7 @@ func (b *inbox) checkSourceLocked(entry inboxEntry, result string, snapshot jour
 	rec := b.inboxSourceLocked("check", entry)
 	if rec != nil {
 		rec.Result = result
-		rec.SnapshotEngine, rec.SnapshotStep, rec.SnapshotPhase = snapshot.SnapshotEngine, snapshot.SnapshotStep, snapshot.SnapshotPhase
-		rec.SnapshotReplayed, rec.SnapshotContextHash = snapshot.SnapshotReplayed, snapshot.SnapshotContextHash
-		if rec.Unavailable == "" {
-			rec.Unavailable = snapshot.Unavailable
-		}
+		copyInboxSnapshotSource(rec, snapshot)
 	}
 	return rec
 }

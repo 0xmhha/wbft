@@ -44,6 +44,9 @@ func freezeDiagnostics(cfg Config, d *Deps) error {
 		return nil
 	}
 	o := *d.Diagnostics
+	if cfg.ReceiveFailureCache != nil && o.Writer == nil {
+		return fmt.Errorf("%w: receive failure cache diagnostic profile requires a matching writer", ErrConfig)
+	}
 	if cfg.CachePolicy == nil || !cfg.Journal.Disabled {
 		return fmt.Errorf("%w: diagnostics require the explicit cache policy and a disabled functional journal", ErrConfig)
 	}
@@ -51,6 +54,18 @@ func freezeDiagnostics(cfg Config, d *Deps) error {
 		return fmt.Errorf("%w: diagnostics require an explicit matching writer run", ErrConfig)
 	}
 	declaration, declared := o.Writer.(interface{ CoreDeclaration() journal.CoreOptions })
+	if cfg.ReceiveFailureCache != nil {
+		if !declared {
+			return fmt.Errorf("%w: receive failure cache diagnostic profile requires a frozen declaration", ErrConfig)
+		}
+		actual := &transport.ReceiveFailureOptions{Entries: cfg.ReceiveFailureCache.Entries}
+		core := declaration.CoreDeclaration()
+		if err := core.ValidateReceiveFailureDeclaration(actual); err != nil || core.CachePolicy == nil || core.CachePolicy.Limits != *cfg.CachePolicy {
+			return fmt.Errorf("%w: receive failure cache diagnostic profile differs from runtime", ErrConfig)
+		}
+	} else if declared && declaration.CoreDeclaration().ReceiveFailureCache != nil {
+		return fmt.Errorf("%w: receive failure declaration does not match an enabled node policy", ErrConfig)
+	}
 	if cfg.RoundChangeRetry != nil || declared && declaration.CoreDeclaration().RoundChangeRetry != nil {
 		if !declared {
 			return fmt.Errorf("%w: retry diagnostics require a frozen core declaration", ErrConfig)
@@ -73,15 +88,15 @@ func freezeDiagnostics(cfg Config, d *Deps) error {
 	return nil
 }
 
-func (n *Node) validateRetryDiagnostic(core consensus.Options) error {
+func (n *Node) validateCoreDiagnostic(core consensus.Options) error {
 	if o := n.d.Diagnostics; o != nil {
 		declaration, ok := o.Writer.(interface{ CoreDeclaration() journal.CoreOptions })
-		if n.cfg.RoundChangeRetry != nil || ok && declaration.CoreDeclaration().RoundChangeRetry != nil {
+		if n.cfg.RoundChangeRetry != nil || n.cfg.ReceiveFailureCache != nil || ok && declaration.CoreDeclaration().RoundChangeRetry != nil {
 			if !ok {
-				return fmt.Errorf("%w: retry diagnostics require a frozen core declaration", ErrConfig)
+				return fmt.Errorf("%w: core diagnostics require a frozen core declaration", ErrConfig)
 			}
 			if err := declaration.CoreDeclaration().ValidateCoreDeclaration(core); err != nil {
-				return fmt.Errorf("%w: retry diagnostic declaration: %v", ErrConfig, err)
+				return fmt.Errorf("%w: core diagnostic declaration: %v", ErrConfig, err)
 			}
 		}
 	}

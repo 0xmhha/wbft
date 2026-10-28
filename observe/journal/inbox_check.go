@@ -30,6 +30,7 @@ type InboxCheck struct {
 	Appended         uint64 `json:"appended,string"`
 	Dequeued         uint64 `json:"dequeued,string"`
 	Checked          uint64 `json:"checked,string"`
+	CachedFailures   uint64 `json:"cached_failures,string,omitempty"`
 	Taken            uint64 `json:"taken,string"`
 	Dispatched       uint64 `json:"dispatched,string"`
 	DiscardedKnown   uint64 `json:"discarded_known,string"`
@@ -120,6 +121,14 @@ type restoredInboxSnapshot struct {
 }
 
 func inspectInboxSources(records []Record, limits InboxLimits, discarded receiveDiscardEvidenceSet, restored bool) (InboxCheck, error) {
+	return inspectInboxSourcesProfile(records, limits, discarded, restored, nil)
+}
+
+// Only the private failure checker supplies this evidence after independently
+// reconstructing original failure checks and the bounded cache history.
+type failureInboxEvidenceSet map[*InboxRec]bool
+
+func inspectInboxSourcesProfile(records []Record, limits InboxLimits, discarded receiveDiscardEvidenceSet, restored bool, failures failureInboxEvidenceSet) (InboxCheck, error) {
 	consumed := map[receiveDiscardKey]bool{}
 	report := InboxCheck{Status: "unavailable", Scope: "inbox_queue_worker_snapshot_slot_and_core_input_sources", PhysicalStatus: "unavailable", ScheduleStatus: "unavailable"}
 	unavailable := func(reason string) (InboxCheck, error) {
@@ -149,7 +158,7 @@ func inspectInboxSources(records []Record, limits InboxLimits, discarded receive
 	indexes := map[*InboxRec]int{}
 	snapshots := map[appCoreKey]inboxSourceSnapshot{}
 	wanted, stops := map[appCoreKey]bool{}, map[appCoreKey]bool{}
-	core, _, err := inspectConditionalCoreStates(records, limits.Core, restored, nil, func(writer string, source *CoreStepRec, snapshot *consensus.Snapshot) {
+	captureSnapshot := func(writer string, source *CoreStepRec, snapshot *consensus.Snapshot) {
 		key := appCoreKey{writer, source.EngineRun, source.Step}
 		snapshots[key] = inboxSourceSnapshot{source, snapshot}
 		if source.Via == "peer" && source.InputKind == inputlog.KindMessage {
@@ -158,7 +167,17 @@ func inspectInboxSources(records []Record, limits InboxLimits, discarded receive
 		if source.InputKind == inputlog.KindStop {
 			stops[key] = false
 		}
-	})
+	}
+	var core CoreSourceCheck
+	var err error
+	if failures != nil {
+		if restored {
+			return unavailable("receive_failure_restore_profile_unavailable")
+		}
+		core, _, err = inspectCoreSourceProfile(records, limits.Core, nil, captureSnapshot, nil, true)
+	} else {
+		core, _, err = inspectConditionalCoreStates(records, limits.Core, restored, nil, captureSnapshot)
+	}
 	if err != nil {
 		return inconsistent("core_" + core.Reason)
 	}
@@ -228,6 +247,9 @@ func inspectInboxSources(records []Record, limits InboxLimits, discarded receive
 				return unavailable("unclassified_gap")
 			}
 			for _, k := range r.ByKind {
+				if k.Count > 0 && k.Kind == uint64(KindInboxFailureHit) {
+					return unavailable("inbox_failure_source_gap")
+				}
 				if k.Count > 0 && (k.Kind == 0 || k.Kind == uint64(KindInbox) || k.Kind == uint64(KindMsg) || k.Kind == uint64(KindPeer)) {
 					return unavailable("inbox_source_gap")
 				}
@@ -259,6 +281,27 @@ func inspectInboxSources(records []Record, limits InboxLimits, discarded receive
 			span += n
 			groups[writer] = append(groups[writer], r)
 			indexes[r] = index
+		case *InboxFailureHitRec:
+			if failures == nil || !failures[&r.Source] {
+				return unavailable("receive_failure_source_profile_unavailable")
+			}
+			if operations >= limits.Operations {
+				return unavailable("operation_limit")
+			}
+			operations++
+			if !validInboxFailureHit(r) {
+				return inconsistent("invalid_inbox_failure_hit")
+			}
+			if r.Unavailable != "" || r.Source.Unavailable != "" || writer == "" {
+				return unavailable("inbox_failure_source_missing")
+			}
+			n := uint64(size(record))
+			if n > limits.Bytes-span {
+				return unavailable("byte_limit")
+			}
+			span += n
+			groups[writer] = append(groups[writer], &r.Source)
+			indexes[&r.Source] = index
 		}
 	}
 	if operations == 0 {
@@ -382,7 +425,7 @@ func inspectInboxSources(records []Record, limits InboxLimits, discarded receive
 				model.queues[r.Peer] = queue[1:]
 				model.checking[r.Request] = true
 				report.Dequeued++
-			case "check":
+			case "check", "failure_hit":
 				if !model.checking[r.Request] {
 					return inconsistent("check_without_dequeue")
 				}
@@ -438,6 +481,15 @@ func inspectInboxSources(records []Record, limits InboxLimits, discarded receive
 				}
 				if digest != r.SnapshotContextHash {
 					return inconsistent("snapshot_context_changed")
+				}
+				if r.Action == "failure_hit" {
+					if !failures[r] {
+						return inconsistent("uncertified_failure_hit")
+					}
+					delete(model.pending, r.Request)
+					delete(model.checking, r.Request)
+					report.CachedFailures++
+					break
 				}
 				member := func(a types.Address, _ types.View) bool {
 					s := publication.snapshot

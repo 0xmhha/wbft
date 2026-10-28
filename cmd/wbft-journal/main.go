@@ -40,7 +40,7 @@ func main() {
 	os.Exit(run(os.Args[1:], fsys.OS{}, os.Stdout, os.Stderr))
 }
 
-const usage = "usage: wbft-journal stat|verify|prune|export|check-write-cache|check-receive-cache|check-write-io|check-round-change-retry --dir DIR [flags]"
+const usage = "usage: wbft-journal stat|verify|prune|export|check-write-cache|check-receive-cache|check-write-io|check-round-change-retry|check-receive-failures --dir DIR [flags]"
 
 func run(args []string, fs fsys.FS, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
@@ -64,7 +64,7 @@ func run(args []string, fs fsys.FS, stdout, stderr io.Writer) int {
 	maxSessions := set.Uint64("max-sessions", 0, "write I/O check: required positive session index limit")
 	maxRequests := set.Uint64("max-requests", 0, "write I/O check: required positive request index limit")
 	maxFrames := set.Uint64("max-frames", 0, "write I/O check: required positive retained source-frame limit")
-	sourceLimits := set.String("source-limits", "", "retry source check: JSON file of explicit positive inspection limits")
+	sourceLimits := set.String("source-limits", "", "source checks: JSON file of explicit positive inspection limits")
 	if err := set.Parse(args[1:]); err != nil {
 		return 2
 	}
@@ -123,6 +123,20 @@ func run(args []string, fs fsys.FS, stdout, stderr io.Writer) int {
 		if errors.Is(err, journal.ErrWriteIOSource) {
 			code = 1
 			err = nil
+		} else if err == nil && check.Status == "unavailable" {
+			code = 69
+		}
+		res = check
+	case "check-receive-failures":
+		var limits journal.ReceiveFailureLimits
+		limits, err = readReceiveFailureLimits(fs, *sourceLimits)
+		if err != nil {
+			break
+		}
+		var check journal.ReceiveFailureCheck
+		check, err = checkReceiveFailures(fs, *dir, limits)
+		if errors.Is(err, journal.ErrReceiveFailureSource) {
+			code, err = 1, nil
 		} else if err == nil && check.Status == "unavailable" {
 			code = 69
 		}

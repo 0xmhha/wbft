@@ -64,6 +64,12 @@ func (o CoreOptions) ValidateRuntimeProfiles() error {
 	if err := o.CachePolicy.Validate(); err != nil {
 		return err
 	}
+	if err := o.validateReceiveFailureHeader(); err != nil {
+		return err
+	}
+	if o.ReceiveFailureCache != nil {
+		return ErrReceiveFailureReplay
+	}
 	if o.CachePolicy != nil {
 		return ErrCachePolicyReplay
 	}

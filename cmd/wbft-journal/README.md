@@ -164,3 +164,62 @@ Existing disabled-mode R01 output retains its original format. Use a retained
 original journal or `export --format bundle` for the new check and compatible
 readers. Bundles preserve selected original segments; missing retained sources
 remain unavailable and are not reconstructed from event labels.
+
+
+# Scoped receive failure source checks
+
+`wbft-journal check-receive-failures --dir DIR --source-limits limits.json`
+uses the separate failure-source checker. It independently executes original
+core inputs, rechecks original failed inputs in their authority context, and
+rebuilds the bounded failure cache in cache-mutex sequence order. Original
+inbox request and lookup references bind a reused failure to its earlier
+check. A reuse contributes to `consumed_failures` and `inbox.cached_failures`,
+never `inbox.checked`, a new signer call, or core acceptance.
+
+Every inspection limit must be explicit and positive. An example is:
+
+```json
+{
+  "Caches": 32,
+  "Inbox": {
+    "Core": {
+      "Records": 100000, "Runs": 32, "Steps": 100000,
+      "Environments": 400000, "Outputs": 400000, "Bytes": 67108864
+    },
+    "Operations": 400000, "Entries": 100000, "Peers": 256,
+    "Frames": 100000, "Bytes": 67108864
+  }
+}
+```
+
+These values are offline examples, not operating defaults. The limits file
+accepts one JSON object up to 64 KiB and rejects unknown fields. The loader
+caps retained record count. Segment decoding happens before that bound and
+encoded byte budgets are inspected after collection, so these limits are not
+process memory, verification CPU or node storage limits.
+
+Exit 0 means consistency within the returned finite source scope; missing
+original core/frame/queue evidence, an unsupported prefix/profile, a gap or
+an inspection limit produces `unavailable` and exit 69. Retained contradictions
+exit 1; usage and input I/O errors exit 2. Physical and schedule reconstruction
+remain unavailable. Declarations, coordinates and cache counts alone cannot
+establish a real failed check or its consumption. Functional replay remains
+unsupported. A configured failure cache does not disable the consensus WAL.
+
+R01 export rejects a receive-failure declaration, including an unknown one,
+or either separate failure record kind before creating output. Height filters
+and segment rotation do not bypass this check. Use retained original journals
+or bundles; a bundle preserves selected source segments without manufacturing
+missing input evidence. This inspection command alone does not enable runtime
+diagnostic production or claim an integrated consumer acceptance.
+
+
+Original diagnostic bundles select heights from the encoded `CoreStepRec.Head`
+without converting source observations into functional `StepRec` records.
+With neither `--from` nor `--to`, export keeps every available segment and its
+index, including heightless source operations before and after the steps.
+Such an unbounded export may therefore retain more metadata than a bounded
+range. Explicit ranges keep the original head-interval selection rules.
+A journal without any recorded step head remains unavailable for height-based
+bundle selection. Original bytes and record kinds are preserved; selecting a
+bundle neither supplies missing evidence nor enables functional replay.

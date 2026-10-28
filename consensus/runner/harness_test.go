@@ -331,20 +331,25 @@ type tnode struct {
 	log            *wal.Log
 	opts           consensus.Options
 	// noJournal boots the runner without a message journal.
-	noJournal              bool
-	receiveCache           *transport.ReceiveLedgerOptions
-	coreSteps              CoreStepObserver
-	timerSources           TimerSourceObserver
-	appQueueSources        AppQueueSourceObserver
-	finalizeSources        FinalizeSourceObserver
-	inboxSources           InboxSourceObserver
-	internalSources        InternalSourceObserver
-	selectionSources       SelectionSourceObserver
-	receiveDispatchSources ReceiveDispatchSourceObserver
-	signerCalls            SignerCallObserver
-	signerSources          *privval.SourceOptions
-	walReadSources         WALReadSourceObserver
-	walReadSourceLimits    wal.ReadSourceLimits
+	noJournal                 bool
+	receiveCache              *transport.ReceiveLedgerOptions
+	receiveFailureCache       *transport.ReceiveFailureOptions
+	receiveFailureDiagnostics ReceiveFailureDiagnosticObserver
+	receiveRecoveryChecked    func(codec.Code, consensus.RecoveryFailure)
+	receiveFailureHit         func(uint64, transport.ReceiveFailureClass)
+	coreSteps                 CoreStepObserver
+	timerSources              TimerSourceObserver
+	appQueueSources           AppQueueSourceObserver
+	finalizeSources           FinalizeSourceObserver
+	inboxSources              InboxSourceObserver
+	inboxFailureSources       InboxFailureSourceObserver
+	internalSources           InternalSourceObserver
+	selectionSources          SelectionSourceObserver
+	receiveDispatchSources    ReceiveDispatchSourceObserver
+	signerCalls               SignerCallObserver
+	signerSources             *privval.SourceOptions
+	walReadSources            WALReadSourceObserver
+	walReadSourceLimits       wal.ReadSourceLimits
 	// timerTrace enables measured scheduler records in the test journal.
 	timerTrace bool
 	// refused is the codes of the signatures privval refused (Deps.Refused).
@@ -414,13 +419,15 @@ func (n *tnode) boot() {
 	}
 	n.events = &eventLog{}
 	d := Deps{Chain: n.chain, App: n.app, Transport: dd, Net: n.net,
+		ReceiveRecoveryChecked: n.receiveRecoveryChecked, ReceiveFailureHit: n.receiveFailureHit,
+		InboxFailureSources: n.inboxFailureSources, ReceiveFailureDiagnostics: n.receiveFailureDiagnostics,
 		SignerCalls: n.signerCalls, CoreSteps: n.coreSteps, TimerSources: n.timerSources, AppQueueSources: n.appQueueSources, FinalizeSources: n.finalizeSources, InboxSources: n.inboxSources, InternalSources: n.internalSources, SelectionSources: n.selectionSources, ReceiveDispatchSources: n.receiveDispatchSources, WALReadSources: n.walReadSources, WALReadSourceLimits: n.walReadSourceLimits,
 		Signer: s, WAL: log, Clock: n.clock, Events: n.events, Journal: jw, Rand: rand.New(rand.NewPCG(1, 2)).IntN,
 		Refused: func(code uint64) { n.refused = append(n.refused, code) }}
 	if n.noJournal {
 		d.Journal = nil
 	}
-	r, err := New(Config{Core: n.opts, ReplayWAL: true, Manual: true, ReceiveCache: n.receiveCache}, d)
+	r, err := New(Config{Core: n.opts, ReplayWAL: true, Manual: true, ReceiveCache: n.receiveCache, ReceiveFailureCache: n.receiveFailureCache}, d)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/0xmhha/wbft/chain/validator"
+	"github.com/0xmhha/wbft/codec"
 	"github.com/0xmhha/wbft/consensus"
 	"github.com/0xmhha/wbft/consensus/privval"
 	"github.com/0xmhha/wbft/consensus/wal"
@@ -105,6 +106,9 @@ type Config struct {
 	// API requires explicit limits and currently refuses message journals
 	// until a compatible cache-policy profile is available.
 	ReceiveCache *transport.ReceiveLedgerOptions `json:",omitempty"`
+	// ReceiveFailureCache separately memoizes classified failures within one
+	// immutable publication. Nil preserves the original receive path.
+	ReceiveFailureCache *transport.ReceiveFailureOptions `json:",omitempty"`
 	// Core configures the consensus core. Core.Self must be the signer's
 	// address, or zero for a node that never signs.
 	Core consensus.Options
@@ -142,8 +146,14 @@ type Deps struct {
 	// received cache. It runs after the cache mutex is released and must not
 	// block. Nil changes no functional cache ownership or state.
 	ReceiveCacheRecorded func(code uint64)
-	Chain                Chain
-	App                  App
+	// ReceiveRecoveryChecked observes an actual complete Recover invocation,
+	// never a cache hit. It grants no signer or acceptance authority.
+	ReceiveRecoveryChecked func(code codec.Code, failure consensus.RecoveryFailure)
+	// ReceiveFailureHit observes reuse of an earlier failed check, not a new
+	// Recover, signing operation, or core acceptance. Callbacks must not block.
+	ReceiveFailureHit func(code uint64, class transport.ReceiveFailureClass)
+	Chain             Chain
+	App               App
 	// Transport sends and deduplicates; nil sends nothing.
 	Transport *transport.Dedup
 	// Net is the transport under Transport, used to disconnect peers; nil
@@ -170,6 +180,12 @@ type Deps struct {
 	FinalizeSources FinalizeSourceObserver
 	// InboxSources observes detached receive queue and slot boundaries.
 	InboxSources InboxSourceObserver
+	// ReceiveFailureDiagnostics explicitly binds one declared source writer to
+	// core, inbox, accepted receive and separate failure observations.
+	ReceiveFailureDiagnostics ReceiveFailureDiagnosticObserver
+	// InboxFailureSources separately observes reuse of earlier failed checks.
+	// It does not declare a diagnostic profile or enable functional replay.
+	InboxFailureSources InboxFailureSourceObserver
 	// InternalSources observes original internal queue output/selection boundaries.
 	InternalSources InternalSourceObserver
 	// SelectionSources observes original conditional next probes and actual dispatch.
@@ -302,11 +318,12 @@ type Runner struct {
 	// application ahead; only the head check goroutine touches it.
 	headSuspect *types.Header
 
-	timers         scheduler
-	inbox          inbox
-	nextHeight     *nextHeightPool
-	receiveCache   *transport.ReceiveLedger
-	receiveContext atomic.Pointer[receiveContext]
+	timers          scheduler
+	inbox           inbox
+	nextHeight      *nextHeightPool
+	receiveCache    *transport.ReceiveLedger
+	receiveFailures *transport.ReceiveFailureCache
+	receiveContext  atomic.Pointer[receiveContext]
 
 	finalizeSourceMu        sync.Mutex
 	finalizeNamespace       string
@@ -368,6 +385,10 @@ func New(cfg Config, d Deps) (*Runner, error) {
 		return nil, errPriorHeadWAL
 	}
 
+	if err := connectFailureDiagnostics(&cfg, &d); err != nil {
+		return nil, err
+	}
+
 	if d.Transport != nil && d.Transport.CompletedWritesClosed() {
 		return nil, fmt.Errorf("runner: completed-write cache lifetime is closed")
 	}
@@ -389,6 +410,27 @@ func New(cfg Config, d Deps) (*Runner, error) {
 		cfg.ReceiveCache = &copyOptions
 		var err error
 		receiveCache, err = transport.NewReceiveLedger(copyOptions)
+		if err != nil {
+			return nil, err
+		}
+	}
+	var receiveFailures *transport.ReceiveFailureCache
+	if d.InboxFailureSources != nil && cfg.ReceiveFailureCache == nil {
+		return nil, fmt.Errorf("runner: failure hit observations require an explicit failure cache")
+	}
+	if opt := cfg.ReceiveFailureCache; opt != nil {
+		if cfg.ReceiveCache == nil || !cfg.ReceiveCache.KeyWithCode {
+			return nil, fmt.Errorf("runner: failure cache requires code-aware accepted reception")
+		}
+		// Generic observers cannot silently enable the separate source profile.
+		// Only the validated coordinator installs the complete source chain.
+		if d.ReceiveFailureDiagnostics == nil && (opt.Trace != nil || cfg.ReceiveCache.Trace != nil || d.InboxSources != nil || d.CoreSteps != nil) {
+			return nil, fmt.Errorf("runner: failure cache source profile is not available")
+		}
+		copyOptions := *opt
+		cfg.ReceiveFailureCache = &copyOptions
+		var err error
+		receiveFailures, err = transport.NewReceiveFailureCache(copyOptions)
 		if err != nil {
 			return nil, err
 		}
@@ -444,6 +486,7 @@ func New(cfg Config, d Deps) (*Runner, error) {
 		r.walReadNamespace = source.CaptureRun()
 	}
 	r.receiveCache = receiveCache
+	r.receiveFailures = receiveFailures
 	if d.ModuleLogger != nil {
 		r.modLogs = map[logcat.Module]*slog.Logger{logcat.ConsensusRound: d.ModuleLogger(logcat.ConsensusRound),
 			logcat.ConsensusMsg: d.ModuleLogger(logcat.ConsensusMsg)}
@@ -674,6 +717,9 @@ func (r *Runner) Close() error {
 	r.closeAppQueue()
 	if r.receiveCache != nil {
 		r.receiveCache.Close()
+	}
+	if r.receiveFailures != nil {
+		r.receiveFailures.Close()
 	}
 	if r.d.Transport != nil {
 		r.d.Transport.CloseCompletedWrites()

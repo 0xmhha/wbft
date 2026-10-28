@@ -14,6 +14,7 @@ import (
 type sessionFrameRecorder struct {
 	*frameRecorder
 	run                              string
+	coreDeclaration                  *journal.CoreOptions
 	runtimeMu                        sync.Mutex
 	runtimeEnabled, runtimeExhausted bool
 	runtimeLimit, runtimeSequence    uint64
@@ -27,7 +28,12 @@ var _ transport.ReceiveTransitionObserver = (*sessionFrameRecorder)(nil)
 
 func newSessionFrameRecorder(writer journal.Writer, clock stampClock, offset uint64) *sessionFrameRecorder {
 	base := newFrameRecorder(writer, clock, offset)
-	return &sessionFrameRecorder{frameRecorder: base, run: base.CaptureRun()}
+	rec := &sessionFrameRecorder{frameRecorder: base, run: base.CaptureRun()}
+	if writer, ok := writer.(interface{ CoreDeclaration() journal.CoreOptions }); ok {
+		declaration := writer.CoreDeclaration().Copy()
+		rec.coreDeclaration = &declaration
+	}
+	return rec
 }
 
 func (f *sessionFrameRecorder) CaptureRun() string { return f.run }

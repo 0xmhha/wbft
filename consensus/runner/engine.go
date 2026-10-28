@@ -198,6 +198,9 @@ func (r *Runner) stopEngine(reason string) {
 		receiveBefore = r.currentReceiveScopeObservation()
 	}
 	r.updateReceiveContext(nil)
+	if r.receiveFailures != nil {
+		r.receiveFailures.Invalidate()
+	}
 	if r.nextHeight != nil {
 		r.nextHeight.clear()
 	}
