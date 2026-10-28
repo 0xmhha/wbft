@@ -172,9 +172,10 @@ func TestRestoredReceiveDispatchFirstLivePreparation(t *testing.T) {
 				first = index
 			}
 		case *journal.ReceiveDispatchRec:
-			if r.Action == "prepare" {
+			switch r.Action {
+			case "prepare":
 				preparations++
-			} else if r.Action == "dispatch" {
+			case "dispatch":
 				dispatches++
 			}
 			if r.EngineRun == engine && r.BeforeStep == installed && r.Action == "prepare" {
