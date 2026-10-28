@@ -207,9 +207,23 @@ func WriteBundle(fs fsys.FS, dir string, w io.Writer, opt BundleOptions) (*Bundl
 	}
 	// Segments without steps between chosen ones belong to the range.
 	chosen := infos[first : last+1]
-	head := chosen[0].first
+	// A normal unused WAL can precede the first journal writer. Preserve
+	// its empty bytes, but take identity only from a real segment record.
+	// Nonempty segments without a journal header cannot supply identity.
+	var head *SegmentRec
+	for _, si := range chosen {
+		if si.first == nil {
+			if si.seg.Size != 0 {
+				return nil, fmt.Errorf("journal: bundle: segment %s has no segment record", si.seg.Name)
+			}
+			continue
+		}
+		if head == nil {
+			head = si.first
+		}
+	}
 	if head == nil {
-		return nil, fmt.Errorf("journal: bundle: segment %s has no segment record", chosen[0].seg.Name)
+		return nil, errors.New("journal: bundle: no selected segment has a segment record")
 	}
 	m := &BundleManifest{Format: BundleFormat, WBFTCommit: head.Commit, Runs: []string{}, Gaps: []BundleGap{},
 		Node: BundleNode{Self: "0x" + hex.EncodeToString(head.Self[:]), Mode: head.Mode, WireOffset: head.WireOffset,
