@@ -209,7 +209,7 @@ func verifySteps(env *Env, h *types.Header, parents []*types.Header, v, vp *vali
 			}
 			x, err := env.decodeCurrentExtra(h)
 			if err != nil {
-				if env.Config.Rules(types.MinimalSealerBitmap, at) {
+				if env.Config.Rules(types.MinimalSealerBitmap, at) || env.CheckEpochInfoPresence {
 					return stepErr("H16", "ErrInvalidExtraDataFormat", ErrInvalidExtraDataFormat)
 				}
 				return nil
@@ -218,8 +218,17 @@ func verifySteps(env *Env, h *types.Header, parents []*types.Header, v, vp *vali
 				return err
 			}
 			if parent != nil {
-				return verifyPreviousBitmaps(env.Config, parent, x, func(hash types.Hash) *types.Header { return bitmapAncestor(env, parents, hash) })
+				if err := verifyPreviousBitmaps(env.Config, parent, x, func(hash types.Hash) *types.Header { return bitmapAncestor(env, parents, hash) }); err != nil {
+					return err
+				}
 			}
+		}
+		if env.CheckEpochInfoPresence {
+			x, err := env.decodeCurrentExtra(h)
+			if err != nil {
+				return stepErr("H16", "ErrInvalidExtraDataFormat", ErrInvalidExtraDataFormat)
+			}
+			return epochInfoPresenceError(env.Config, h, x)
 		}
 		return nil
 	}
@@ -277,6 +286,11 @@ func verifySteps(env *Env, h *types.Header, parents []*types.Header, v, vp *vali
 	}
 	if err := verifyProposedEpoch(env, h, parent, parents, x, opt); err != nil {
 		return stepErr("epoch_info", "", err)
+	}
+	if env.CheckEpochInfoPresence {
+		if err := epochInfoPresenceError(env.Config, h, x); err != nil {
+			return err
+		}
 	}
 	// H17
 	if opt.CheckSeals {
