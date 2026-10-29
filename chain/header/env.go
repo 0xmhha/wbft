@@ -44,6 +44,10 @@ type Env struct {
 	// matching proposal retry target for ordinary representable time products.
 	// False retains the reference time checks and retry target.
 	UseFutureTimeAllowance bool
+
+	// CheckEpochInfoPresence selects a state-independent presence check before
+	// seals. False preserves the legacy ordered procedure.
+	CheckEpochInfoPresence bool
 }
 
 // ObservationVerifier supplies a configured fork boundary and authenticated

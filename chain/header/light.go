@@ -56,6 +56,9 @@ type LightInputs struct {
 	// UseFutureTimeAllowance explicitly selects the same inherited allowance
 	// policy as a full verifier. It does not supply a missing clock.
 	UseFutureTimeAllowance bool
+	// CheckEpochInfoPresence checks presence after decoding and before seals.
+	// False retains the existing later light-verification presence rule.
+	CheckEpochInfoPresence bool
 }
 
 // ErrLightMissing is the reason of a CannotDecide verdict.
@@ -72,6 +75,17 @@ var ErrLightEpochState = errors.New("parent candidate state and epoch ancestry")
 //
 // Spec: WBFT-HDR-140, WBFT-HDR-141, WBFT-HDR-142, WBFT-HDR-130
 func VerifyLight(in LightInputs, h, parent *types.Header) (LightResult, error) {
+	if in.CheckEpochInfoPresence {
+		if h == nil {
+			return Invalid, ErrInvalidProposal
+		}
+		if in.Config == nil {
+			return CannotDecide, ErrMissingConfig
+		}
+		if in.Trusted == nil {
+			return CannotDecide, fmt.Errorf("%w: validator set", ErrLightMissing)
+		}
+	}
 	if h.Number.IsZero() {
 		return CannotDecide, fmt.Errorf("%w: genesis", ErrLightMissing)
 	}
@@ -128,6 +142,14 @@ func VerifyLight(in LightInputs, h, parent *types.Header) (LightResult, error) {
 	if err := verifyCurrentBitmaps(in.Config, parent, x); err != nil {
 		return Invalid, err
 	}
+	if in.CheckEpochInfoPresence {
+		if err := epochInfoPresenceError(in.Config, h, x); err != nil {
+			if errors.Is(err, validator.ErrZeroEpochLength) {
+				return CannotDecide, err
+			}
+			return Invalid, err
+		}
+	}
 	if err := verifySeals(h, v, x); err != nil {
 		return Invalid, stepErr("H17", className(err), err)
 	}
@@ -163,7 +185,7 @@ func VerifyLight(in LightInputs, h, parent *types.Header) (LightResult, error) {
 	if err != nil {
 		return CannotDecide, err
 	}
-	if (x.EpochInfo != nil) != isEpoch {
+	if !in.CheckEpochInfoPresence && (x.EpochInfo != nil) != isEpoch {
 		return Invalid, fmt.Errorf("EpochInfo presence does not match the epoch schedule")
 	}
 	if isEpoch && in.Config.Rules(types.EpochInfoInProposal, parent.Number.AddUint64(1)) {

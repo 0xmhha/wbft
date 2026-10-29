@@ -449,9 +449,10 @@ type simulation struct {
 }
 
 type verificationKey struct {
-	Header              types.Hash
-	Config              types.Hash
-	FutureTimeAllowance bool
+	Header                 types.Hash
+	Config                 types.Hash
+	FutureTimeAllowance    bool
+	CheckEpochInfoPresence bool
 }
 
 type signKey struct {

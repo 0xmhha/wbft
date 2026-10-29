@@ -1285,6 +1285,14 @@ requires the matching WAL replay profile and is disabled by default. See
 
 ### Verified previous seals
 
+The default-off `check_epoch_info_presence` option checks whether epoch information
+is present exactly at the configured full-height epoch boundaries. It runs after
+header decoding and before seals, independently of the stronger parent-candidate
+chain rule. Header-only verification does not require a parent state snapshot for
+this presence check. Direct light callers select `LightInputs.CheckEpochInfoPresence`
+for the same early check; the default light procedure retains its existing order.
+This local selection changes no block or signature format.
+
 The default-off `verify_merged_prev_seals` option checks both previous seal
 aggregates during proposal assembly, falling back only to a verified original
 parent aggregate. It can be selected with or without `bind_prior_head`. See

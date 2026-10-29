@@ -127,7 +127,7 @@ func (p partB) VerifyPartB(step string, _ *types.Header, _ *types.Header, body t
 
 func (a *app) env() *header.Env {
 	return &header.Env{Config: a.n.cfg, Chain: a.chain, BadBlock: a.IsBadBlock, PartB: partB{a}, Snapshots: a, Now: a.n.clock.Now,
-		UseFutureTimeAllowance: a.n.spec.Options.Improvements.Has(consensus.UseFutureTimeAllowance)}
+		UseFutureTimeAllowance: a.n.spec.Options.Improvements.Has(consensus.UseFutureTimeAllowance), CheckEpochInfoPresence: a.n.spec.Options.Improvements.Has(consensus.CheckEpochInfoPresence)}
 }
 
 // Head implements runner.Chain.
@@ -362,7 +362,7 @@ func (a *app) importBlock(b *types.Block, path string) error {
 		return err
 	}
 	key := verificationKey{Header: keccak.Sum256(enc, codec.BlockHash(a.chain.head.Header).Bytes()), Config: a.n.cfgHash,
-		FutureTimeAllowance: a.n.spec.Options.Improvements.Has(consensus.UseFutureTimeAllowance)}
+		FutureTimeAllowance: a.n.spec.Options.Improvements.Has(consensus.UseFutureTimeAllowance), CheckEpochInfoPresence: a.n.spec.Options.Improvements.Has(consensus.CheckEpochInfoPresence)}
 	if !s.verified[key] {
 		env := a.env()
 		env.PartB = nil
@@ -370,7 +370,7 @@ func (a *app) importBlock(b *types.Block, path string) error {
 			s.violate("header", a.n.v.address, "block %d: %v", h, err)
 			return err
 		}
-		if r, err := header.VerifyLight(header.LightInputs{Config: a.n.cfg, Trusted: trusted{a}}, b.Header, a.chain.head.Header); r != header.Valid {
+		if r, err := header.VerifyLight(header.LightInputs{Config: a.n.cfg, Trusted: trusted{a}, CheckEpochInfoPresence: a.n.spec.Options.Improvements.Has(consensus.CheckEpochInfoPresence)}, b.Header, a.chain.head.Header); r != header.Valid {
 			snapshot, known := a.Get(b.Header.ParentHash)
 			if r != header.CannotDecide || !errors.Is(err, header.ErrLightEpochState) || !known || snapshot == nil || !snapshot.HasCandidates() {
 				s.violate("header", a.n.v.address, "block %d light verification %s: %v", h, r, err)

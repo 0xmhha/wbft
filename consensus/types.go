@@ -226,6 +226,8 @@ const (
 	// VerifyMergedPrevSeals validates the assembled previous seals against
 	// the committed parent before a node returns a new proposal header.
 	VerifyMergedPrevSeals
+	// CheckEpochInfoPresence checks epoch metadata before seal verification.
+	CheckEpochInfoPresence
 )
 
 // RestartSafety is the set of the restart-safety rules of the core. Nodes
@@ -258,6 +260,7 @@ var improvementNames = [...]string{
 	BindFreshProposalAuthor:   "bind_fresh_proposal_author",
 	BindPriorHead:             "bind_prior_head",
 	VerifyMergedPrevSeals:     "verify_merged_prev_seals",
+	CheckEpochInfoPresence:    "check_epoch_info_presence",
 }
 
 // ParseImprovement finds a known local behavior by its reported name.
