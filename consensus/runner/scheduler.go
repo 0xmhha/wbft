@@ -16,18 +16,19 @@ import (
 // fired drops it, and an expiry already queued stays queued (the core
 // decides what a late expiry does, by its generation).
 type scheduler struct {
-	clock           Clock
-	wake            func()
-	mu              sync.Mutex // runner.timers.mu
-	live            [4]*timerEntry
-	fired           []consensus.Timeout
-	queued          []*timerEntry
-	owner           timerOwner
-	sequence        uint64
-	localTimer      bool
-	trace           func(*journal.TimerRec)
-	observe         func(journal.TimerRec)
-	sourceExhausted bool
+	clock               Clock
+	wake                func()
+	mu                  sync.Mutex // runner.timers.mu
+	live                [5]*timerEntry
+	fired               []consensus.Timeout
+	queued              []*timerEntry
+	owner               timerOwner
+	sequence            uint64
+	localTimer          bool
+	validatorStartTimer bool
+	trace               func(*journal.TimerRec)
+	observe             func(journal.TimerRec)
+	sourceExhausted     bool
 }
 
 type timerOwner struct {
@@ -57,6 +58,9 @@ func (s *scheduler) arm(a consensus.ArmTimer, from time.Duration) {
 	e.owner = s.owner
 	if a.Kind == consensus.RoundProposalTimer {
 		s.localTimer = true
+	}
+	if a.Kind == consensus.ValidatorStartTimer {
+		s.validatorStartTimer = true
 	}
 	if old := s.live[a.Kind]; old != nil {
 		old.done = true
@@ -169,6 +173,9 @@ func (s *scheduler) clear() {
 	kinds := consensus.AllTimers
 	if s.localTimer {
 		kinds = consensus.SupportedTimers
+	}
+	if s.validatorStartTimer {
+		kinds = append(append([]consensus.TimerKind(nil), kinds...), consensus.ValidatorStartTimer)
 	}
 	s.mu.Unlock()
 	s.cancel(kinds)

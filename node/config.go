@@ -22,6 +22,9 @@ import (
 
 // Config configures a Node.
 type Config struct {
+	// ValidatorHistory overrides the finite WAL history of an explicitly
+	// selected defer_validator_start improvement. Nil uses its defaults.
+	ValidatorHistory *runner.ValidatorHistoryLimits `json:",omitempty"`
 	// RoundChangeRetry opts into bounded current-own retry attempts. The
 	// maximum is explicit; subsequent restarts require matching WAL options.
 	RoundChangeRetry *consensus.RoundChangeRetryOptions `json:",omitempty"`

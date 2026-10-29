@@ -172,6 +172,19 @@ func New(cfg Config, d Deps) (*Node, error) {
 		seenImprovements[name] = true
 		improvements = improvements.With(i)
 	}
+	if cfg.ValidatorHistory != nil && !improvements.Has(consensus.DeferValidatorStart) {
+		return nil, fmt.Errorf("%w: validator history requires defer_validator_start", ErrConfig)
+	}
+	if improvements.Has(consensus.DeferValidatorStart) {
+		limits := runner.DefaultValidatorHistoryLimits()
+		if cfg.ValidatorHistory != nil {
+			limits = *cfg.ValidatorHistory
+		}
+		if err := limits.Validate(); err != nil {
+			return nil, fmt.Errorf("%w: %v", ErrConfig, err)
+		}
+		cfg.ValidatorHistory = &limits
+	}
 	n := &Node{cfg: cfg, d: d, fs: d.fs, clock: d.clock, snaps: source.NewCache(source.DefaultCacheSize), paths: newHeadPaths(headPathsKept), ring: newEventRing(eventsKept),
 		syncWake: make(chan struct{}, 1), coreImprovements: improvements}
 	if n.fs == nil {
@@ -447,7 +460,7 @@ func (n *Node) start(ctx context.Context) error {
 	n.wal = log
 
 	// 4. Handshake.
-	st, err := runner.InspectWALForConfig(n.fs, filepath.Join(n.cfg.DataDir, walDir), runner.Config{Core: core, ReplayWAL: true, NextHeight: n.cfg.NextHeight})
+	st, err := runner.InspectWALForConfig(n.fs, filepath.Join(n.cfg.DataDir, walDir), runner.Config{Core: core, ReplayWAL: true, NextHeight: n.cfg.NextHeight, ValidatorHistory: n.cfg.ValidatorHistory})
 	if err != nil {
 		return fmt.Errorf("node: write-ahead log: %w", err)
 	}
@@ -582,7 +595,7 @@ func (n *Node) start(ctx context.Context) error {
 	if n.diagnostic != nil {
 		n.diagnostic.connect(&deps, n.d.Diagnostics.WALRead)
 	}
-	config := runner.Config{Core: core, ReplayWAL: true, NextHeight: n.cfg.NextHeight}
+	config := runner.Config{Core: core, ReplayWAL: true, NextHeight: n.cfg.NextHeight, ValidatorHistory: n.cfg.ValidatorHistory}
 	if policy := n.cfg.CachePolicy; policy != nil {
 		receive := policy.ReceiveOptions()
 		if n.diagnostic != nil {

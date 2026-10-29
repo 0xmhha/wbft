@@ -31,6 +31,7 @@ type RestoreCheck struct {
 }
 
 var ErrRestoreSource = errors.New("journal: inconsistent restore source")
+var errRestoreValidatorStart = errors.New("journal: validator-start independent restore is unavailable")
 
 // These private types decode the public WAL wire contract independently of the
 // runner's planner and replay helpers. No runner-owned state or output is fed in.
@@ -228,6 +229,9 @@ func reconstructRestoreSourcesBudget(records []Record, limits CoreSourceLimits, 
 				return unavailable("failed_restore_not_supported")
 			}
 			for _, f := range root.read.Source.Frames {
+				if f.Bytes[8] == 5 {
+					return unavailable("validator_start_profile")
+				}
 				if f.Bytes[8] == 2 {
 					return unavailable("next_height_not_supported")
 				}
@@ -236,9 +240,15 @@ func reconstructRestoreSourcesBudget(records []Record, limits CoreSourceLimits, 
 			if !ok || w.backlog > math.MaxInt {
 				return unavailable("core_configuration_missing")
 			}
+			if consensus.ImprovementSet(w.improvements).Has(consensus.DeferValidatorStart) {
+				return unavailable("validator_start_profile")
+			}
 			plan, err := independentRestorePlan(root.read, s.From, w)
 			if errors.Is(err, errRestoreNextHeight) {
 				return unavailable("next_height_not_supported")
+			}
+			if errors.Is(err, errRestoreValidatorStart) {
+				return unavailable("validator_start_profile")
 			}
 			if err != nil {
 				return bad("original_boundary_or_input_invalid")
@@ -382,6 +392,14 @@ func reconstructRestoreSourcesBudget(records []Record, limits CoreSourceLimits, 
 func planHeadBytes(p *restorePlan) []byte { b, _ := codec.EncodeHeader(p.head); return b }
 
 func independentRestorePlan(root *WALReadRec, from string, expected coreSourceWriter) (*restorePlan, error) {
+	if consensus.ImprovementSet(expected.improvements).Has(consensus.DeferValidatorStart) {
+		return nil, errRestoreValidatorStart
+	}
+	for _, frame := range root.Source.Frames {
+		if len(frame.Bytes) >= 10 && frame.Bytes[8] == 5 {
+			return nil, errRestoreValidatorStart
+		}
+	}
 	p := new(restorePlan)
 	start := -1
 	var boundary restoreBoundary

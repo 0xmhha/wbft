@@ -121,8 +121,8 @@ func (st *step) onMessage(in Message) {
 	o.Source = v.Source
 	st.observe(v)
 	ok, cls, row := st.handleDecoded(v)
-	o.Check, o.Row, o.Relayed = cls, row, ok
-	if ok {
+	o.Check, o.Row, o.Relayed = cls, row, ok && s.validatorStart == nil
+	if o.Relayed {
 		st.emit(Relay{Code: in.Code, Payload: in.Payload, Validators: s.validators})
 	}
 	st.emit(o)
@@ -142,7 +142,7 @@ func (st *step) onReplay(v *Verified) {
 	o := Outcome{Code: v.Msg.Code, Source: v.Source, View: v.Msg.View, Via: viaBacklog, DedupKey: codec.DedupKey(payload)}
 	ok, cls, row := st.handleDecoded(v)
 	o.Check, o.Row = cls, row
-	if ok && err == nil {
+	if ok && err == nil && s.validatorStart == nil {
 		o.Relayed = true
 		st.emit(Relay{Code: v.Msg.Code, Payload: payload, Validators: s.validators})
 	}

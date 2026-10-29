@@ -29,13 +29,26 @@ func (r *Runner) startEngine(_ context.Context, head *types.Header) (startErr er
 	r.clearInternal("reset")
 	r.lastOwn = map[ownKey][]byte{}
 	r.floorSkip = map[string]bool{}
-	r.lastGen = [4]uint64{}
+	r.lastGen = [5]uint64{}
 	r.replay = ReplayInfo{}
 	if jw, ok := r.d.Journal.(interface{ SetEngineRun(uint64) }); ok {
 		jw.SetEngineRun(r.engineRun)
 	}
 	r.env = &liveEnv{r: r, head: head}
 	from := head.Number.AddUint64(1)
+	r.validatorHistory, r.validatorWrite = nil, nil
+	if r.cfg.Core.Improvements.Has(consensus.DeferValidatorStart) && r.d.WAL != nil {
+		return r.startValidatorHistory(head)
+	}
+	if r.d.WAL != nil {
+		fs, dir := r.d.WAL.FS()
+		records, _, _ := wal.ReadAll(fs, dir)
+		for _, record := range records {
+			if record.Format == validatorStartFormat {
+				return errValidatorHistoryProfile
+			}
+		}
+	}
 
 	// Disabling replay must not silently discard an opt-in WAL profile.
 	if !r.cfg.ReplayWAL && r.d.WAL != nil {
@@ -68,7 +81,7 @@ func (r *Runner) startEngine(_ context.Context, head *types.Header) (startErr er
 	}
 	replayed := false
 	var journalRecs []*journal.StepRec
-	var replayTimers [4]*consensus.ArmTimer
+	var replayTimers [5]*consensus.ArmTimer
 	if plan != nil && len(plan.steps) > 0 {
 		core, recs, res := r.runReplayObserved(plan)
 		if res.err != nil && res.lastPartial && r.cfg.Core.RoundChangeRetry == nil && r.nextHeight == nil && !r.cfg.Core.Improvements.Has(consensus.BindPriorHead) {
@@ -120,10 +133,14 @@ func (r *Runner) startEngine(_ context.Context, head *types.Header) (startErr er
 			before = r.core.Snapshot()
 			receiveBefore = r.currentReceiveScopeObservation()
 		}
+		var startGens []uint64
+		if r.cfg.Core.Improvements.Has(consensus.DeferValidatorStart) {
+			startGens = r.core.TimerGenerations()
+		}
 		outs := r.core.Step(r.env, consensus.Start{})
 		answers := r.env.end()
 		r.running.Store(true)
-		sc := &stepCtx{q: queued{in: consensus.Start{}, via: viaEngine}, step: r.step, outs: outs, env: answers}
+		sc := &stepCtx{q: queued{in: consensus.Start{}, via: viaEngine}, step: r.step, outs: outs, env: answers, startGens: startGens}
 		if r.d.CoreSteps != nil {
 			sc.receiveBefore, sc.receiveAfter = receiveBefore, r.currentReceiveScopeObservation()
 		}
@@ -181,7 +198,7 @@ func (r *Runner) writeRunStart(from types.Height, head *types.Header, snap *cons
 	if err != nil {
 		return err
 	}
-	pos, err := r.d.WAL.AppendSync(rec)
+	pos, err := r.appendFunctionalWAL(rec, true)
 	if err != nil {
 		r.halt(err)
 		return err
@@ -400,9 +417,9 @@ type replayResult struct {
 	fed         int
 	err         error
 	lastPartial bool // the error is at the last step and may be a torn step
-	lastGen     [4]uint64
+	lastGen     [5]uint64
 	lastOwn     map[ownKey][]byte
-	timers      [4]*consensus.ArmTimer
+	timers      [5]*consensus.ArmTimer
 }
 
 // runReplay feeds a plan to a new core: a Start from the boundary, then
@@ -424,7 +441,7 @@ func (r *Runner) runReplay(plan *replayPlan) (*consensus.State, []*journal.StepR
 		d, _ := inputlog.OutDigest(outs)
 		var envs [][]byte
 		for _, c := range env {
-			if c.Kind == inputlog.EnvValidatorsAt && !r.cfg.Core.Improvements.Has(consensus.BindPriorHead) {
+			if c.Kind == inputlog.EnvValidatorsAt && !r.cfg.Core.Improvements.Has(consensus.BindPriorHead) && !r.cfg.Core.Improvements.Has(consensus.DeferValidatorStart) {
 				continue
 			}
 			if b, err := inputlog.EncodeEnv(c); err == nil {
@@ -585,6 +602,9 @@ func (r *Runner) afterReplayTimers(timers []*consensus.ArmTimer, snap *consensus
 		return
 	}
 	for _, m := range r.ownViewMessages(snap.View) {
+		if r.validatorHistory != nil && bytes.Equal(r.validatorHistory.sent[ownKey{code: uint64(m.code)}], m.payload) {
+			continue
+		}
 		switch m.code {
 		case codec.CodePrepare, codec.CodeCommit, codec.CodeRoundChange:
 		default:

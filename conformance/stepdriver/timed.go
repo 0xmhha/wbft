@@ -451,7 +451,7 @@ func runTimedEntries(entries []timedSourceEntry, j JournalReader, opts TimedOpti
 		if suppression != "" {
 			result, e = scheduledEmpty(state, original, true, suppression)
 		} else {
-			env := &traceEnv{cfg: cfg, blocks: opts.Blocks, head: head, session: session, priorProfile: state.Enabled(consensus.BindPriorHead), source: answerStep{context: answerContext{writer, engine, head.Number.String(), codec.BlockHash(head), consensus.ValsetDigest(state.Snapshot().Validators)}}}
+			env := &traceEnv{cfg: cfg, blocks: opts.Blocks, head: head, session: session, priorProfile: state.Enabled(consensus.BindPriorHead) || state.Enabled(consensus.DeferValidatorStart), requireKeyWitness: state.Enabled(consensus.DeferValidatorStart), source: answerStep{context: answerContext{writer, engine, head.Number.String(), codec.BlockHash(head), consensus.ValsetDigest(state.Snapshot().Validators)}}}
 			if original != nil {
 				known, err := session.source(writer, original)
 				if err != nil {

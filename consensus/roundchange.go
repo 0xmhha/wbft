@@ -264,6 +264,10 @@ func (st *step) handleRoundChange(v *Verified) (bool, int) {
 		target := s.rcs.minRoundAbove(r0)
 		st.emitQuorum("F_PLUS_ONE", num)
 		newHeight := st.startNewRound(target, causeFPlusOne)
+		if s.validatorStart != nil {
+			s.validatorStart.resumeRoundChange = true
+			return true, rowRCFPlusOne
+		}
 		if !newHeight || !s.opt.Improvements.Has(ResetHeightState) {
 			st.broadcastRoundChange(target)
 		}

@@ -80,7 +80,7 @@ type BacklogVar struct {
 // Vars returns the state variables, or nil while the core is stopped or
 // before it entered a view.
 func (s *State) Vars() *Vars {
-	if !s.running || s.cur == nil {
+	if !s.running || s.cur == nil || s.validatorStart != nil {
 		return nil
 	}
 	c := s.cur
@@ -182,7 +182,8 @@ type Snapshot struct {
 	ExtraPrepare    []ExtraSealEntry
 	ExtraCommit     []ExtraSealEntry
 	// Backlog is the number of backlogged messages of all sources.
-	Backlog int
+	Backlog        int
+	ValidatorStart *ValidatorStartWait `json:"validator_start,omitempty"`
 }
 
 // ExtraSealEntry is one stored extra seal.
@@ -196,6 +197,9 @@ type ExtraSealEntry struct {
 // Snapshot returns the current summary. The result shares no mutable state
 // with the core.
 func (s *State) Snapshot() *Snapshot {
+	if wait := s.ValidatorStartWait(); wait != nil {
+		return &Snapshot{ValidatorStart: wait}
+	}
 	snap := &Snapshot{Running: s.running && s.cur != nil}
 	if !snap.Running {
 		return snap

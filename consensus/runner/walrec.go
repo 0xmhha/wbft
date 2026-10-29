@@ -3,6 +3,7 @@ package runner
 import (
 	"fmt"
 	"math/big"
+	"slices"
 
 	"github.com/0xmhha/wbft/chain/validator"
 	"github.com/0xmhha/wbft/codec"
@@ -204,6 +205,9 @@ func InspectWAL(fs fsys.FS, dir string) (WALState, error) {
 // actions. The caller must use the same configuration to start the runner;
 // application refinalization must not precede this validation.
 func InspectWALForConfig(fs fsys.FS, dir string, cfg Config) (WALState, error) {
+	if err := freezeValidatorHistoryConfig(&cfg, nil); err != nil {
+		return WALState{}, err
+	}
 	if err := cfg.Core.RoundChangeRetry.Validate(cfg.Core.Config); err != nil {
 		return WALState{}, err
 	}
@@ -219,9 +223,21 @@ func InspectWALForConfig(fs fsys.FS, dir string, cfg Config) (WALState, error) {
 
 func inspectWAL(fs fsys.FS, dir string, profile *Runner) (WALState, error) {
 	var st WALState
-	recs, _, err := wal.ReadAll(fs, dir)
+	recs, positions, err := wal.ReadAll(fs, dir)
 	if err != nil {
 		return st, err
+	}
+	selected := profile != nil && profile.cfg.Core.Improvements.Has(consensus.DeferValidatorStart)
+	hasValidatorHistory := slices.ContainsFunc(recs, func(record wal.Record) bool { return record.Format == validatorStartFormat })
+	if selected || hasValidatorHistory {
+		if !selected {
+			return st, errValidatorHistoryProfile
+		}
+		parsed, err := parseValidatorHistory(profile.cfg, recs, positions)
+		if err != nil {
+			return st, err
+		}
+		return parsed.state, nil
 	}
 	for _, rec := range recs {
 		if rec.Format == roundChangeRetryFormat && (profile == nil || rec.Kind != walRunStart && rec.Kind != walEndHeight) {

@@ -25,6 +25,8 @@ func (r *Runner) beginRestoreSource(from types.Height) {
 		r.restoreSource.Unavailable = "replay_disabled"
 	} else if r.d.WAL == nil {
 		r.restoreSource.Unavailable = "wal_missing"
+	} else if r.cfg.Core.Improvements.Has(consensus.DeferValidatorStart) {
+		r.restoreSource.Unavailable = "validator_start_profile"
 	} else if r.nextHeight != nil {
 		r.restoreSource.Unavailable = "next_height"
 	}
@@ -61,7 +63,8 @@ func (r *Runner) runReplayObserved(p *replayPlan) (*consensus.State, []*journal.
 	if s == nil || s.Unavailable != "" {
 		return core, recs, res
 	}
-	a := journal.RestoreAttempt{Inputs: uint64(len(p.steps)), Fed: uint64(res.fed), Steps: uint64(len(recs)), Generations: append([]uint64(nil), res.lastGen[:]...), Timers: make([][]byte, 4)}
+	width := r.restoreTimerWidth()
+	a := journal.RestoreAttempt{Inputs: uint64(len(p.steps)), Fed: uint64(res.fed), Steps: uint64(len(recs)), Generations: append([]uint64(nil), res.lastGen[:width]...), Timers: make([][]byte, width)}
 	if res.err != nil {
 		a.Failed = 1
 	}
@@ -88,7 +91,7 @@ func (r *Runner) runReplayObserved(p *replayPlan) (*consensus.State, []*journal.
 		}
 		return 0
 	})
-	for i, t := range res.timers {
+	for i, t := range res.timers[:width] {
 		if t != nil {
 			a.Timers[i], err = inputlog.EncodeOutputs([]consensus.Output{*t})
 			if err != nil {
@@ -125,7 +128,7 @@ func (r *Runner) finishRestoreSource(startErr *error) {
 	if s.Read.Log == 0 && s.Unavailable == "" {
 		s.Unavailable = "read_source_missing"
 	}
-	s.Generations = append([]uint64(nil), r.lastGen[:]...)
+	s.Generations = append([]uint64(nil), r.lastGen[:r.restoreTimerWidth()]...)
 	if s.Unavailable == "" {
 		for key, payload := range r.lastOwn {
 			if !r.chargeRestoreValue(s, uint64(len(payload))) {

@@ -56,6 +56,15 @@ func (r *Runner) currentOwnRetry(sc *stepCtx, b consensus.Broadcast, message *co
 // armTimer preserves the original scheduler for disabled policies. A new
 // retry cannot publish or install an unrepresentable logical deadline.
 func (r *Runner) armTimer(a consensus.ArmTimer, from time.Duration) bool {
+	if a.Kind == consensus.ValidatorStartTimer {
+		now := r.d.Clock.Mono()
+		if !r.cfg.Core.Improvements.Has(consensus.DeferValidatorStart) ||
+			a.Duration != time.Second || a.Gen == 0 || a.Msg != nil ||
+			from < 0 || now < from || from > time.Duration(math.MaxInt64)-a.Duration {
+			r.halt(fmt.Errorf("runner: invalid validator-start timer or logical deadline"))
+			return false
+		}
+	}
 	if policy := r.cfg.Core.RoundChangeRetry; policy != nil && a.Kind == consensus.RetryTimer {
 		now := r.d.Clock.Mono()
 		if policy.MaxIntervalMs == 0 || policy.MaxIntervalMs > uint64(math.MaxInt64/int64(time.Millisecond)) ||

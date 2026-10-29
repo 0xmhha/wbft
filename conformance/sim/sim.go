@@ -40,6 +40,9 @@ func (v Validator) Address() types.Address { return v.address }
 
 // NodeSpec configures one node.
 type NodeSpec struct {
+	// ValidatorHistory bounds the explicitly selected validator-start WAL
+	// profile. It is copied and requires replay; nil uses its finite defaults.
+	ValidatorHistory *runner.ValidatorHistoryLimits `json:",omitempty"`
 	// Timing overrides only this node's timing parameters for all incarnations.
 	// Nil fields inherit Scenario.Params; a zero maximum explicitly removes a cap.
 	Timing *TimingParams `json:",omitempty"`
@@ -593,6 +596,22 @@ func newSimulation(sc Scenario) (*simulation, error) {
 		spec.NextHeight, err = cloneNextHeight(spec.NextHeight, spec.ReplayWAL, processing)
 		if err != nil {
 			return nil, err
+		}
+		if spec.ValidatorHistory != nil && !spec.Options.Improvements.Has(consensus.DeferValidatorStart) {
+			return nil, fmt.Errorf("%w: validator history requires defer_validator_start", ErrScenario)
+		}
+		if spec.Options.Improvements.Has(consensus.DeferValidatorStart) {
+			if !spec.ReplayWAL {
+				return nil, fmt.Errorf("%w: validator history requires WAL replay", ErrScenario)
+			}
+			limits := runner.DefaultValidatorHistoryLimits()
+			if spec.ValidatorHistory != nil {
+				limits = *spec.ValidatorHistory
+			}
+			if err := limits.Validate(); err != nil {
+				return nil, fmt.Errorf("%w: %v", ErrScenario, err)
+			}
+			spec.ValidatorHistory = &limits
 		}
 		if spec.BuildQueuePolicy == BuildQueueSealing {
 			effective := spec
