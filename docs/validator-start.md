@@ -29,6 +29,22 @@ be migrated automatically. Updated readers reject a format-5 history with the
 selection disabled, replay disabled or different effective configuration before
 returning application-handshake actions.
 
+Selected Node and simulator startup inspect every raw frame and the complete
+history profile before opening their persistent writers or changing a sign
+floor. Even a partial final frame or a moved-aside `.wal.corrupted` segment
+refuses startup without repair. Only a missing directory is a fresh source;
+other read errors refuse it. Materialization rechecks the same inspected source
+before exclusively creating a new segment. Reusing that snapshot is refused.
+
+Low-level integrations must use `wal.OpenStrict` or `wal.OpenStrictOS` for a
+selected runner. These APIs prove raw frame validity; the runner still checks
+the complete semantic profile before starting. Integrations that need semantic
+validation before their own writers should first call `InspectWALForConfig`
+and then the returned state's `OpenValidatedWAL`. The regular `wal.Open` repair
+contract is unchanged and cannot authorize the selected runner. These APIs
+assume a single owner of the WAL directory, do not lock out external writes,
+and cannot undo an earlier caller's repair or certify physical durability.
+
 `node.Config.ValidatorHistory` and `runner.Config.ValidatorHistory` optionally
 override `runner.ValidatorHistoryLimits`. Both `Bytes` and `Records` must be
 positive and at most `MaxInt64`; nil selects **64 MiB and 65,536 records**. The

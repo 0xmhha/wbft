@@ -25,6 +25,9 @@ func freezeValidatorHistoryConfig(cfg *Config, log *wal.Log) error {
 	if log != nil && !cfg.ReplayWAL {
 		return fmt.Errorf("runner: validator-start history requires WAL replay")
 	}
+	if log != nil && !log.OpenedStrict() {
+		return fmt.Errorf("runner: validator-start history requires a strict WAL open")
+	}
 	if log != nil && log.Options().Header != nil {
 		return fmt.Errorf("runner: validator-start history does not support automatic WAL headers")
 	}

@@ -392,7 +392,11 @@ func (n *tnode) boot() {
 		t.Fatal(err)
 	}
 	n.signer = s
-	log, _, err := wal.Open(n.fs, "/wal", wal.Options{})
+	openWAL := wal.Open
+	if n.opts.Improvements.Has(consensus.DeferValidatorStart) {
+		openWAL = wal.OpenStrict
+	}
+	log, _, err := openWAL(n.fs, "/wal", wal.Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
