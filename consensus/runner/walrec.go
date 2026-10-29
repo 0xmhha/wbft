@@ -193,7 +193,17 @@ type WALState struct {
 	LastEnd *types.Height
 	// Commits are the commit requests in the log, in order, including those
 	// of heights the core has already left.
-	Commits []CommitRequest
+	Commits      []CommitRequest
+	strictSource *wal.Snapshot
+}
+
+// OpenValidatedWAL materializes the same strict prefix that passed the
+// selected profile inspection. Ordinary InspectWAL results cannot open it.
+func (s WALState) OpenValidatedWAL(opt wal.Options) (*wal.Log, wal.Recovery, error) {
+	if opt.Header != nil {
+		return nil, wal.Recovery{}, fmt.Errorf("runner: validator-start history does not support automatic WAL headers")
+	}
+	return s.strictSource.Open(opt)
 }
 
 // InspectWAL reads the write-ahead log in dir for the start-up handshake.
@@ -223,11 +233,21 @@ func InspectWALForConfig(fs fsys.FS, dir string, cfg Config) (WALState, error) {
 
 func inspectWAL(fs fsys.FS, dir string, profile *Runner) (WALState, error) {
 	var st WALState
-	recs, positions, err := wal.ReadAll(fs, dir)
-	if err != nil {
-		return st, err
-	}
 	selected := profile != nil && profile.cfg.Core.Improvements.Has(consensus.DeferValidatorStart)
+	var recs []wal.Record
+	var positions []wal.Position
+	var err error
+	if selected {
+		st.strictSource, err = wal.Inspect(fs, dir)
+		if err == nil {
+			recs, positions = st.strictSource.Records()
+		}
+	} else {
+		recs, positions, err = wal.ReadAll(fs, dir)
+	}
+	if err != nil {
+		return WALState{}, err
+	}
 	hasValidatorHistory := slices.ContainsFunc(recs, func(record wal.Record) bool { return record.Format == validatorStartFormat })
 	if selected || hasValidatorHistory {
 		if !selected {
@@ -235,8 +255,9 @@ func inspectWAL(fs fsys.FS, dir string, profile *Runner) (WALState, error) {
 		}
 		parsed, err := parseValidatorHistory(profile.cfg, recs, positions)
 		if err != nil {
-			return st, err
+			return WALState{}, err
 		}
+		parsed.state.strictSource = st.strictSource
 		return parsed.state, nil
 	}
 	for _, rec := range recs {

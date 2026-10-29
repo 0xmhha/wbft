@@ -157,7 +157,7 @@ func TestValidatorStartHistoryRuntimeBudgetHaltsBeforeNewBuild(t *testing.T) {
 	n.opts.Improvements = n.opts.Improvements.With(consensus.DeferValidatorStart)
 	// Construct the normal runner with an explicit small experimental cap;
 	// the expected resource boundary is not an injected storage failure.
-	log, _, err := wal.Open(n.fs, "/wal", wal.Options{})
+	log, _, err := wal.OpenStrict(n.fs, "/wal", wal.Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -221,7 +221,7 @@ func TestValidatorStartHistoryRuntimeRecordedPendingRestoresOnlyRetry(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	log, _, err := wal.Open(n.fs, "/wal", wal.Options{})
+	log, _, err := wal.OpenStrict(n.fs, "/wal", wal.Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -264,7 +264,7 @@ func TestValidatorStartHistoryRuntimeCompoundProfiles(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			log, _, err := wal.Open(n.fs, "/wal", wal.Options{SegmentBytes: 512, KeepHeights: 1})
+			log, _, err := wal.OpenStrict(n.fs, "/wal", wal.Options{SegmentBytes: 512, KeepHeights: 1})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -345,7 +345,7 @@ func TestValidatorStartHistoryBudgetPrecedesActualSignerCall(t *testing.T) {
 		t.Fatal(err)
 	}
 	signer := &validatorHistoryCountingSigner{FileSigner: actual}
-	log, _, err := wal.Open(n.fs, "/wal", wal.Options{})
+	log, _, err := wal.OpenStrict(n.fs, "/wal", wal.Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -435,7 +435,7 @@ func TestValidatorStartHistoryCanonicalCatchupRetainsOrReplacesOneArm(t *testing
 		if higher {
 			n.chain.head = block(t, 10, 0, types.Address{}, types.Hash{}).Header
 		}
-		log, _, err := wal.Open(n.fs, "/wal", wal.Options{})
+		log, _, err := wal.OpenStrict(n.fs, "/wal", wal.Options{})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -492,7 +492,7 @@ func TestValidatorStartNoJournalReplayKeepsLogicalStepCount(t *testing.T) {
 	n.opts.Improvements = n.opts.Improvements.With(consensus.DeferValidatorStart)
 	cfg := Config{Core: n.opts, ReplayWAL: true, Manual: true}
 	boot := func() {
-		log, _, err := wal.Open(n.fs, "/wal", wal.Options{})
+		log, _, err := wal.OpenStrict(n.fs, "/wal", wal.Options{})
 		if err != nil {
 			t.Fatal(err)
 		}

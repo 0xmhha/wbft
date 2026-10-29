@@ -1,6 +1,7 @@
 package node
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -19,6 +20,7 @@ import (
 	"github.com/0xmhha/wbft/consensus/privval"
 	"github.com/0xmhha/wbft/consensus/runner"
 	"github.com/0xmhha/wbft/consensus/wal"
+	"github.com/0xmhha/wbft/crypto/ecdsa"
 	"github.com/0xmhha/wbft/internal/fsys"
 	"github.com/0xmhha/wbft/mempool"
 	"github.com/0xmhha/wbft/observe/event"
@@ -355,6 +357,31 @@ func (n *Node) start(ctx context.Context) error {
 	if info.ChainID != nil && cfg.ChainID != nil && info.ChainID.Cmp(cfg.ChainID) != 0 {
 		return refuse("chain id %v of the application differs from %v of the chain configuration", info.ChainID, cfg.ChainID)
 	}
+	selectedHistory := n.coreImprovements.Has(consensus.DeferValidatorStart)
+	var selectedKey []byte
+	var st runner.WALState
+	if selectedHistory {
+		// Resolve Self without opening sign state or changing its floor. Keep
+		// this exact key for materialization after full profile validation.
+		var self types.Address
+		if n.cfg.KeyFile != "" || n.d.key != nil {
+			selectedKey, err = n.loadSignerKey()
+			if err != nil {
+				return err
+			}
+			key, err := ecdsa.PrivateKeyFromBytes(selectedKey)
+			if err != nil {
+				return refuse("signing key: %v", err)
+			}
+			self = ecdsa.Address(key)
+		}
+		st, err = runner.InspectWALForConfig(n.fs, filepath.Join(n.cfg.DataDir, walDir), runner.Config{
+			Core:      consensus.Options{Config: cfg, Self: self, Improvements: n.coreImprovements, RoundChangeRetry: n.cfg.RoundChangeRetry},
+			ReplayWAL: true, NextHeight: n.cfg.NextHeight, ValidatorHistory: n.cfg.ValidatorHistory})
+		if err != nil {
+			return fmt.Errorf("node: write-ahead log: %w", err)
+		}
+	}
 	observation, err := n.openObservation(cfg, info.GenesisHash)
 	if err != nil {
 		return fmt.Errorf("node: observation configuration: %w", err)
@@ -395,7 +422,7 @@ func (n *Node) start(ctx context.Context) error {
 		n.mu.Unlock()
 	}
 	if n.cfg.KeyFile != "" || n.d.key != nil {
-		if err := n.openSigner(head); err != nil {
+		if err := n.openSigner(head, selectedKey); err != nil {
 			return err
 		}
 	}
@@ -453,16 +480,25 @@ func (n *Node) start(ctx context.Context) error {
 	n.mu.Lock()
 	n.evid = evid
 	n.mu.Unlock()
-	log, recov, err := wal.Open(n.fs, filepath.Join(n.cfg.DataDir, walDir), wal.Options{KeepHeights: 2, Now: n.clock.Now, Synced: n.walSynced})
+	walOptions := wal.Options{KeepHeights: 2, Now: n.clock.Now, Synced: n.walSynced}
+	var log *wal.Log
+	var recov wal.Recovery
+	if selectedHistory {
+		log, recov, err = st.OpenValidatedWAL(walOptions)
+	} else {
+		log, recov, err = wal.Open(n.fs, filepath.Join(n.cfg.DataDir, walDir), walOptions)
+	}
 	if err != nil {
 		return fmt.Errorf("node: write-ahead log: %w", err)
 	}
 	n.wal = log
 
 	// 4. Handshake.
-	st, err := runner.InspectWALForConfig(n.fs, filepath.Join(n.cfg.DataDir, walDir), runner.Config{Core: core, ReplayWAL: true, NextHeight: n.cfg.NextHeight, ValidatorHistory: n.cfg.ValidatorHistory})
-	if err != nil {
-		return fmt.Errorf("node: write-ahead log: %w", err)
+	if !selectedHistory {
+		st, err = runner.InspectWALForConfig(n.fs, filepath.Join(n.cfg.DataDir, walDir), runner.Config{Core: core, ReplayWAL: true, NextHeight: n.cfg.NextHeight, ValidatorHistory: n.cfg.ValidatorHistory})
+		if err != nil {
+			return fmt.Errorf("node: write-ahead log: %w", err)
+		}
 	}
 	var signHeight *types.Height
 	if n.signer != nil {
@@ -871,22 +907,34 @@ func (n *Node) startPool(ctx context.Context) error {
 	return nil
 }
 
-// openSigner opens the sign state and sets the sign floor of a taken-over
-// key: with TakeoverGuard, an empty sign state and a head above genesis the
-// node signs nothing at head + 1.
-func (n *Node) openSigner(head *types.Header) error {
+// loadSignerKey reads or copies key material without opening persistent state.
+func (n *Node) loadSignerKey() ([]byte, error) {
+	if n.d.key != nil {
+		return bytes.Clone(n.d.key), nil
+	}
+	raw, err := n.fs.ReadFile(n.cfg.KeyFile)
+	if err != nil {
+		return nil, fmt.Errorf("node: key file: %w", err)
+	}
+	key, err := privval.ParseKeyFile(raw)
+	if err != nil {
+		return nil, fmt.Errorf("node: key file: %w", err)
+	}
+	return key, nil
+}
+
+// openSigner opens sign state and applies the takeover floor. A non-nil key
+// is the exact read-only key used by the selected startup preflight.
+func (n *Node) openSigner(head *types.Header, key []byte) error {
 	dir := filepath.Join(n.cfg.DataDir, privvalDir)
 	if err := n.fs.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
-	key := n.d.key
 	if key == nil {
-		raw, err := n.fs.ReadFile(n.cfg.KeyFile)
+		var err error
+		key, err = n.loadSignerKey()
 		if err != nil {
-			return fmt.Errorf("node: key file: %w", err)
-		}
-		if key, err = privval.ParseKeyFile(raw); err != nil {
-			return fmt.Errorf("node: key file: %w", err)
+			return err
 		}
 	}
 	options := privval.Options{FS: n.fs, Faults: n.d.faults}

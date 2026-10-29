@@ -79,7 +79,7 @@ func TestValidatorStartHistoryConfigurationIsExplicitAndFrozen(t *testing.T) {
 		if header {
 			options.Header = func() []wal.Record { return nil }
 		}
-		log, _, err := wal.Open(fsys.NewMem(), "/history-config", options)
+		log, _, err := wal.OpenStrict(fsys.NewMem(), "/history-config", options)
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -139,6 +139,20 @@ func (n *node) start() {
 	if n.app.serial != nil && n.app.serial.deferStart() {
 		return
 	}
+	opts := n.spec.Options
+	opts.Config, opts.Self = n.cfg, n.v.address
+	selectedHistory := opts.Improvements.Has(consensus.DeferValidatorStart)
+	var st runner.WALState
+	if selectedHistory {
+		var err error
+		st, err = runner.InspectWALForConfig(n.fs, walDir, runner.Config{Core: opts, ReplayWAL: n.spec.ReplayWAL,
+			NextHeight: n.spec.NextHeight, ValidatorHistory: n.spec.ValidatorHistory})
+		if err != nil {
+			n.s.violate("start", n.v.address, "%v", err)
+			n.alive, n.down = false, true
+			return
+		}
+	}
 	n.inc++
 	n.engineActions = nil
 	inc := n.inc
@@ -156,7 +170,15 @@ func (n *node) start() {
 	if segBytes <= 0 {
 		segBytes = 256 << 10
 	}
-	log, recov, err := wal.Open(n.fs, walDir, wal.Options{SegmentBytes: segBytes, KeepHeights: 2})
+	walOptions := wal.Options{SegmentBytes: segBytes, KeepHeights: 2}
+	var log *wal.Log
+	var recov wal.Recovery
+	var err error
+	if selectedHistory {
+		log, recov, err = st.OpenValidatedWAL(walOptions)
+	} else {
+		log, recov, err = wal.Open(n.fs, walDir, walOptions)
+	}
 	if err != nil {
 		fail(err)
 		return
@@ -186,8 +208,6 @@ func (n *node) start() {
 	} else if h, ok := signer.SignFloor(); ok {
 		floor = map[string]any{"height": h.String(), "status": "kept"}
 	}
-	opts := n.spec.Options
-	opts.Config, opts.Self = n.cfg, n.v.address
 	id := journal.Identity{Self: n.v.address, BLSPublicKey: n.v.blsPub, Run: n.runID(), Commit: buildmeta.Version(), ChainID: big.NewInt(ChainID),
 		GenesisHash: codec.BlockHash(n.s.genesis.Header), Mode: "standalone",
 		Core: journal.CoreOptions{TimerTrace: journal.TimerTraceVersion, ChainConfig: n.cfgJSON, Self: n.v.address, Improvements: uint64(opts.Improvements),
@@ -215,10 +235,7 @@ func (n *node) start() {
 	}
 
 	// Start-up handshake.
-	var st runner.WALState
-	if opts.Improvements.Has(consensus.DeferValidatorStart) {
-		st, err = runner.InspectWALForConfig(n.fs, walDir, runner.Config{Core: opts, ReplayWAL: n.spec.ReplayWAL, NextHeight: n.spec.NextHeight, ValidatorHistory: n.spec.ValidatorHistory})
-	} else {
+	if !selectedHistory {
 		st, err = runner.InspectWAL(n.fs, walDir)
 	}
 	if err != nil {

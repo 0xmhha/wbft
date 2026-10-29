@@ -118,6 +118,7 @@ type Log struct {
 	err        error // sticky write error
 	closed     bool
 	started    bool
+	strict     bool // immutable non-repairing open capability
 }
 
 var _ Writer = (*Log)(nil)
@@ -351,6 +352,9 @@ func (l *Log) flush() error {
 
 // rotate syncs and closes the current segment and starts the next one.
 func (l *Log) rotate() error {
+	if l.strict && l.seg == ^uint64(0) {
+		return fmt.Errorf("wal: segment index exhausted")
+	}
 	if err := l.flush(); err != nil {
 		return err
 	}
