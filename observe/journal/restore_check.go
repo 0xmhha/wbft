@@ -95,6 +95,10 @@ func CheckRestoreSources(records []Record, limits CoreSourceLimits) (RestoreChec
 }
 
 func reconstructRestoreSources(records []Record, limits CoreSourceLimits) (RestoreCheck, map[coreSourceRunKey]restoredCoreSeed, error) {
+	return reconstructRestoreSourcesBudget(records, limits, nil)
+}
+
+func reconstructRestoreSourcesBudget(records []Record, limits CoreSourceLimits, budget *originBudget) (RestoreCheck, map[coreSourceRunKey]restoredCoreSeed, error) {
 	report := RestoreCheck{Status: "unavailable", Scope: "restore_on_original_readable_prefix", SignerStatus: "unavailable", ApplicationStatus: "unavailable", PhysicalStatus: "unavailable"}
 	unavailable := func(reason string) (RestoreCheck, map[coreSourceRunKey]restoredCoreSeed, error) {
 		report.Status, report.Reason = "unavailable", reason
@@ -110,6 +114,9 @@ func reconstructRestoreSources(records []Record, limits CoreSourceLimits) (Resto
 	if uint64(len(records)) > limits.Records {
 		return unavailable("record_limit")
 	}
+	if err := budget.core(CoreSourceLimits{Records: uint64(len(records))}); err != nil {
+		return unavailable(err.Error())
+	}
 	reads := map[WALReadRef]restoreRoots{}
 	seeds := map[coreSourceRunKey]restoredCoreSeed{}
 	seen := map[coreSourceRunKey]bool{}
@@ -119,6 +126,9 @@ func reconstructRestoreSources(records []Record, limits CoreSourceLimits) (Resto
 	var span, steps, environments, outputs uint64
 	charge := func(n uint64) bool {
 		if n > limits.Bytes-span {
+			return false
+		}
+		if budget.core(CoreSourceLimits{Bytes: n}) != nil {
 			return false
 		}
 		span += n
@@ -210,6 +220,9 @@ func reconstructRestoreSources(records []Record, limits CoreSourceLimits) (Resto
 			if report.Runs >= limits.Runs {
 				return unavailable("run_limit")
 			}
+			if err := budget.core(CoreSourceLimits{Runs: 1}); err != nil {
+				return unavailable(err.Error())
+			}
 			report.Runs++
 			if s.PlanFailed != 0 || s.Installed == 0 {
 				return unavailable("failed_restore_not_supported")
@@ -271,7 +284,13 @@ func reconstructRestoreSources(records []Record, limits CoreSourceLimits) (Resto
 				if uint64(count)+1 > limits.Steps-steps {
 					return unavailable("step_limit")
 				}
+				if err := budget.core(CoreSourceLimits{Steps: uint64(count) + 1}); err != nil {
+					return unavailable(err.Error())
+				}
 				for _, step := range plan.steps[:count] {
+					if err := budget.core(CoreSourceLimits{Environments: uint64(len(step.env))}); err != nil {
+						return unavailable(err.Error())
+					}
 					if uint64(len(step.env)) > limits.Environments-environments {
 						return unavailable("environment_limit")
 					}
@@ -279,7 +298,11 @@ func reconstructRestoreSources(records []Record, limits CoreSourceLimits) (Resto
 				}
 				var outCount uint64
 				restoredTimers = [4]*consensus.ArmTimer{}
-				core, expected, outCount, err = independentRestoreAttempt(plan, count, options, limits.Outputs-outputs, func(outs []consensus.Output) {
+				outputAllowance := limits.Outputs - outputs
+				if budget != nil {
+					outputAllowance = min(outputAllowance, budget.left.Core.Outputs)
+				}
+				core, expected, outCount, err = independentRestoreAttempt(plan, count, options, outputAllowance, func(outs []consensus.Output) {
 					for _, out := range outs {
 						switch o := out.(type) {
 						case consensus.ArmTimer:
@@ -293,10 +316,16 @@ func reconstructRestoreSources(records []Record, limits CoreSourceLimits) (Resto
 					}
 				})
 				if errors.Is(err, errRestoreOutputLimit) {
+					if budget != nil && budget.left.Core.Outputs < limits.Outputs-outputs {
+						return unavailable(budget.remember(&originLimitError{"origin_core_output_limit"}).Error())
+					}
 					return unavailable("output_limit")
 				}
 				if err != nil {
 					return bad("original_replay_input_invalid")
+				}
+				if err := budget.core(CoreSourceLimits{Outputs: outCount}); err != nil {
+					return unavailable(err.Error())
 				}
 				outputs += outCount
 				steps += uint64(count) + 1
@@ -664,7 +693,14 @@ func sameRestoreAttempt(a, b RestoreAttempt) bool {
 // CheckRestoredCoreSources is the explicit inspection path for verified restore
 // seeds. The ordinary CheckCoreStepSources still rejects restored prefixes.
 func CheckRestoredCoreSources(records []Record, limits CoreSourceLimits) (RestoreCheck, CoreSourceCheck, error) {
-	restore, seeds, err := reconstructRestoreSources(records, limits)
+	return checkRestoredCoreSourcesBudget(records, limits, nil, 0)
+}
+
+func checkRestoredCoreSourcesBudget(records []Record, limits CoreSourceLimits, budget *originBudget, span uint64) (RestoreCheck, CoreSourceCheck, error) {
+	if err := budget.pass(span, 16); err != nil {
+		return RestoreCheck{Status: "unavailable", Reason: err.Error()}, CoreSourceCheck{}, nil
+	}
+	restore, seeds, err := reconstructRestoreSourcesBudget(records, limits, budget)
 	if err != nil || restore.Status != "consistent" {
 		return restore, CoreSourceCheck{Status: "unavailable", Reason: "restore_not_reconstructed"}, err
 	}
@@ -683,7 +719,10 @@ func CheckRestoredCoreSources(records []Record, limits CoreSourceLimits) (Restor
 	freshGenerations := map[coreSourceRunKey][]uint64{}
 	freshBroadcast := map[coreSourceRunKey]bool{}
 	contradiction := ""
-	core, _, err := inspectCoreSourceStatesRestored(records, limits, func(writer string, s *CoreStepRec, outputs []consensus.Output) {
+	if err := budget.pass(span, 16); err != nil {
+		return restore, CoreSourceCheck{Status: "unavailable", Reason: err.Error()}, nil
+	}
+	core, _, err := inspectCoreSourceProfileBudget(records, limits, func(writer string, s *CoreStepRec, outputs []consensus.Output) {
 		if s.Step != 1 || s.ReplayedPrefix {
 			return
 		}
@@ -724,7 +763,7 @@ func CheckRestoredCoreSources(records []Record, limits CoreSourceLimits) (Restor
 			return
 		}
 		fresh[key] = true
-	}, seeds)
+	}, seeds, false, nil, budget)
 	if err != nil || core.Status != "consistent" {
 		return restore, core, err
 	}

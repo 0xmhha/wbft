@@ -33,6 +33,7 @@ type walOwnWitness struct {
 	sequence uint64
 	index    int
 	bytes    []byte
+	frame    []byte
 }
 
 // CheckRestoredSignerSources joins independently checked public signing state
@@ -54,6 +55,11 @@ func CheckRestoredSignerSources(records []Record, coreLimits CoreSourceLimits, s
 }
 
 func checkRestoreSignerCalls(records []Record, limits CoreSourceLimits, sourceLimits privval.SourceLimits) (RestoreSignerCheck, error) {
+	return inspectRestoreSignerCalls(records, limits, sourceLimits, nil, 0, nil)
+}
+
+// The private capture contains checked immutable bindings, never an actor model.
+func inspectRestoreSignerCalls(records []Record, limits CoreSourceLimits, sourceLimits privval.SourceLimits, budget *originBudget, span uint64, capture func(signerOriginEvidence)) (RestoreSignerCheck, error) {
 	report := RestoreSignerCheck{Status: "unavailable", Scope: "restored_boundary_signer_state_and_own_wal", PhysicalStatus: "unavailable"}
 	unavailable := func(reason string) (RestoreSignerCheck, error) {
 		report.Status, report.Reason = "unavailable", reason
@@ -68,12 +74,12 @@ func checkRestoreSignerCalls(records []Record, limits CoreSourceLimits, sourceLi
 	reads := map[WALReadRef]int{}
 	positions := map[walOwnPosition][]walOwnWitness{}
 	writer := ""
-	var span uint64
+	var retainedSpan uint64
 	charge := func(n uint64) bool {
-		if n > limits.Bytes-span {
+		if n > limits.Bytes-retainedSpan {
 			return false
 		}
-		span += n
+		retainedSpan += n
 		return true
 	}
 	for i, rec := range records {
@@ -113,12 +119,25 @@ func checkRestoreSignerCalls(records []Record, limits CoreSourceLimits, sourceLi
 				}
 				if f.Bytes[8] == 1 && f.Bytes[9] == 4 {
 					key := walOwnPosition{r.Source.Namespace, r.Source.Log, f.Position.Segment, uint64(f.Position.Offset)}
-					positions[key] = append(positions[key], walOwnWitness{r.Source.Sequence, i, f.Bytes[10:]})
+					positions[key] = append(positions[key], walOwnWitness{r.Source.Sequence, i, f.Bytes[10:], f.Bytes})
 				}
 			}
 		}
 	}
 	var err error
+	if budget != nil {
+		if err = budget.lease(span, 4096, true); err != nil {
+			return unavailable(err.Error())
+		}
+		allocated, e := originSignerQuota(budget, sources)
+		if e != nil {
+			if errorsIsOrigin(e) {
+				return bad(e.Error())
+			}
+			return unavailable(e.Error())
+		}
+		sourceLimits = privval.SourceLimits{Lifetimes: min(sourceLimits.Lifetimes, allocated.Lifetimes), Operations: min(sourceLimits.Operations, allocated.Operations), Records: min(sourceLimits.Records, allocated.Records), Bytes: min(sourceLimits.Bytes, allocated.Bytes)}
+	}
 	report.Signer, err = privval.CheckSources(sources, sourceLimits)
 	if err != nil {
 		return bad("signer_" + report.Signer.Reason)
@@ -126,18 +145,28 @@ func checkRestoreSignerCalls(records []Record, limits CoreSourceLimits, sourceLi
 	if report.Signer.Status != "consistent" {
 		return unavailable("signer_" + report.Signer.Reason)
 	}
-	_, seeds, err := reconstructRestoreSources(records, limits)
+	if budget != nil {
+		if err = budget.lease(span, 16, true); err != nil {
+			return unavailable(err.Error())
+		}
+	}
+	_, seeds, err := reconstructRestoreSourcesBudget(records, limits, budget)
 	if err != nil {
 		return bad("restore_reconstruction_changed")
 	}
 	expected := map[internalOutputKey]*signerExpected{}
-	inspected, _, err := inspectCoreSourceStatesRestored(records, limits, func(writer string, source *CoreStepRec, outputs []consensus.Output) {
+	if budget != nil {
+		if err = budget.lease(span, 16, true); err != nil {
+			return unavailable(err.Error())
+		}
+	}
+	inspected, _, err := inspectCoreSourceProfileBudget(records, limits, func(writer string, source *CoreStepRec, outputs []consensus.Output) {
 		for i, out := range outputs {
 			if b, ok := out.(consensus.Broadcast); ok {
 				expected[internalOutputKey{appCoreKey{writer, source.EngineRun, source.Step}, uint64(i) + 1}] = &signerExpected{source: source, output: b}
 			}
 		}
-	}, nil, seeds)
+	}, nil, seeds, false, nil, budget)
 	if err != nil {
 		return bad("core_" + inspected.Reason)
 	}
@@ -145,6 +174,7 @@ func checkRestoreSignerCalls(records []Record, limits CoreSourceLimits, sourceLi
 		return unavailable("core_" + inspected.Reason)
 	}
 	boundOwn := map[walOwnPosition]bool{}
+	authenticatedFrames := map[walOwnPosition][]byte{}
 	used := map[privval.SourceRef]bool{}
 	writer = ""
 	for position, rec := range records {
@@ -240,6 +270,7 @@ func checkRestoreSignerCalls(records []Record, limits CoreSourceLimits, sourceLi
 				if own.Refused != 0 || own.Code != r.RequestCode || !bytes.Equal(own.Payload, r.Payload) {
 					return bad("own_wal_frame_changed")
 				}
+				authenticatedFrames[walOwnPosition{r.WAL.Namespace, r.WAL.Log, r.Segment, r.Offset}] = w.frame
 				matched = true
 				break
 			}
@@ -256,6 +287,22 @@ func checkRestoreSignerCalls(records []Record, limits CoreSourceLimits, sourceLi
 		if !proof.seen {
 			return unavailable("signer_call_missing")
 		}
+	}
+	if capture != nil {
+		needs := map[walOwnPosition]WALReadRef{}
+		unsupported := ""
+		for _, seed := range seeds {
+			for _, index := range seed.ownFrames {
+				f := seed.read.Source.Frames[index]
+				key := walOwnPosition{seed.read.Source.Namespace, seed.read.Source.Log, f.Position.Segment, uint64(f.Position.Offset)}
+				ref := WALReadRef{seed.read.Source.Namespace, seed.read.Source.Log, seed.read.Source.Sequence}
+				if old, ok := needs[key]; ok && old != ref {
+					unsupported = "multiple_origin_restore_reads_unsupported"
+				}
+				needs[key] = ref
+			}
+		}
+		capture(signerOriginEvidence{bound: boundOwn, needs: needs, frames: authenticatedFrames, unsupported: unsupported})
 	}
 	for _, seed := range seeds {
 		for _, index := range seed.ownFrames {
