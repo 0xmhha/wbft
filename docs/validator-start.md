@@ -70,6 +70,10 @@ still-unsatisfied current build request. Historical outputs and physical peer,
 application or worker queues are not replayed wholesale. A plain lifecycle Stop
 is not a functional input that would turn the restored state into a stopped core.
 
+Pure steps-vector `stepdriver.Run` inputs cannot represent ordered validator
+lookup availability and reject this selection as unsupported. This restriction
+does not disable closed journal replay.
+
 Fresh journal traces support the selected ordered authority answers and actual
 pre-Start five-counter record. Raw `StepRec.Env` cannot distinguish nil from
 empty member BLS keys; selected ambiguous traces require the missing key witness
