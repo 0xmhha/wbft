@@ -112,6 +112,10 @@ func inspectCoreSourceProfile(records []Record, limits CoreSourceLimits, capture
 // context, environment, outputs and after-state have all passed inspection.
 // Consumers must also require the complete inspection to be consistent.
 func inspectCoreSourceProfileWithBefore(records []Record, limits CoreSourceLimits, capture func(string, *CoreStepRec, []consensus.Output), snapshots func(string, *CoreStepRec, *consensus.Snapshot), seeds map[coreSourceRunKey]restoredCoreSeed, failures bool, beforeSnapshots func(string, *CoreStepRec, *consensus.Snapshot)) (CoreSourceCheck, []coreSourceAccepted, error) {
+	return inspectCoreSourceProfileBudget(records, limits, capture, snapshots, seeds, failures, beforeSnapshots, nil)
+}
+
+func inspectCoreSourceProfileBudget(records []Record, limits CoreSourceLimits, capture func(string, *CoreStepRec, []consensus.Output), snapshots func(string, *CoreStepRec, *consensus.Snapshot), seeds map[coreSourceRunKey]restoredCoreSeed, failures bool, beforeSnapshots func(string, *CoreStepRec, *consensus.Snapshot), budget *originBudget) (CoreSourceCheck, []coreSourceAccepted, error) {
 	report := CoreSourceCheck{Status: "unavailable", Scope: "core_execution_on_recorded_inputs", PhysicalStatus: "unavailable", ScheduleStatus: "unavailable"}
 	unavailable := func(reason string) (CoreSourceCheck, []coreSourceAccepted, error) {
 		report.Status, report.Reason = "unavailable", reason
@@ -127,6 +131,9 @@ func inspectCoreSourceProfileWithBefore(records []Record, limits CoreSourceLimit
 	if uint64(len(records)) > limits.Records {
 		return unavailable("record_limit")
 	}
+	if err := budget.core(CoreSourceLimits{Records: uint64(len(records))}); err != nil {
+		return unavailable(err.Error())
+	}
 	writers := map[string]coreSourceWriter{}
 	runs := map[coreSourceRunKey]*coreSourceRun{}
 	var accepted []coreSourceAccepted
@@ -134,6 +141,9 @@ func inspectCoreSourceProfileWithBefore(records []Record, limits CoreSourceLimit
 	var environments, usedBytes uint64
 	charge := func(n int) bool {
 		if uint64(n) > limits.Bytes-usedBytes {
+			return false
+		}
+		if budget.core(CoreSourceLimits{Bytes: uint64(n)}) != nil {
 			return false
 		}
 		usedBytes += uint64(n)
@@ -190,6 +200,9 @@ func inspectCoreSourceProfileWithBefore(records []Record, limits CoreSourceLimit
 				}
 			}
 		case *CoreStepRec:
+			if err := budget.core(CoreSourceLimits{Steps: 1, Environments: uint64(len(s.Environment))}); err != nil {
+				return unavailable(err.Error())
+			}
 			if report.Steps >= limits.Steps {
 				return unavailable("step_limit")
 			}
@@ -252,6 +265,9 @@ func inspectCoreSourceProfileWithBefore(records []Record, limits CoreSourceLimit
 					if report.Runs >= limits.Runs {
 						return unavailable("run_limit")
 					}
+					if err := budget.core(CoreSourceLimits{Runs: 1}); err != nil {
+						return unavailable(err.Error())
+					}
 					model = seed.model
 					runs[key] = model
 					report.Runs++
@@ -263,6 +279,9 @@ func inspectCoreSourceProfileWithBefore(records []Record, limits CoreSourceLimit
 				}
 				if report.Runs >= limits.Runs {
 					return unavailable("run_limit")
+				}
+				if err := budget.core(CoreSourceLimits{Runs: 1}); err != nil {
+					return unavailable(err.Error())
 				}
 				config, err := w.configuration()
 				if err != nil {
@@ -319,6 +338,9 @@ func inspectCoreSourceProfileWithBefore(records []Record, limits CoreSourceLimit
 			}
 			if uint64(len(outputs)) > limits.Outputs-report.Outputs {
 				return unavailable("output_limit")
+			}
+			if err := budget.core(CoreSourceLimits{Outputs: uint64(len(outputs))}); err != nil {
+				return unavailable(err.Error())
 			}
 			encoded, err := inputlog.EncodeOutputs(outputs)
 			if err != nil {

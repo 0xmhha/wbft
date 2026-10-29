@@ -43,20 +43,31 @@ type restoreInternalExpected struct {
 // CheckRestoredBoundarySources never feeds observed mutations to a core. Seeds
 // come only from the independently reconstructed original readable prefix.
 func CheckRestoredBoundarySources(records []Record, limits CoreSourceLimits) (RestoreCheck, CoreSourceCheck, RestoreEffectsCheck, error) {
-	restore, seeds, err := reconstructRestoreSources(records, limits)
+	return checkRestoredBoundarySourcesBudget(records, limits, nil, 0)
+}
+
+func checkRestoredBoundarySourcesBudget(records []Record, limits CoreSourceLimits, budget *originBudget, span uint64) (RestoreCheck, CoreSourceCheck, RestoreEffectsCheck, error) {
+	if err := budget.pass(span, 16); err != nil {
+		return RestoreCheck{Status: "unavailable", Reason: err.Error()}, CoreSourceCheck{}, RestoreEffectsCheck{}, nil
+	}
+	restore, seeds, err := reconstructRestoreSourcesBudget(records, limits, budget)
 	effects := RestoreEffectsCheck{Status: "unavailable", Scope: "restore_timer_and_internal_first_live_bindings"}
 	if err != nil || restore.Status != "consistent" {
 		effects.Reason = "restore_not_reconstructed"
 		return restore, CoreSourceCheck{Status: "unavailable", Reason: effects.Reason}, effects, err
 	}
 	// Inspect the initial derived seed before the live core inspector advances it.
+	if err := budget.pass(span, 16); err != nil {
+		effects.Reason = err.Error()
+		return restore, CoreSourceCheck{Status: "unavailable", Reason: effects.Reason}, effects, nil
+	}
 	effects, err = checkRestoreEffects(records, limits, seeds)
 	if err != nil || effects.Status != "consistent" {
 		return restore, CoreSourceCheck{Status: "unavailable", Reason: "restore_effects_not_reconstructed"}, effects, err
 	}
 	// This call builds fresh independent seeds. Mutable model state is never
 	// shared between separate inspections or exposed as a caller certificate.
-	restore, core, err := CheckRestoredCoreSources(records, limits)
+	restore, core, err := checkRestoredCoreSourcesBudget(records, limits, budget, span)
 	return restore, core, effects, err
 }
 
