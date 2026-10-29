@@ -62,7 +62,7 @@ func validRestoreRec(r *RestoreRec) bool {
 		return false
 	}
 	switch r.Unavailable {
-	case "", "read_source_missing", "source_unavailable", "inspection_limits_required", "frame_limit", "byte_limit", "snapshot_encoding", "output_encoding", "replay_disabled", "wal_missing", "next_height":
+	case "", "read_source_missing", "source_unavailable", "inspection_limits_required", "frame_limit", "byte_limit", "snapshot_encoding", "output_encoding", "replay_disabled", "wal_missing", "next_height", "validator_start_profile":
 	default:
 		return false
 	}

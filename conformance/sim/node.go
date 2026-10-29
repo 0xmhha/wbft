@@ -215,7 +215,12 @@ func (n *node) start() {
 	}
 
 	// Start-up handshake.
-	st, err := runner.InspectWAL(n.fs, walDir)
+	var st runner.WALState
+	if opts.Improvements.Has(consensus.DeferValidatorStart) {
+		st, err = runner.InspectWALForConfig(n.fs, walDir, runner.Config{Core: opts, ReplayWAL: n.spec.ReplayWAL, NextHeight: n.spec.NextHeight, ValidatorHistory: n.spec.ValidatorHistory})
+	} else {
+		st, err = runner.InspectWAL(n.fs, walDir)
+	}
 	if err != nil {
 		fail(err)
 		return
@@ -279,7 +284,7 @@ func (n *node) start() {
 		application = sealingApplication{n.app}
 	}
 	processing, workers := n.processingModel()
-	r, err := runner.New(runner.Config{Core: opts, ReplayWAL: n.spec.ReplayWAL, Manual: true, Workers: workers, NextHeight: n.spec.NextHeight, ReceiveCache: receiveOptions},
+	r, err := runner.New(runner.Config{Core: opts, ReplayWAL: n.spec.ReplayWAL, Manual: true, Workers: workers, NextHeight: n.spec.NextHeight, ReceiveCache: receiveOptions, ValidatorHistory: n.spec.ValidatorHistory},
 		runner.Deps{Chain: n.app, App: application, Transport: dedup, Net: net, Signer: recSigner{signer, n}, WAL: log,
 			Clock: n.clock, Events: countingSink{n.ev, n.s}, Journal: functionalJournal, CoreSteps: coreSources, TimerSources: timerSources, AppQueueSources: appQueueSources, FinalizeSources: finalizeSources, InboxSources: inboxSources, InternalSources: internalSources, SelectionSources: selectionSources, ReceiveDispatchSources: receiveDispatchSources, Rand: n.rng.IntN, Faults: fh, Logger: n.s.logger(logcat.ConsensusRound), ModuleLogger: n.s.moduleLogger(), ManualProcessing: processing})
 	if err != nil {

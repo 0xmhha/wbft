@@ -69,7 +69,9 @@ func (s *State) config(n types.Height) types.Params {
 func (st *step) startNewRound(round types.Round, cause string) bool {
 	s := st.s
 	head := st.env.Head()
-	s.head = head
+	if !s.opt.Improvements.Has(DeferValidatorStart) {
+		s.head = head
+	}
 	last := head.Header
 	if last == nil {
 		return false
@@ -99,10 +101,24 @@ func (st *step) startNewRound(round types.Round, cause string) bool {
 		next := last.Number.AddUint64(1)
 		newView = types.View{Sequence: next}
 		nextVS = st.validatorsAt(next, last)
+		if s.opt.Improvements.Has(DeferValidatorStart) && nextVS == nil {
+			st.deferValidatorStart(head, round, cause)
+			return false
+		}
+		if s.opt.Improvements.Has(DeferValidatorStart) {
+			s.head = head
+			if s.validatorStart != nil {
+				s.validatorStart = nil
+				st.emit(CancelTimers{Kinds: []TimerKind{ValidatorStartTimer}})
+			}
+		}
 		if s.cur != nil {
 			st.addEffectiveSealsToExtraSeals()
 		}
 		s.pruneSeen(next)
+	}
+	if s.opt.Improvements.Has(DeferValidatorStart) {
+		s.head = head
 	}
 	st.updateRoundState(nextVS, newView, branch == branchRoundChange)
 	s.proposer = s.validators.CalcProposer(head.Proposer, newView.Round.RefLow64()) //wbft:low64 HH-71
@@ -132,12 +148,17 @@ func (st *step) startNewRound(round types.Round, cause string) bool {
 	}
 	s.rcs.newRound(effectiveRound)
 	// Spec: WBFT-PARAM-053 (block period for the next block: latest + 1)
-	st.emit(RequestBuild{
+	build := RequestBuild{
 		Height:      newView.Sequence,
 		Round:       effectiveRound,
 		HeadTime:    last.Time,
 		BlockPeriod: s.config(last.Number.AddUint64(1)).BlockPeriodSeconds,
-	})
+	}
+	if s.opt.Improvements.Has(DeferValidatorStart) {
+		s.validatorBuild = &build
+		s.validatorBuildView = newView
+	}
+	st.emit(build)
 	st.startRoundTimer()
 	return branch != branchRoundChange
 }
@@ -165,6 +186,9 @@ func sameAsPrevious(last, seq types.Height) bool {
 func (st *step) validatorsAt(next types.Height, last *types.Header) *validator.Set {
 	vs, err := st.env.ValidatorsAt(next, codec.BlockHash(last))
 	if err != nil || vs == nil {
+		if st.s.opt.Improvements.Has(DeferValidatorStart) {
+			return nil
+		}
 		var policy types.ProposerPolicy
 		if p := st.s.config(last.Number).ProposerPolicy; p != nil {
 			policy = *p
@@ -327,6 +351,11 @@ func (st *step) armFutureTimer(m *Verified, d time.Duration) {
 // Spec: WBFT-SM-075, WBFT-SM-077, WBFT-TIMER-014, WBFT-TIMER-015, WBFT-TIMER-021, WBFT-TIMER-031, WBFT-TIMER-032
 func (st *step) onTimeout(t Timeout) {
 	s := st.s
+	// Retire only callbacks that predate an actual readiness suspension.
+	// This does not enable the separate stale-retry policy for other runs.
+	if s.validatorStartBarrier && t.Kind < ValidatorStartTimer && t.Gen <= s.validatorStartFloor[t.Kind] {
+		return
+	}
 	switch t.Kind {
 	case RoundTimer:
 		// An expiry of a cancelled or superseded round timer has no effect.
@@ -345,6 +374,10 @@ func (st *step) onTimeout(t Timeout) {
 		}
 		next := s.cur.view.Round.AddUint64(1)
 		newHeight := st.startNewRound(next, causeTimeout)
+		if s.validatorStart != nil {
+			s.validatorStart.resumeRoundChange = true
+			return
+		}
 		if !newHeight || !s.opt.Improvements.Has(ResetHeightState) {
 			st.broadcastRoundChange(next)
 		}
@@ -414,6 +447,10 @@ func (st *step) onCommitResult(result CommitResult) {
 	}
 	next := s.cur.view.Round.AddUint64(1)
 	newHeight := st.startNewRound(next, event.CauseFinalizeFail)
+	if s.validatorStart != nil {
+		s.validatorStart.resumeRoundChange = true
+		return
+	}
 	if !newHeight || !s.opt.Improvements.Has(ResetHeightState) {
 		st.broadcastRoundChange(next)
 	}

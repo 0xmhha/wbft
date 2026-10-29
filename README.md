@@ -1283,6 +1283,14 @@ historical sealing authority separately from the successor validator set. It
 requires the matching WAL replay profile and is disabled by default. See
 [prior-head seal provenance](docs/prior-head.md) for recovery and reader scope.
 
+### Validator startup availability
+
+The experimental, default-off `defer_validator_start` option waits for an
+available successor validator set before adopting a new height. Its optional
+durable profile has finite history limits and strict replay requirements. See
+[validator startup availability](docs/validator-start.md) for configuration,
+normal lifecycle behavior, budget exhaustion and reader limitations.
+
 ### Verified previous seals
 
 The default-off `check_epoch_info_presence` option checks whether epoch information

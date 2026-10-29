@@ -101,6 +101,9 @@ type EventSink interface {
 
 // Config configures a Runner.
 type Config struct {
+	// ValidatorHistory overrides the finite history cap of DeferValidatorStart.
+	// Nil takes that explicitly selected profile's supported defaults.
+	ValidatorHistory *ValidatorHistoryLimits `json:",omitempty"`
 	// ReceiveCache registers a received key only after a successful direct
 	// core ACCEPT. Nil preserves legacy precheck caching. This staged runtime
 	// API requires explicit limits and currently refuses message journals
@@ -293,12 +296,16 @@ type Runner struct {
 	buildSeq                 types.Height
 	boundary                 []wal.Position // positions of the last end-of-height records
 	floorSkip                map[string]bool
-	lastGen                  [4]uint64
-	replay                   ReplayInfo
-	walReadNamespace         string
-	restoreSource            *journal.RestoreRec
-	restoreSourceBytes       uint64
-	lastWALReadSource        journal.WALReadRef
+	lastGen                  [5]uint64
+	// validatorWrite is installed only by the selected functional profile.
+	// The core actor owns it and every functional WAL append using it.
+	validatorWrite     func(wal.Record, bool) (wal.Position, error)
+	validatorHistory   *validatorHistoryWriter
+	replay             ReplayInfo
+	walReadNamespace   string
+	restoreSource      *journal.RestoreRec
+	restoreSourceBytes uint64
+	lastWALReadSource  journal.WALReadRef
 
 	running  atomic.Bool
 	snap     publishedSnapshot
@@ -360,6 +367,9 @@ type commitJob struct {
 
 // New returns a stopped runner.
 func New(cfg Config, d Deps) (*Runner, error) {
+	if err := freezeValidatorHistoryConfig(&cfg, d.WAL); err != nil {
+		return nil, err
+	}
 	cfg.Core.RoundChangeRetry = cfg.Core.RoundChangeRetry.Copy()
 	if err := cfg.Core.RoundChangeRetry.Validate(cfg.Core.Config); err != nil {
 		return nil, err

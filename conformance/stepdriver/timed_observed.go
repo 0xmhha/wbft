@@ -33,11 +33,13 @@ func newObservedTimers() *observedTimers {
 }
 func (t *observedTimers) validate(entries []timedSourceEntry) error {
 	steps := map[answerCoordinate]*journal.StepRec{}
+	profiles := map[answerCoordinate]consensus.ImprovementSet{}
 	for _, entry := range entries {
 		if entry.config.TimerTrace != journal.TimerTraceVersion {
 			return ErrTraceTiming
 		}
 		steps[answerCoordinate{entry.source.Writer, entry.source.Engine, entry.source.Step}] = entry.record
+		profiles[answerCoordinate{entry.source.Writer, entry.source.Engine, entry.source.Step}] = consensus.ImprovementSet(entry.config.Improvements)
 	}
 	for writer, records := range t.records {
 		var sequence uint64
@@ -60,8 +62,17 @@ func (t *observedTimers) validate(entries []timedSourceEntry) error {
 				}
 				var ok bool
 				timeout, ok = in.(consensus.Timeout)
-				if !ok || timeout.Kind > consensus.FutureTimer {
+				if !ok || timeout.Kind > consensus.ValidatorStartTimer {
 					return ErrTraceInvalidInput
+				}
+				mask := profiles[answerCoordinate{writer, r.ArmEngineRun, r.ArmStep}]
+				if timeout.Kind == consensus.ValidatorStartTimer && !mask.Has(consensus.DeferValidatorStart) || timeout.Kind == consensus.RoundProposalTimer && !mask.Has(consensus.ValidateRoundProposals) {
+					return ErrTraceConfiguration
+				}
+			}
+			for _, kind := range r.Kinds {
+				if kind == uint64(consensus.ValidatorStartTimer) && !profiles[answerCoordinate{writer, r.EngineRun, r.Step}].Has(consensus.DeferValidatorStart) {
+					return ErrTraceConfiguration
 				}
 			}
 			if r.Source == "core" && (r.Action == "arm" || r.Action == "cancel") {

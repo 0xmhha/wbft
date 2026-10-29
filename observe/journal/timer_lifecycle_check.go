@@ -125,6 +125,7 @@ func inspectTimerLifecycleWithRestore(records []Record, limits TimerSourceLimits
 		return unavailable("inspection_limits_required")
 	}
 	groups := map[string][]*TimerRec{}
+	profiles := map[string]consensus.ImprovementSet{}
 	steps := map[timerSourceStepKey]*CoreStepRec{}
 	run := ""
 	var count, span uint64
@@ -132,6 +133,11 @@ func inspectTimerLifecycleWithRestore(records []Record, limits TimerSourceLimits
 		switch t := record.Body.(type) {
 		case *SegmentRec:
 			run = t.Run
+			options := consensus.ImprovementSet(t.Core.Improvements)
+			if previous, ok := profiles[run]; ok && previous != options {
+				return inconsistent("timer_profile_changed")
+			}
+			profiles[run] = options
 		case *CoreStepRec:
 			steps[timerSourceStepKey{run, t.EngineRun, t.Step}] = t
 		case *TimerRec:
@@ -174,6 +180,11 @@ func inspectTimerLifecycleWithRestore(records []Record, limits TimerSourceLimits
 		})
 		kinds := map[*TimerRec]consensus.TimerKind{}
 		for _, t := range operations {
+			for _, kind := range t.Kinds {
+				if kind == uint64(consensus.ValidatorStartTimer) && !profiles[writer].Has(consensus.DeferValidatorStart) {
+					return unavailable("validator_start_timer_profile_missing")
+				}
+			}
 			if t.Source == "restore" && evidence.timers[restoredTimerSourceKey{writer, t.EngineRun, t.Sequence}] != t {
 				return unavailable("timer_restoration_requires_proof")
 			}
@@ -183,8 +194,11 @@ func inspectTimerLifecycleWithRestore(records []Record, limits TimerSourceLimits
 				if e != nil {
 					return inconsistent("timer_timeout_encoding_changed")
 				}
-				if !ok || timeout.Kind > consensus.RoundProposalTimer {
+				if !ok || timeout.Kind > consensus.ValidatorStartTimer {
 					return inconsistent("timer_kind_changed")
+				}
+				if timeout.Kind == consensus.ValidatorStartTimer && !profiles[writer].Has(consensus.DeferValidatorStart) {
+					return unavailable("validator_start_timer_profile_missing")
 				}
 				kinds[t] = timeout.Kind
 			}

@@ -72,7 +72,7 @@ const (
 // and processed only when a step names them; timers expire only through
 // steps.
 func Run(handler string, input json.RawMessage, opts Options) (any, error) {
-	if opts.Improvements.Has(consensus.BindPriorHead) {
+	if opts.Improvements.Has(consensus.BindPriorHead) || opts.Improvements.Has(consensus.DeferValidatorStart) {
 		return nil, ErrUnsupported
 	}
 

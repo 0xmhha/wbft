@@ -218,7 +218,7 @@ func (r *Runner) nextHeightWorker() {
 func (r *Runner) writeDeferred(kind uint8, d deferredRecord) error {
 	body, err := rlp.Encode(&d)
 	if err == nil {
-		_, err = r.d.WAL.AppendSync(wal.Record{Format: nextHeightFormat, Kind: kind, Body: body})
+		_, err = r.appendFunctionalWAL(wal.Record{Format: nextHeightFormat, Kind: kind, Body: body}, true)
 	}
 	return err
 }
@@ -227,7 +227,7 @@ func (r *Runner) writeDeferred(kind uint8, d deferredRecord) error {
 // before becoming pending. Expiry is durable before its reservation is freed.
 func (r *Runner) settleNextHeight() bool {
 	p := r.nextHeight
-	if p == nil {
+	if p == nil || r.core.ValidatorStartWait() != nil {
 		return false
 	}
 	p.mu.Lock()
@@ -273,7 +273,7 @@ func (r *Runner) settleNextHeight() bool {
 
 func (r *Runner) takeNextHeight() (queued, bool) {
 	p := r.nextHeight
-	if p == nil {
+	if p == nil || r.core.ValidatorStartWait() != nil {
 		return queued{}, false
 	}
 	p.mu.Lock()
@@ -489,33 +489,43 @@ func (r *Runner) restoreNextHeight(pending []deferredRecord) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	for _, d := range pending {
-		if d.ID == 0 || p.entries[d.ID] != nil || uint64(len(p.entries)) >= p.limits.Entries || uint64(len(d.Payload)) > p.limits.Bytes-p.bytes {
-			return errors.New("runner: deferred checkpoint exceeds limits or repeats an ID")
+		if err := p.insertRestoredDeferredLocked(d); err != nil {
+			return err
 		}
-		o, err := consensus.RecoverOuter(codec.Code(d.Code), d.Payload)
-		if err != nil {
-			return fmt.Errorf("runner: deferred checkpoint envelope: %w", err)
-		}
-		var peers, sources uint64
-		for _, id := range p.order {
-			e := p.entries[id]
-			if e.record.Peer == d.Peer {
-				peers++
-			}
-			if e.outer != nil && e.outer.Source == o.Source {
-				sources++
-				if e.outer.Code == o.Code && e.outer.View.Cmp(o.View) == 0 {
-					return errors.New("runner: deferred checkpoint repeats a slot")
-				}
-			}
-		}
-		if peers >= p.limits.PerPeer || sources >= p.limits.PerSource {
-			return errors.New("runner: deferred checkpoint exceeds peer or source limit")
-		}
-		p.entries[d.ID] = &deferredEntry{record: d, outer: o, stage: deferredPending}
-		p.order = append(p.order, d.ID)
-		p.bytes += uint64(len(d.Payload))
-		p.next = max(p.next, d.ID)
 	}
+	return nil
+}
+
+// insertRestoredDeferredLocked validates one ordered retained admission. It
+// is shared by ordinary restoration and the full-prefix profile validator.
+// The caller holds p.mu or exclusively owns a detached pool.
+func (p *nextHeightPool) insertRestoredDeferredLocked(d deferredRecord) error {
+	if d.ID == 0 || p.entries[d.ID] != nil || uint64(len(p.entries)) >= p.limits.Entries || uint64(len(d.Payload)) > p.limits.Bytes-p.bytes {
+		return errors.New("runner: deferred checkpoint exceeds limits or repeats an ID")
+	}
+	o, err := consensus.RecoverOuter(codec.Code(d.Code), d.Payload)
+	if err != nil {
+		return fmt.Errorf("runner: deferred checkpoint envelope: %w", err)
+	}
+	var peers, sources uint64
+	for _, id := range p.order {
+		e := p.entries[id]
+		if e.record.Peer == d.Peer {
+			peers++
+		}
+		if e.outer != nil && e.outer.Source == o.Source {
+			sources++
+			if e.outer.Code == o.Code && e.outer.View.Cmp(o.View) == 0 {
+				return errors.New("runner: deferred checkpoint repeats a slot")
+			}
+		}
+	}
+	if peers >= p.limits.PerPeer || sources >= p.limits.PerSource {
+		return errors.New("runner: deferred checkpoint exceeds peer or source limit")
+	}
+	p.entries[d.ID] = &deferredEntry{record: d, outer: o, stage: deferredPending}
+	p.order = append(p.order, d.ID)
+	p.bytes += uint64(len(d.Payload))
+	p.next = max(p.next, d.ID)
 	return nil
 }

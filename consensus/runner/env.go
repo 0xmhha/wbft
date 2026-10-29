@@ -42,7 +42,7 @@ func (e *liveEnv) note(c inputlog.EnvCall) {
 	}
 	b, err := inputlog.EncodeEnv(c)
 	if err == nil {
-		_, err = e.r.d.WAL.Append(encodeEnv(b))
+		_, err = e.r.appendFunctionalWAL(encodeEnv(b), false)
 	}
 	if err != nil {
 		e.r.halt(err)

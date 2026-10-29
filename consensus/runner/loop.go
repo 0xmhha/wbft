@@ -209,6 +209,7 @@ func (r *Runner) processOne() bool {
 
 // stepCtx carries what the output execution of one step needs.
 type stepCtx struct {
+	startGens                   []uint64
 	retry                       *retryStepContext
 	q                           queued
 	step                        uint64
@@ -258,12 +259,12 @@ func (r *Runner) handle(q queued) {
 		return
 	}
 	kind := inputlog.Kind(q.in)
-	if r.d.WAL != nil {
+	if r.d.WAL != nil && r.validatorHistory == nil {
 		var err error
 		if q.deferred != nil {
 			err = r.writeDeferred(walDeferredInput, q.deferred.record)
 		} else {
-			_, err = r.d.WAL.Append(encodeInput(kind, body))
+			_, err = r.appendFunctionalWAL(encodeInput(kind, body), false)
 		}
 		if err != nil {
 			r.halt(err)
@@ -276,10 +277,35 @@ func (r *Runner) handle(q queued) {
 		receiveBefore = r.currentReceiveScopeObservation()
 	}
 	gens := r.core.AllTimerGens()
+	var historyBefore []uint64
+	var historyView validatorHistoryView
+	validatorStartSelected := r.cfg.Core.Improvements.Has(consensus.DeferValidatorStart)
+	if validatorStartSelected {
+		historyBefore, historyView = r.core.TimerGenerations(), validatorHistoryAdoption(r.core)
+	}
 	retry := r.roundChangeRetryBefore(q, before, gens)
-	r.env.begin(true)
+	r.env.begin(r.validatorHistory == nil)
 	outs := r.core.Step(r.env, q.in)
 	answers := r.env.end()
+	r.cancelValidatorStartBuild()
+	historyHeight := false
+	if r.validatorHistory != nil {
+		var err error
+		historyHeight, err = r.prepareValidatorHistoryStep(q, kind, body, answers, outs, historyBefore, historyView)
+		if err != nil {
+			r.halt(r.validatorHistory.abort(err))
+			return
+		}
+	} else if validatorStartSelected {
+		afterView := validatorHistoryAdoption(r.core)
+		previous, _ := historyView.value()
+		current, _ := afterView.value()
+		historyHeight = historyView.Adopted == 1 && afterView.Adopted == 1 && current.Sequence.Cmp(previous.Sequence) > 0
+	}
+	if historyHeight {
+		r.lastOwn = map[ownKey][]byte{}
+		r.floorSkip = map[string]bool{}
+	}
 	if r.receiveCache != nil {
 		r.completeReceiveCheck(ticket, received, outs)
 		r.updateReceiveContext(r.core.Snapshot())
@@ -290,7 +316,21 @@ func (r *Runner) handle(q queued) {
 	}
 	r.execute(sc)
 	if r.Halted() != nil {
+		if r.validatorHistory != nil {
+			_ = r.validatorHistory.abort(r.Halted())
+		}
 		return
+	}
+	if r.validatorHistory != nil {
+		if err := r.validatorHistory.finish(); err != nil {
+			r.halt(err)
+			return
+		}
+	}
+	if historyHeight {
+		if jw, ok := r.d.Journal.(interface{ NoteHead(types.Height) }); ok {
+			jw.NoteHead(r.env.head.Number)
+		}
 	}
 	after := r.core.Snapshot()
 	r.publishSnapshot(after, snapshotStep)
@@ -298,7 +338,7 @@ func (r *Runner) handle(q queued) {
 		witnesses := r.core.Snapshot()
 		r.d.ObservationSeals(witnesses.ExtraPrepare, witnesses.ExtraCommit)
 	}
-	if _, ok := q.in.(consensus.NewHead); ok && after.Running && (!before.Running || after.View.Sequence.Cmp(before.View.Sequence) != 0) {
+	if _, ok := q.in.(consensus.NewHead); !validatorStartSelected && ok && after.Running && (!before.Running || after.View.Sequence.Cmp(before.View.Sequence) != 0) {
 		r.endHeight(after, gens)
 	}
 	r.journalStep(sc, kind, body, after)
@@ -325,7 +365,7 @@ func (r *Runner) endHeight(snap *consensus.Snapshot, gens [4]uint64) {
 			r.halt(err)
 			return
 		}
-		pos, err := r.d.WAL.AppendSync(rec)
+		pos, err := r.appendFunctionalWAL(rec, true)
 		if err != nil {
 			r.halt(err)
 			return
@@ -375,6 +415,10 @@ func (r *Runner) execute(sc *stepCtx) {
 			if !r.armTimer(o, r.stepAt.Mono) {
 				return
 			}
+			if r.validatorHistory != nil {
+				a := o
+				r.validatorHistory.installed[o.Kind] = &a
+			}
 			f := map[string]any{"timer": o.Kind.String(), "duration_ms": o.Duration.Milliseconds(),
 				"deadline_mono_ns": int64(r.stepAt.Mono + o.Duration), "gen": o.Gen, "engine_run": r.engineRun}
 			if o.Kind == consensus.RetryTimer {
@@ -422,6 +466,10 @@ func (r *Runner) broadcast(sc *stepCtx, b consensus.Broadcast) {
 	source := r.newSignerCall(sc, b)
 	defer r.finishSignerCall(source)
 	if r.d.Signer == nil {
+		if r.validatorHistory != nil {
+			r.halt(errValidatorHistoryProfile)
+			return
+		}
 		if source != nil {
 			source.Result, source.Unavailable = "signer_missing", "source_missing"
 		}
@@ -445,6 +493,10 @@ func (r *Runner) broadcast(sc *stepCtx, b consensus.Broadcast) {
 	}
 	c := *m
 	c.Seal, c.Signature = sig.Seal, sig.Signature
+	if r.validatorHistory != nil && (len(sig.Signature) != 65 || len(sig.Seal) > 96) {
+		r.halt(errValidatorHistoryProfile)
+		return
+	}
 	payload, err := codec.EncodeMessage(&c)
 	if err != nil {
 		if source != nil {
@@ -454,6 +506,10 @@ func (r *Runner) broadcast(sc *stepCtx, b consensus.Broadcast) {
 		return
 	}
 	if err := transport.CheckOutbound(uint64(c.Code), payload); err != nil {
+		if r.validatorHistory != nil {
+			r.halt(err)
+			return
+		}
 		if source != nil {
 			source.Result = "outbound_error"
 		}
@@ -463,7 +519,7 @@ func (r *Runner) broadcast(sc *stepCtx, b consensus.Broadcast) {
 	}
 	faultpoint.Hit(r.d.Faults, faultpoint.WALBeforeOwnMsg)
 	if r.d.WAL != nil {
-		position, err := r.d.WAL.AppendSync(encodeOwn(ownRec{Code: uint64(c.Code), Payload: payload}))
+		position, err := r.appendFunctionalWAL(encodeOwn(ownRec{Code: uint64(c.Code), Payload: payload}), true)
 		if source != nil {
 			source.Segment, source.Offset = position.Segment, uint64(position.Offset)
 			if err == nil {
@@ -499,6 +555,9 @@ func (r *Runner) broadcast(sc *stepCtx, b consensus.Broadcast) {
 	faultpoint.Hit(r.d.Faults, faultpoint.SendAfter)
 	r.sendEvent(sc, uint64(c.Code), payload, cause, &c.View)
 	r.lastOwn[ownKey{code: uint64(c.Code)}] = payload
+	if r.validatorHistory != nil {
+		r.validatorHistory.sent[ownKey{code: uint64(c.Code)}] = bytes.Clone(payload)
+	}
 	r.appendInternal(consensus.Message{Code: c.Code, Payload: payload, Peer: r.cfg.Core.Self, RecvMono: r.d.Clock.Mono()}, "own", sc.output)
 	if source != nil {
 		source.Result = "sent"
@@ -508,7 +567,7 @@ func (r *Runner) broadcast(sc *stepCtx, b consensus.Broadcast) {
 // refused reports a privval refusal to the core as BroadcastFailed.
 func (r *Runner) refused(sc *stepCtx, m *codec.Message, err error) {
 	if r.d.WAL != nil {
-		if _, werr := r.d.WAL.Append(encodeOwn(ownRec{Code: uint64(m.Code), Refused: 1, Seq: m.View.Sequence.Big(), Round: m.View.Round.Big()})); werr != nil {
+		if _, werr := r.appendFunctionalWAL(encodeOwn(ownRec{Code: uint64(m.Code), Refused: 1, Seq: m.View.Sequence.Big(), Round: m.View.Round.Big()}), false); werr != nil {
 			r.halt(werr)
 			return
 		}
@@ -560,7 +619,7 @@ func (r *Runner) commit(sc *stepCtx, c consensus.Commit, output uint64) {
 			r.halt(err)
 			return
 		}
-		if _, err := r.d.WAL.AppendSync(rec); err != nil {
+		if _, err := r.appendFunctionalWAL(rec, true); err != nil {
 			r.halt(err)
 			return
 		}
@@ -692,7 +751,7 @@ func (r *Runner) journalStep(sc *stepCtx, kind string, body []byte, after *conse
 	}
 	var envs [][]byte
 	for _, a := range sc.env {
-		if a.call.Kind == inputlog.EnvValidatorsAt && !r.cfg.Core.Improvements.Has(consensus.BindPriorHead) {
+		if a.call.Kind == inputlog.EnvValidatorsAt && !r.cfg.Core.Improvements.Has(consensus.BindPriorHead) && !r.cfg.Core.Improvements.Has(consensus.DeferValidatorStart) {
 			continue
 		}
 		b, err := inputlog.EncodeEnv(a.call)
@@ -720,6 +779,9 @@ func (r *Runner) journalStep(sc *stepCtx, kind string, body []byte, after *conse
 	}
 	rec := &journal.StepRec{Entry: &journal.StepMoment{Mono: r.stepAt.Mono, WallNs: r.stepAt.Wall.UnixNano()}, EngineRun: r.engineRun, Step: sc.step, Mono: r.d.Clock.Mono(), WallNs: r.d.Clock.Now().UnixNano(),
 		InputKind: kind, Input: body, Via: sc.q.via, Env: envs, ValsetDigest: consensus.ValsetDigest(after.Validators), OutDigest: d}
+	if sc.startGens != nil {
+		rec.TimerGens = append([]uint64(nil), sc.startGens...)
+	}
 	if r.env.head != nil {
 		rec.HeadNumber, rec.HeadHash = r.env.head.Number, codec.BlockHash(r.env.head)
 	}

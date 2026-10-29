@@ -43,29 +43,34 @@ type State struct {
 	// Timer generations. A generation increases with every ArmTimer of its
 	// kind and is never reset, so an expiry of a timer of an earlier run is
 	// recognised after a restart.
-	gen               [4]uint64
-	roundLive         bool // the round timer of generation gen[RoundTimer] is armed
-	retryLive         bool // the retry timer of generation gen[RetryTimer] is armed
-	futureLive        bool // the future timer of generation gen[FutureTimer] is armed
-	future            *Verified
-	roundProposalLive bool
-	roundProposalView types.View
-	roundProposalHash types.Hash
-	roundChangeRetry  roundChangeRetryState
+	gen                   [5]uint64
+	validatorStart        *validatorStartState
+	validatorStartBarrier bool
+	validatorStartFloor   [4]uint64
+	roundLive             bool // the round timer of generation gen[RoundTimer] is armed
+	retryLive             bool // the retry timer of generation gen[RetryTimer] is armed
+	futureLive            bool // the future timer of generation gen[FutureTimer] is armed
+	future                *Verified
+	roundProposalLive     bool
+	roundProposalView     types.View
+	roundProposalHash     types.Hash
+	roundChangeRetry      roundChangeRetryState
 
-	cur          *roundState
-	state        StateName
-	validators   *validator.Set
-	proposer     int // index in validators, -1 for none
-	certificate  []*Verified
-	rcs          *roundChangeSet
-	pending      []pendingRequest
-	pendingSeq   uint64
-	backlog      map[types.Address]*backlogQueue
-	extraPrepare map[types.Address]*Verified
-	extraCommit  map[types.Address]*Verified
-	prior        priorState
-	head         HeadInfo
+	cur                *roundState
+	state              StateName
+	validators         *validator.Set
+	proposer           int // index in validators, -1 for none
+	certificate        []*Verified
+	rcs                *roundChangeSet
+	pending            []pendingRequest
+	pendingSeq         uint64
+	backlog            map[types.Address]*backlogQueue
+	extraPrepare       map[types.Address]*Verified
+	extraCommit        map[types.Address]*Verified
+	prior              priorState
+	head               HeadInfo
+	validatorBuild     *RequestBuild
+	validatorBuildView types.View
 
 	// seen maps (view, code, source) of the current and the previous
 	// sequence to the first digest, for EVIDENCE observations only.
@@ -140,6 +145,9 @@ func NewState(opt Options) *State {
 // reset discards the consensus state (WBFT-SM-004). Timer generations are
 // kept.
 func (s *State) reset() {
+	if s.validatorStartBarrier {
+		copy(s.validatorStartFloor[:], s.gen[:4])
+	}
 	s.cur = nil
 	s.state = AcceptRequest
 	s.validators = nil
@@ -160,6 +168,9 @@ func (s *State) reset() {
 	s.roundProposalView = types.View{}
 	s.roundProposalHash = types.Hash{}
 	s.roundChangeRetry = roundChangeRetryState{}
+	s.validatorStart = nil
+	s.validatorBuild = nil
+	s.validatorBuildView = types.View{}
 }
 
 func (s *State) newRoundChanges() *roundChangeSet {
@@ -176,33 +187,57 @@ func (s *State) TimerGens() [3]uint64 { return [3]uint64{s.gen[0], s.gen[1], s.g
 // wrote it: an expiry the log recorded then keeps its meaning. It does
 // nothing while the core runs.
 func (s *State) RestoreTimerGens(g [3]uint64) {
+	// A selected profile cannot be reconstructed from an incomplete legacy
+	// checkpoint. The full restore API reports configuration errors.
+	if s.opt.Improvements.Has(DeferValidatorStart) {
+		return
+	}
 	if !s.running {
 		copy(s.gen[:], g[:])
 		s.gen[RoundProposalTimer] = 0
+		s.gen[ValidatorStartTimer] = 0
 	}
 }
 
 // AllTimerGens returns the supported counters as a value, including the
 // optional local counter. Writers select the configured checkpoint width.
-func (s *State) AllTimerGens() [4]uint64 { return s.gen }
+func (s *State) AllTimerGens() [4]uint64 {
+	return [4]uint64{s.gen[0], s.gen[1], s.gen[2], s.gen[3]}
+}
 
 // TimerGenerations includes the local timer only when its behavior is enabled.
 // It returns an independent copy suitable for journal and WAL boundaries.
 func (s *State) TimerGenerations() []uint64 {
-	return append([]uint64(nil), s.gen[:len(TimerKinds(s.opt.Improvements))]...)
+	width := 3
+	if s.opt.Improvements.Has(ValidateRoundProposals) {
+		width = 4
+	}
+	if s.opt.Improvements.Has(DeferValidatorStart) {
+		width = 5
+	}
+	return append([]uint64(nil), s.gen[:width]...)
 }
 
 // RestoreTimerGenerations restores a complete stopped-core timer checkpoint.
-// Three-generation reference checkpoints remain readable. A four-generation
-// checkpoint requires the corresponding local behavior.
+// Legacy profiles retain three-generation reference checkpoints and the
+// optional fourth counter. Validator-start profiles require all five.
 func (s *State) RestoreTimerGenerations(g []uint64) error {
 	if s.running {
 		return fmt.Errorf("consensus: timer checkpoint requires a stopped core")
 	}
-	if len(g) != 0 && len(g) != 3 && (len(g) != 4 || !s.opt.Improvements.Has(ValidateRoundProposals)) {
+	if s.opt.Improvements.Has(DeferValidatorStart) {
+		if len(g) != 5 || (!s.opt.Improvements.Has(ValidateRoundProposals) && g[3] != 0) {
+			return fmt.Errorf("consensus: validator-start checkpoint requires five configured generations")
+		}
+		for i, generation := range g {
+			if generation < s.gen[i] {
+				return fmt.Errorf("consensus: validator-start checkpoint rolls back timer %d", i)
+			}
+		}
+	} else if len(g) != 0 && len(g) != 3 && (len(g) != 4 || !s.opt.Improvements.Has(ValidateRoundProposals)) {
 		return fmt.Errorf("consensus: unsupported timer checkpoint length %d", len(g))
 	}
-	s.gen = [4]uint64{}
+	s.gen = [5]uint64{}
 	copy(s.gen[:], g)
 	return nil
 }
@@ -235,6 +270,17 @@ func (s *State) Step(env Env, in Input) []Output {
 	if !s.running {
 		if _, ok := in.(Start); ok {
 			st.onStart()
+		}
+		return st.out
+	}
+	if s.validatorStart != nil {
+		switch v := in.(type) {
+		case Stop:
+			st.onStop()
+		case NewHead:
+			st.validatorStartNewHead()
+		case Timeout:
+			st.validatorStartTimeout(v)
 		}
 		return st.out
 	}

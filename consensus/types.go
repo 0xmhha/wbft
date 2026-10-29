@@ -95,10 +95,11 @@ type TimerKind uint8
 
 // Timer kinds.
 const (
-	RoundTimer         TimerKind = iota // round-change timer of the current view
-	RetryTimer                          // ROUND-CHANGE retransmission timer
-	FutureTimer                         // deferred PRE-PREPARE whose proposal is from the future
-	RoundProposalTimer                  // local prepared proposal waiting for its timestamp
+	RoundTimer          TimerKind = iota // round-change timer of the current view
+	RetryTimer                           // ROUND-CHANGE retransmission timer
+	FutureTimer                          // deferred PRE-PREPARE whose proposal is from the future
+	RoundProposalTimer                   // local prepared proposal waiting for its timestamp
+	ValidatorStartTimer                  // local retry of an unavailable next-height validator set
 )
 
 func (k TimerKind) String() string {
@@ -111,6 +112,8 @@ func (k TimerKind) String() string {
 		return "future"
 	case RoundProposalTimer:
 		return "round_proposal"
+	case ValidatorStartTimer:
+		return "validator_start"
 	}
 	return "unknown"
 }
@@ -123,6 +126,13 @@ var SupportedTimers = []TimerKind{RoundTimer, RetryTimer, FutureTimer, RoundProp
 
 // TimerKinds returns the timer kinds used by a configured core.
 func TimerKinds(improvements ImprovementSet) []TimerKind {
+	if improvements.Has(DeferValidatorStart) {
+		kinds := append([]TimerKind(nil), AllTimers...)
+		if improvements.Has(ValidateRoundProposals) {
+			kinds = append(kinds, RoundProposalTimer)
+		}
+		return append(kinds, ValidatorStartTimer)
+	}
 	if improvements.Has(ValidateRoundProposals) {
 		return SupportedTimers
 	}
@@ -228,6 +238,9 @@ const (
 	VerifyMergedPrevSeals
 	// CheckEpochInfoPresence checks epoch metadata before seal verification.
 	CheckEpochInfoPresence
+	// DeferValidatorStart waits for the next-height validator set instead of
+	// adopting an empty set when the lookup is unavailable.
+	DeferValidatorStart
 )
 
 // RestartSafety is the set of the restart-safety rules of the core. Nodes
@@ -261,6 +274,7 @@ var improvementNames = [...]string{
 	BindPriorHead:             "bind_prior_head",
 	VerifyMergedPrevSeals:     "verify_merged_prev_seals",
 	CheckEpochInfoPresence:    "check_epoch_info_presence",
+	DeferValidatorStart:       "defer_validator_start",
 }
 
 // ParseImprovement finds a known local behavior by its reported name.

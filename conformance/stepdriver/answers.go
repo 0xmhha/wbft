@@ -132,7 +132,8 @@ func NewAnswerPool(j JournalReader) (*AnswerPool, error) {
 		lastSeq = rec.JSeq
 		switch b := rec.Body.(type) {
 		case *journal.SegmentRec:
-			priorProfile = consensus.ImprovementSet(b.Core.Improvements).Has(consensus.BindPriorHead)
+			flags := consensus.ImprovementSet(b.Core.Improvements)
+			priorProfile = flags.Has(consensus.BindPriorHead) || flags.Has(consensus.DeferValidatorStart)
 			if err := b.Core.ValidateRuntimeProfiles(); err != nil {
 				return nil, err
 			}

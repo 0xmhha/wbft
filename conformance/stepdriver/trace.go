@@ -394,7 +394,7 @@ func replayStepExecution(core *consensus.State, cfg *types.Config, blocks BlockS
 	if err != nil {
 		return StepResult{}, err
 	}
-	env := &traceEnv{cfg: cfg, blocks: blocks, session: session, priorProfile: core.Enabled(consensus.BindPriorHead)}
+	env := &traceEnv{cfg: cfg, blocks: blocks, session: session, priorProfile: core.Enabled(consensus.BindPriorHead) || core.Enabled(consensus.DeferValidatorStart), requireKeyWitness: core.Enabled(consensus.DeferValidatorStart)}
 	if session != nil {
 		env.source, err = session.source(writer, b)
 		if err != nil {
@@ -472,17 +472,20 @@ func headOf(blocks BlockSource, n types.Height, h types.Hash) (*types.Header, er
 
 // traceEnv answers a replayed step.
 type traceEnv struct {
-	priorProfile bool
-	authorities  []inputlog.EnvCall
-	session      *answerSession
-	source       answerStep
-	sources      []AnswerSource
-	cfg          *types.Config
-	blocks       BlockSource
-	head         *types.Header
-	answers      []inputlog.EnvCall
-	calls        []inputlog.EnvCall
-	err          error
+	// Raw StepRec Env lacks the nil/empty-key mask of CoreStepSources and
+	// format5. Selected ambiguous empty keys require that missing witness.
+	requireKeyWitness bool
+	priorProfile      bool
+	authorities       []inputlog.EnvCall
+	session           *answerSession
+	source            answerStep
+	sources           []AnswerSource
+	cfg               *types.Config
+	blocks            BlockSource
+	head              *types.Header
+	answers           []inputlog.EnvCall
+	calls             []inputlog.EnvCall
+	err               error
 }
 
 func (e *traceEnv) Head() consensus.HeadInfo {
@@ -504,6 +507,14 @@ func (e *traceEnv) ValidatorsAt(n types.Height, parent types.Hash) (*validator.S
 		e.calls = append(e.calls, c)
 		if c.Validators == nil {
 			return nil, errors.New("stepdriver: recorded authority unavailable")
+		}
+		if e.requireKeyWitness {
+			for i := 0; i < c.Validators.Len(); i++ {
+				if len(c.Validators.At(i).BLSPublicKey) == 0 {
+					e.err = fmt.Errorf("%w: validator key presence witness missing", ErrUnsupported)
+					return nil, e.err
+				}
+			}
 		}
 		return c.Validators, nil
 	}
