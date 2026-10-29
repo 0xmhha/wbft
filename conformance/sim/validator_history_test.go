@@ -112,20 +112,33 @@ func TestValidatorStartFreshJournalTraceUsesActualFiveGenerations(t *testing.T) 
 			t.Fatal(err)
 		}
 		for _, n := range s.nodes {
-			reader, err := journal.OpenReader(n.fs, journalDir)
-			if err != nil {
-				t.Fatal(err)
-			}
-			steps := 0
-			err = stepdriver.RunTrace(reader, stepdriver.TraceOptions{Blocks: blocks}, func(step stepdriver.StepResult) error {
-				steps++
-				if !step.Match {
-					t.Fatalf("fresh selected trace changed at node %d step %d", n.i, step.Step)
+			for _, scope := range []string{"step", "context"} {
+				reader, err := journal.OpenReader(n.fs, journalDir)
+				if err != nil {
+					t.Fatal(err)
 				}
-				return nil
-			})
-			if err != nil || steps == 0 {
-				t.Fatal("fresh five-counter trace not supported", err, steps)
+				options := stepdriver.TraceOptions{Blocks: blocks, AnswerScope: scope}
+				if scope == "context" {
+					answers, err := journal.OpenReader(n.fs, journalDir)
+					if err != nil {
+						t.Fatal(err)
+					}
+					options.Answers, err = stepdriver.NewAnswerPool(answers)
+					if err != nil {
+						t.Fatal("selected authority was rejected as an application answer", err)
+					}
+				}
+				steps := 0
+				err = stepdriver.RunTrace(reader, options, func(step stepdriver.StepResult) error {
+					steps++
+					if !step.Match {
+						t.Fatalf("fresh selected %s trace changed at node %d step %d", scope, n.i, step.Step)
+					}
+					return nil
+				})
+				if err != nil || steps == 0 {
+					t.Fatal("fresh five-counter trace not supported", scope, err, steps)
+				}
 			}
 		}
 	}
