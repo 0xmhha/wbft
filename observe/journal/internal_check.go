@@ -65,7 +65,11 @@ func matchInternalOwn(in consensus.Input, r *InternalRec, expected *internalExpe
 	if !ok || b == nil || b.Msg == nil || b.Validators == nil || m.Code != b.Msg.Code || m.Peer != expected.source.CoreSelf || m.RecvMono < 0 || uint64(m.RecvMono) < uint64(expected.source.Entry.Mono) || uint64(m.RecvMono) > r.Mono {
 		return false
 	}
-	outer, err := consensus.RecoverOuter(m.Code, m.Payload)
+	domain, err := codec.DecodeRoundChangeDomain(expected.source.DomainBytes)
+	if err != nil {
+		return false
+	}
+	outer, err := consensus.RecoverOuterWithDomain(m.Code, m.Payload, domain)
 	if err != nil || outer.Source != m.Peer {
 		return false
 	}

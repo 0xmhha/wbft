@@ -112,7 +112,7 @@ func (st *step) onMessage(in Message) {
 		return
 	}
 	o.View = m.View
-	v, err := RecoverDecoded(m, isMember)
+	v, err := RecoverDecodedWithDomain(m, isMember, s.opt.RoundChangeDomain)
 	if err != nil {
 		o.Row = rowBadSignature
 		st.emit(o)

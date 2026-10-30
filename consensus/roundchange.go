@@ -217,7 +217,7 @@ func (st *step) broadcastRoundChangeWithRetry(round types.Round, expiry *Timeout
 	var retry *RoundChangeRetryIntent
 	if s.opt.RoundChangeRetry != nil {
 		if m.View.Cmp(c.view) == 0 {
-			if key, err := roundChangeRetryKey(m); err == nil {
+			if key, err := roundChangeRetryKeyWithDomain(m, s.opt.RoundChangeDomain); err == nil {
 				r := &s.roundChangeRetry
 				same := r.valid && r.view.Cmp(c.view) == 0 && r.key == key
 				r.prepare(c.view, key, expiry != nil)

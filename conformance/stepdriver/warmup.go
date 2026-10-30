@@ -24,7 +24,10 @@ func bootstrapWarmup(opts consensus.Options, cfg *types.Config, blocks BlockSour
 		return nil, errors.Join(ErrTraceWarmupUnavailable, err)
 	}
 	env := &traceEnv{cfg: cfg, blocks: blocks, head: head}
-	core := consensus.NewState(opts)
+	core, err := consensus.NewStateChecked(opts)
+	if err != nil {
+		return nil, errors.Join(ErrTraceWarmupUnavailable, err)
+	}
 	_ = core.Step(env, consensus.Start{})
 	if env.err != nil || !core.Running() || core.Snapshot().Validators == nil {
 		return nil, ErrTraceWarmupUnavailable

@@ -133,7 +133,7 @@ func validatorHistoryInner(cfg Config, kind uint8, c validatorHistoryControl, co
 	snap := core.Snapshot()
 	r := &Runner{cfg: cfg}
 	if cfg.NextHeight != nil {
-		r.nextHeight = newNextHeightPool(*cfg.NextHeight)
+		r.nextHeight = newNextHeightPoolWithDomain(*cfg.NextHeight, cfg.Core.RoundChangeDomain)
 		for _, d := range pending {
 			r.nextHeight.order = append(r.nextHeight.order, d.ID)
 			r.nextHeight.entries[d.ID] = &deferredEntry{record: d, stage: deferredPending}
@@ -271,7 +271,7 @@ func parseValidatorHistoryWithSteps(cfg Config, records []wal.Record, positions 
 	var lastAdmission uint64
 	var admissionPool *nextHeightPool
 	if cfg.NextHeight != nil {
-		admissionPool = newNextHeightPool(*cfg.NextHeight)
+		admissionPool = newNextHeightPoolWithDomain(*cfg.NextHeight, cfg.Core.RoundChangeDomain)
 	}
 	ordered := func() []deferredRecord {
 		out := make([]deferredRecord, 0, len(pending))
@@ -323,7 +323,7 @@ func parseValidatorHistoryWithSteps(cfg Config, records []wal.Record, positions 
 				}
 			}
 		}
-		if rec.Format == validatorStartFormat {
+		if rec.Format == functionalHistoryFormat(cfg.Core) {
 			c, err := decodeValidatorHistoryControl(rec)
 			if err != nil {
 				return nil, err
@@ -420,7 +420,7 @@ func parseValidatorHistoryWithSteps(cfg Config, records []wal.Record, positions 
 					if cur == nil || cur.intent == nil || !validatorHistorySameStep(*cur.intent, c) || !validatorHistoryEffects(cur.outs, cur.effects) {
 						return nil, errValidatorHistoryProfile
 					}
-					if err := compareOwn(cur.outs, cur.own, p.lastOwn); err != nil {
+					if err := compareOwnWithDomain(cur.outs, cur.own, p.lastOwn, cfg.Core.RoundChangeDomain, cfg.Core.Self); err != nil {
 						return nil, err
 					}
 					commits, err := validatorHistoryCompareCommits(cur.outs, cur.commits)

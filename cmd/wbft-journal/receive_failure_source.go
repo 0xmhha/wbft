@@ -57,7 +57,7 @@ func checkReceiveFailures(fs fsys.FS, dir string, limits journal.ReceiveFailureL
 	}
 	var records []journal.Record
 	for {
-		record, err := reader.Next()
+		record, err := readSourceRecord(reader)
 		if errors.Is(err, io.EOF) {
 			return journal.CheckReceiveFailureSources(records, limits)
 		}

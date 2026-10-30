@@ -71,6 +71,15 @@ func SignedSequenceBytes(code Code, payload []byte) ([]byte, error) {
 // The payload must fit MaxIstanbulMsgSize. This bound is not a heap or CPU
 // bound; proposal decoding and the signing-payload copy can allocate.
 func DecodeSignedEnvelope(code Code, payload []byte) (*SignedEnvelope, error) {
+	return DecodeSignedEnvelopeWithDomain(code, payload, nil)
+}
+
+// DecodeSignedEnvelopeWithDomain applies the explicit signing context while
+// retaining the outer-only decoding scope of DecodeSignedEnvelope.
+func DecodeSignedEnvelopeWithDomain(code Code, payload []byte, domain *types.RoundChangeDomain) (*SignedEnvelope, error) {
+	if err := domain.Validate(); err != nil {
+		return nil, err
+	}
 	if len(payload) > types.MaxIstanbulMsgSize {
 		return nil, ErrEnvelopeSize
 	}
@@ -86,7 +95,7 @@ func DecodeSignedEnvelope(code Code, payload []byte) (*SignedEnvelope, error) {
 		}
 		return nil, err
 	}
-	p, err := SigningPayload(m, false, nil)
+	p, err := SigningPayloadWithDomain(m, domain)
 	if err != nil {
 		return nil, err
 	}

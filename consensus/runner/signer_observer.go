@@ -2,10 +2,12 @@ package runner
 
 import (
 	"bytes"
+	"fmt"
 
 	"github.com/0xmhha/wbft/codec"
 	"github.com/0xmhha/wbft/consensus"
 	"github.com/0xmhha/wbft/consensus/privval"
+	"github.com/0xmhha/wbft/crypto/ecdsa"
 	"github.com/0xmhha/wbft/observe/journal"
 )
 
@@ -40,7 +42,8 @@ func (r *Runner) newSignerCall(sc *stepCtx, b consensus.Broadcast) *journal.Sign
 }
 func (r *Runner) signVoteSource(request privval.VoteRequest, s *journal.SignerCallRec) (privval.VoteSignature, error) {
 	if s == nil {
-		return r.d.Signer.SignVote(request)
+		sig, err := r.d.Signer.SignVote(request)
+		return r.checkedDomainVote(request, sig, err)
 	}
 	var sig privval.VoteSignature
 	var err error
@@ -58,7 +61,26 @@ func (r *Runner) signVoteSource(request privval.VoteRequest, s *journal.SignerCa
 	if sig.Reused {
 		s.Reused = 1
 	}
-	return sig, err
+	return r.checkedDomainVote(request, sig, err)
+}
+
+func (r *Runner) checkedDomainVote(request privval.VoteRequest, sig privval.VoteSignature, err error) (privval.VoteSignature, error) {
+	if err != nil || r.cfg.Core.RoundChangeDomain == nil {
+		return sig, err
+	}
+	if request.Msg == nil {
+		return privval.VoteSignature{}, fmt.Errorf("runner: selected signer returned no message")
+	}
+	m := *request.Msg
+	m.Seal = sig.Seal
+	payload, err := codec.SigningPayloadWithDomain(&m, r.cfg.Core.RoundChangeDomain)
+	if err != nil {
+		return privval.VoteSignature{}, err
+	}
+	if ecdsa.CheckSigner(payload, sig.Signature, r.cfg.Core.Self) != nil {
+		return privval.VoteSignature{}, fmt.Errorf("runner: signer signature differs from selected domain or owner")
+	}
+	return sig, nil
 }
 func (r *Runner) finishSignerCall(s *journal.SignerCallRec) {
 	if s == nil {

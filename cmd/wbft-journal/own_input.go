@@ -68,6 +68,13 @@ func (w *r01Writer) indexOwnInputs(fs fsys.FS, dir string) map[string]*ownRun {
 		return (w.from == nil || h.Cmp(*w.from) >= 0) && (w.to == nil || h.Cmp(*w.to) <= 0)
 	}
 	err := scan(fs, dir, func(rec journal.Record, pos wal.Position) {
+		if w.profileErr != nil {
+			return
+		}
+		w.profileErr = r01RecordProfile(rec)
+		if w.profileErr != nil {
+			return
+		}
 		w.indexScheduler(rec)
 		w.indexCache(rec, pos)
 		w.indexSync(rec, pos)
@@ -162,6 +169,9 @@ func (w *r01Writer) indexOwnInputs(fs fsys.FS, dir string) map[string]*ownRun {
 			}
 		}
 	})
+	if w.profileErr == nil && (unsupportedSourceProfile(err) || errors.Is(err, errSourceProfile)) {
+		w.profileErr = err
+	}
 	if err != nil || encodeErr != nil {
 		if w.hasSyncEvidence() {
 			w.syncErr = fmt.Errorf("cannot index complete sync source: %w", errors.Join(err, encodeErr))

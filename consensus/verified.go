@@ -32,15 +32,28 @@ func Recover(code codec.Code, payload []byte, isMember func(types.Address, types
 	return v, err
 }
 
+// RecoverWithDomain performs full recovery with one explicit chain context.
+// Every signed round change selects activation using its own sequence.
+func RecoverWithDomain(code codec.Code, payload []byte, isMember func(types.Address, types.View) bool, domain *types.RoundChangeDomain) (*Verified, error) {
+	v, _, err := RecoverWithDomainFailure(code, payload, isMember, domain)
+	return v, err
+}
+
 // RecoverWithFailure performs Recover's complete checks and separately names
 // the first failing phase. The classification grants no cache or signer
 // authority. Existing error values and the order of checks are preserved.
 func RecoverWithFailure(code codec.Code, payload []byte, isMember func(types.Address, types.View) bool) (*Verified, RecoveryFailure, error) {
+	return RecoverWithDomainFailure(code, payload, isMember, nil)
+}
+
+// RecoverWithDomainFailure preserves the first-failing-phase classification
+// without granting cache or authority capability to the recovered address.
+func RecoverWithDomainFailure(code codec.Code, payload []byte, isMember func(types.Address, types.View) bool, domain *types.RoundChangeDomain) (*Verified, RecoveryFailure, error) {
 	m, err := codec.DecodeMessage(code, payload)
 	if err != nil {
 		return nil, RecoveryDecode, err
 	}
-	return RecoverDecodedWithFailure(m, isMember)
+	return RecoverDecodedWithDomainFailure(m, isMember, domain)
 }
 
 // RecoverDecoded is Recover for an already decoded message.
@@ -49,13 +62,25 @@ func RecoverDecoded(m *codec.Message, isMember func(types.Address, types.View) b
 	return v, err
 }
 
+// RecoverDecodedWithDomain checks the complete decoded message under domain.
+func RecoverDecodedWithDomain(m *codec.Message, isMember func(types.Address, types.View) bool, domain *types.RoundChangeDomain) (*Verified, error) {
+	v, _, err := RecoverDecodedWithDomainFailure(m, isMember, domain)
+	return v, err
+}
+
 // RecoverDecodedWithFailure is RecoverWithFailure for an already decoded
 // message. Membership remains a check of the caller's current authority
 // context; a valid cryptographic signature alone does not satisfy it.
 func RecoverDecodedWithFailure(m *codec.Message, isMember func(types.Address, types.View) bool) (*Verified, RecoveryFailure, error) {
+	return RecoverDecodedWithDomainFailure(m, isMember, nil)
+}
+
+// RecoverDecodedWithDomainFailure keeps the original outer/nested check order.
+// A caller must supply the appropriate membership set independently.
+func RecoverDecodedWithDomainFailure(m *codec.Message, isMember func(types.Address, types.View) bool, domain *types.RoundChangeDomain) (*Verified, RecoveryFailure, error) {
 	v := &Verified{Msg: m}
 	one := func(x *codec.Message) (types.Address, RecoveryFailure, error) {
-		payload, err := codec.SigningPayload(x, false, nil)
+		payload, err := codec.SigningPayloadWithDomain(x, domain)
 		if err != nil {
 			return types.Address{}, RecoveryEncoding, err
 		}

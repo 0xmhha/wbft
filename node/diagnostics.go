@@ -91,7 +91,7 @@ func freezeDiagnostics(cfg Config, d *Deps) error {
 func (n *Node) validateCoreDiagnostic(core consensus.Options) error {
 	if o := n.d.Diagnostics; o != nil {
 		declaration, ok := o.Writer.(interface{ CoreDeclaration() journal.CoreOptions })
-		if n.cfg.RoundChangeRetry != nil || n.cfg.ReceiveFailureCache != nil || ok && declaration.CoreDeclaration().RoundChangeRetry != nil {
+		if n.cfg.RoundChangeRetry != nil || core.RoundChangeDomain != nil || n.cfg.ReceiveFailureCache != nil || ok && (declaration.CoreDeclaration().RoundChangeRetry != nil || len(declaration.CoreDeclaration().DomainBytes) != 0) {
 			if !ok {
 				return fmt.Errorf("%w: core diagnostics require a frozen core declaration", ErrConfig)
 			}

@@ -167,7 +167,12 @@ func (s *simulation) selectDelivery(dst *node, peer types.Address, code uint64, 
 		dst.receive(peer, code, payload)
 		return
 	}
-	verified, err := consensus.Recover(codec.Code(code), payload, nil)
+	domain, err := types.DomainForConfig(dst.cfg, codec.BlockHash(s.genesis.Header))
+	if err != nil {
+		dst.receive(peer, code, payload)
+		return
+	}
+	verified, err := consensus.RecoverWithDomain(codec.Code(code), payload, nil, domain)
 	if err != nil {
 		dst.receive(peer, code, payload)
 		return

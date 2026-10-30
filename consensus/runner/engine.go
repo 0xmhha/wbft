@@ -12,6 +12,7 @@ import (
 	"github.com/0xmhha/wbft/consensus"
 	"github.com/0xmhha/wbft/consensus/inputlog"
 	"github.com/0xmhha/wbft/consensus/wal"
+	"github.com/0xmhha/wbft/crypto/ecdsa"
 	"github.com/0xmhha/wbft/observe/event"
 	"github.com/0xmhha/wbft/observe/journal"
 	"github.com/0xmhha/wbft/types"
@@ -37,14 +38,14 @@ func (r *Runner) startEngine(_ context.Context, head *types.Header) (startErr er
 	r.env = &liveEnv{r: r, head: head}
 	from := head.Number.AddUint64(1)
 	r.validatorHistory, r.validatorWrite = nil, nil
-	if r.cfg.Core.Improvements.Has(consensus.DeferValidatorStart) && r.d.WAL != nil {
+	if functionalHistorySelected(r.cfg.Core) && r.d.WAL != nil {
 		return r.startValidatorHistory(head)
 	}
 	if r.d.WAL != nil {
 		fs, dir := r.d.WAL.FS()
 		records, _, _ := wal.ReadAll(fs, dir)
 		for _, record := range records {
-			if record.Format == validatorStartFormat {
+			if record.Format == validatorStartFormat || record.Format == roundChangeDomainFormat {
 				return errValidatorHistoryProfile
 			}
 		}
@@ -134,7 +135,7 @@ func (r *Runner) startEngine(_ context.Context, head *types.Header) (startErr er
 			receiveBefore = r.currentReceiveScopeObservation()
 		}
 		var startGens []uint64
-		if r.cfg.Core.Improvements.Has(consensus.DeferValidatorStart) {
+		if functionalHistorySelected(r.cfg.Core) {
 			startGens = r.core.TimerGenerations()
 		}
 		outs := r.core.Step(r.env, consensus.Start{})
@@ -441,7 +442,7 @@ func (r *Runner) runReplay(plan *replayPlan) (*consensus.State, []*journal.StepR
 		d, _ := inputlog.OutDigest(outs)
 		var envs [][]byte
 		for _, c := range env {
-			if c.Kind == inputlog.EnvValidatorsAt && !r.cfg.Core.Improvements.Has(consensus.BindPriorHead) && !r.cfg.Core.Improvements.Has(consensus.DeferValidatorStart) {
+			if c.Kind == inputlog.EnvValidatorsAt && !r.cfg.Core.Improvements.Has(consensus.BindPriorHead) && !functionalHistorySelected(r.cfg.Core) {
 				continue
 			}
 			if b, err := inputlog.EncodeEnv(c); err == nil {
@@ -523,6 +524,10 @@ func (r *Runner) runReplay(plan *replayPlan) (*consensus.State, []*journal.StepR
 // own-message records of the step: the same code and signing payload (the
 // seal included), or the same view for a refused one.
 func compareOwn(outs []consensus.Output, own []ownRec, last map[ownKey][]byte) error {
+	return compareOwnWithDomain(outs, own, last, nil, types.Address{})
+}
+
+func compareOwnWithDomain(outs []consensus.Output, own []ownRec, last map[ownKey][]byte, domain *types.RoundChangeDomain, self types.Address) error {
 	i := 0
 	for _, o := range outs {
 		b, ok := o.(consensus.Broadcast)
@@ -547,13 +552,16 @@ func compareOwn(outs []consensus.Output, own []ownRec, last map[ownKey][]byte) e
 		if err != nil {
 			return err
 		}
-		want, err := codec.SigningPayload(m, false, nil)
+		want, err := codec.SigningPayloadWithDomain(m, domain)
 		if err != nil {
 			return err
 		}
+		if domain != nil && ecdsa.CheckSigner(want, m.Signature, self) != nil {
+			return fmt.Errorf("replay own-message signature does not match its domain and owner")
+		}
 		c := *b.Msg
 		c.Seal = m.Seal
-		got, err := codec.SigningPayload(&c, false, nil)
+		got, err := codec.SigningPayloadWithDomain(&c, domain)
 		if err != nil {
 			return err
 		}

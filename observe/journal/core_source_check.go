@@ -52,6 +52,7 @@ type coreSourceWriter struct {
 	retry                 RoundChangeRetryOptions
 	proposerProfile       string
 	config                []byte
+	domain                []byte
 	self                  types.Address
 	improvements, backlog uint64
 }
@@ -156,7 +157,7 @@ func inspectCoreSourceProfileBudget(records []Record, limits CoreSourceLimits, c
 			if writer == "" {
 				return unavailable("writer_missing")
 			}
-			if !charge(len(s.Core.ChainConfig)) {
+			if !charge(len(s.Core.ChainConfig)) || !charge(len(s.Core.DomainBytes)) {
 				return unavailable("source_byte_limit")
 			}
 			if len(s.Core.ChainConfig) == 0 {
@@ -175,14 +176,20 @@ func inspectCoreSourceProfileBudget(records []Record, limits CoreSourceLimits, c
 			if s.Core.BacklogLimit > math.MaxInt {
 				return unavailable("core_backlog_range")
 			}
-			w := coreSourceWriter{config: bytes.Clone(s.Core.ChainConfig), self: s.Core.Self, improvements: s.Core.Improvements, backlog: s.Core.BacklogLimit, proposerProfile: s.Core.ProposerPolicyProfile}
+			if err := s.ValidateDomainIdentity(); err != nil {
+				if len(s.Core.DomainBytes) == 0 || errors.Is(err, ErrDomainSourceUnsupported) {
+					return unavailable("round_change_domain_context_unavailable")
+				}
+				return inconsistent("round_change_domain_identity_changed")
+			}
+			w := coreSourceWriter{config: bytes.Clone(s.Core.ChainConfig), domain: bytes.Clone(s.Core.DomainBytes), self: s.Core.Self, improvements: s.Core.Improvements, backlog: s.Core.BacklogLimit, proposerProfile: s.Core.ProposerPolicyProfile}
 			if s.Core.RoundChangeRetry != nil {
 				if s.Core.RoundChangeRetry.Validate() != nil {
 					return unavailable("unsupported_retry_profile")
 				}
 				w.retry = *s.Core.RoundChangeRetry
 			}
-			if old, ok := writers[writer]; ok && (old.self != w.self || old.improvements != w.improvements || old.backlog != w.backlog || old.retry != w.retry || old.proposerProfile != w.proposerProfile || !bytes.Equal(old.config, w.config)) {
+			if old, ok := writers[writer]; ok && !sameCoreSourceWriter(old, w) {
 				return inconsistent("writer_configuration_changed")
 			}
 			writers[writer] = w
@@ -206,7 +213,7 @@ func inspectCoreSourceProfileBudget(records []Record, limits CoreSourceLimits, c
 			if report.Steps >= limits.Steps {
 				return unavailable("step_limit")
 			}
-			for _, data := range [][]byte{s.Input, s.Outputs, s.Head} {
+			for _, data := range [][]byte{s.Input, s.Outputs, s.Head, s.DomainBytes} {
 				if !charge(len(data)) {
 					return unavailable("source_byte_limit")
 				}
@@ -219,6 +226,9 @@ func inspectCoreSourceProfileBudget(records []Record, limits CoreSourceLimits, c
 				if !charge(len(e.Bytes)) || !charge(len(e.ValidatorKeyPresent)) {
 					return unavailable("source_byte_limit")
 				}
+			}
+			if _, err := codec.DecodeRoundChangeDomain(s.DomainBytes); errors.Is(err, types.ErrRoundChangeDomainVersion) {
+				return unavailable("round_change_domain_context_unavailable")
 			}
 			if !validCoreStepSource(s) {
 				return inconsistent("invalid_source_shape")
@@ -241,7 +251,10 @@ func inspectCoreSourceProfileBudget(records []Record, limits CoreSourceLimits, c
 			if !ok {
 				return unavailable("core_writer_missing")
 			}
-			if s.CoreSelf != w.self || s.Improvements != w.improvements || s.BacklogLimit != int64(w.backlog) || s.RetryMaximumMs != w.retry.MaxIntervalMs {
+			if len(w.domain) != 0 && len(s.DomainBytes) == 0 {
+				return unavailable("round_change_domain_context_unavailable")
+			}
+			if s.CoreSelf != w.self || s.Improvements != w.improvements || s.BacklogLimit != int64(w.backlog) || s.RetryMaximumMs != w.retry.MaxIntervalMs || !bytes.Equal(s.DomainBytes, w.domain) {
 				return inconsistent("actual_core_options_changed")
 			}
 			if len(s.Head) == 0 {
@@ -259,7 +272,7 @@ func inspectCoreSourceProfileBudget(records []Record, limits CoreSourceLimits, c
 			model := runs[key]
 			if model == nil {
 				if seed, ok := seeds[key]; ok {
-					if seed.config.self != w.self || seed.config.improvements != w.improvements || seed.config.backlog != w.backlog || seed.config.retry != w.retry || seed.config.proposerProfile != w.proposerProfile || !bytes.Equal(seed.config.config, w.config) {
+					if !sameCoreSourceWriter(seed.config, w) {
 						return inconsistent("restore_configuration_changed")
 					}
 					if report.Runs >= limits.Runs {
@@ -295,6 +308,9 @@ func inspectCoreSourceProfileBudget(records []Record, limits CoreSourceLimits, c
 				}
 				options, err := w.options(config)
 				if err != nil {
+					if errors.Is(err, types.ErrRoundChangeDomain) {
+						return unavailable("round_change_domain_context_unavailable")
+					}
 					return unavailable("unsupported_retry_configuration")
 				}
 				model = &coreSourceRun{state: consensus.NewState(options), next: 1, head: bytes.Clone(s.Head)}
@@ -495,6 +511,11 @@ func (e *coreSourceEnv) CommitHeader(b *types.Block, round types.Round, _ *valid
 
 func (w coreSourceWriter) options(config *types.Config) (consensus.Options, error) {
 	options := consensus.Options{Config: config, Self: w.self, Improvements: consensus.ImprovementSet(w.improvements), BacklogLimit: int(w.backlog)}
+	domain, err := (CoreOptions{DomainBytes: w.domain}).DomainOptions(config)
+	if err != nil {
+		return options, err
+	}
+	options.RoundChangeDomain = domain
 	if w.retry != (RoundChangeRetryOptions{}) {
 		retry := w.retry
 		var err error
@@ -507,10 +528,15 @@ func (w coreSourceWriter) options(config *types.Config) (consensus.Options, erro
 }
 
 func (w coreSourceWriter) configuration() (*types.Config, error) {
-	declaration := CoreOptions{ChainConfig: w.config, ProposerPolicyProfile: w.proposerProfile}
+	declaration := CoreOptions{ChainConfig: w.config, DomainBytes: w.domain, ProposerPolicyProfile: w.proposerProfile}
 	if w.retry != (RoundChangeRetryOptions{}) {
 		retry := w.retry
 		declaration.RoundChangeRetry = &retry
 	}
 	return declaration.Configuration()
+}
+
+func sameCoreSourceWriter(a, b coreSourceWriter) bool {
+	return a.self == b.self && a.improvements == b.improvements && a.backlog == b.backlog && a.retry == b.retry &&
+		a.proposerProfile == b.proposerProfile && bytes.Equal(a.config, b.config) && bytes.Equal(a.domain, b.domain)
 }

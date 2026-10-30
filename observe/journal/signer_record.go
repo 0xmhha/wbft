@@ -1,14 +1,20 @@
 package journal
 
 import (
+	"errors"
 	"fmt"
 	"math"
 
 	"github.com/0xmhha/wbft/codec/rlp"
 	"github.com/0xmhha/wbft/consensus/privval"
+	"github.com/0xmhha/wbft/types"
 )
 
 const SignerCallSourceVersion uint64 = 1
+
+// ErrSignerSourceUnsupported preserves readable future profile declarations
+// without labeling an unsupported signing context as malformed data.
+var ErrSignerSourceUnsupported = errors.New("journal: unsupported signer source profile")
 
 type SignerRec struct {
 	Source       privval.Source
@@ -72,7 +78,16 @@ func encodeSignerRec(r *SignerRec, jseq uint64) ([]byte, error) {
 }
 func decodeSignerRec(b []byte) (Record, error) {
 	var w signerRLP
-	if err := rlp.DecodeStrict(b, &w); err != nil || w.Format != Format || w.Source.Mono > math.MaxInt64 || privval.ValidateSource(w.Source.Source) != nil {
+	if err := rlp.DecodeStrict(b, &w); err != nil || w.Format != Format || w.Source.Mono > math.MaxInt64 {
+		return Record{}, fmt.Errorf("%w: invalid signer source", ErrRecord)
+	}
+	if w.Source.Source.Version != privval.SourceVersion && w.Source.Source.Version != privval.DomainSourceVersion {
+		return Record{}, ErrSignerSourceUnsupported
+	}
+	if err := privval.ValidateSource(w.Source.Source); err != nil {
+		if errors.Is(err, types.ErrRoundChangeDomainVersion) {
+			return Record{}, fmt.Errorf("%w: %w", ErrSignerSourceUnsupported, err)
+		}
 		return Record{}, fmt.Errorf("%w: invalid signer source", ErrRecord)
 	}
 	return Record{Kind: KindSigner, JSeq: w.JSeq, Body: &w.Source}, nil

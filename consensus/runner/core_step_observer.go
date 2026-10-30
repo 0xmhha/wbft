@@ -64,6 +64,9 @@ func (r *Runner) observeCoreStep(sc *stepCtx, kind string, body []byte, before, 
 	if r.cfg.Core.RoundChangeRetry != nil {
 		o.RetryMaximumMs = r.cfg.Core.RoundChangeRetry.MaxIntervalMs
 	}
+	// The core owns a validated immutable context; encoding returns detached
+	// public declaration bytes and cannot fail for that context.
+	o.DomainBytes, _ = codec.EncodeRoundChangeDomain(r.cfg.Core.RoundChangeDomain)
 	if r.env != nil && r.env.head != nil {
 		var err error
 		o.Head, err = codec.EncodeHeader(r.env.head)

@@ -141,10 +141,26 @@ func (n *node) start() {
 	}
 	opts := n.spec.Options
 	opts.Config, opts.Self = n.cfg, n.v.address
-	selectedHistory := opts.Improvements.Has(consensus.DeferValidatorStart)
+	domain, domainError := types.DomainForConfig(n.cfg, codec.BlockHash(n.s.genesis.Header))
+	if domainError != nil || opts.RoundChangeDomain != nil && !opts.RoundChangeDomain.Equal(domain) {
+		n.s.violate("start", n.v.address, "round-change domain is unavailable or inconsistent")
+		n.alive, n.down = false, true
+		return
+	}
+	opts.RoundChangeDomain = domain
+	selectedHistory := opts.Improvements.Has(consensus.DeferValidatorStart) || domain != nil
 	var st runner.WALState
+	var signState *privval.StateSnapshot
 	if selectedHistory {
 		var err error
+		if domain != nil {
+			signState, err = privval.InspectSignState(n.fs, privvalDir+"/state", n.v.address, domain)
+			if err != nil {
+				n.s.violate("start", n.v.address, "sign state: %v", err)
+				n.alive, n.down = false, true
+				return
+			}
+		}
 		st, err = runner.InspectWALForConfig(n.fs, walDir, runner.Config{Core: opts, ReplayWAL: n.spec.ReplayWAL,
 			NextHeight: n.spec.NextHeight, ValidatorHistory: n.spec.ValidatorHistory})
 		if err != nil {
@@ -184,12 +200,19 @@ func (n *node) start() {
 		return
 	}
 	n.log = log
-	if err := n.fs.MkdirAll(privvalDir, 0o700); err != nil {
-		fail(err)
-		return
+	if signState == nil {
+		if err := n.fs.MkdirAll(privvalDir, 0o700); err != nil {
+			fail(err)
+			return
+		}
 	}
 	fh := faultpoint.Handler(n.faults)
-	signer, err := privval.NewKeySigner(n.fs, fh, n.v.ECDSA, privvalDir+"/state")
+	var signer *privval.FileSigner
+	if signState != nil {
+		signer, err = signState.OpenKeySigner(n.v.ECDSA, fh, nil)
+	} else {
+		signer, err = privval.NewKeySigner(n.fs, fh, n.v.ECDSA, privvalDir+"/state")
+	}
 	if err != nil {
 		// A damaged sign state refuses the start.
 		_ = n.ev.Write(event.Record{Kind: event.NodeStart, Fields: map[string]any{"refused": err.Error()}}, n.stamp())
@@ -212,6 +235,11 @@ func (n *node) start() {
 		GenesisHash: codec.BlockHash(n.s.genesis.Header), Mode: "standalone",
 		Core: journal.CoreOptions{TimerTrace: journal.TimerTraceVersion, ChainConfig: n.cfgJSON, Self: n.v.address, Improvements: uint64(opts.Improvements),
 			BacklogLimit: uint64(opts.BacklogLimit), Profile: n.spec.Profile}}
+	id.Core.DomainBytes, err = codec.EncodeRoundChangeDomain(domain)
+	if err != nil {
+		fail(err)
+		return
+	}
 	if l := n.spec.NextHeight; l != nil {
 		id.Core.NextHeight = &journal.DeferredOptions{Profile: journal.DeferredInputProfile, Entries: l.Entries, Bytes: l.Bytes, PerPeer: l.PerPeer, PerSource: l.PerSource}
 	}
@@ -268,7 +296,7 @@ func (n *node) start() {
 		n.writes = &writeAdapter{adapter: n.tr, routes: map[*node]*writeRoute{}}
 		net = n.writes
 	}
-	dedupOptions := transport.DedupOptions{Self: n.v.address}
+	dedupOptions := transport.DedupOptions{Self: n.v.address, RoundChangeDomain: domain}
 	var receiveOptions *transport.ReceiveLedgerOptions
 	var functionalJournal journal.Writer = jw
 	var coreSources runner.CoreStepObserver

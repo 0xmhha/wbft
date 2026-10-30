@@ -22,6 +22,8 @@ import (
 const (
 	validatorStartFormat      uint8  = 5
 	validatorStartVersion     uint64 = 1
+	roundChangeDomainFormat   uint8  = 6
+	roundChangeDomainVersion  uint64 = 2
 	walValidatorIntent        uint8  = 10
 	walValidatorComplete      uint8  = 12
 	walValidatorHalt          uint8  = 13
@@ -59,19 +61,28 @@ type validatorHistoryOptions struct {
 	History      ValidatorHistoryLimits
 }
 
+type domainHistoryOptions struct {
+	validatorHistoryOptions
+	Domain []byte
+}
+
 // validatorHistoryOptionsBytes projects every effective core configuration
 // component explicitly. Config's private base, transitions and rules cannot
 // be frozen by directly marshalling its exported fields alone.
 func validatorHistoryOptionsBytes(cfg Config) ([]byte, error) {
-	if !cfg.ReplayWAL || !cfg.Core.Improvements.Has(consensus.DeferValidatorStart) {
+	if !cfg.ReplayWAL || !functionalHistorySelected(cfg.Core) {
 		return nil, errValidatorHistoryProfile
 	}
 	if err := freezeValidatorHistoryConfig(&cfg, nil); err != nil {
 		return nil, err
 	}
-	o := validatorHistoryOptions{Version: validatorStartVersion, Self: cfg.Core.Self,
+	limits, err := validatorHistoryLimits(cfg.ValidatorHistory)
+	if err != nil {
+		return nil, err
+	}
+	o := validatorHistoryOptions{Version: functionalHistoryVersion(cfg.Core), Self: cfg.Core.Self,
 		Improvements: uint64(cfg.Core.Improvements), Backlog: int64(max(cfg.Core.BacklogLimit, consensus.MinBacklogLimit)),
-		Retry: cfg.Core.RoundChangeRetry.Copy(), History: *cfg.ValidatorHistory}
+		Retry: cfg.Core.RoundChangeRetry.Copy(), History: limits}
 	if cfg.NextHeight != nil {
 		next := *cfg.NextHeight
 		if next.Entries == 0 || next.Bytes == 0 || next.PerPeer == 0 || next.PerSource == 0 {
@@ -86,6 +97,13 @@ func validatorHistoryOptionsBytes(cfg Config) ([]byte, error) {
 			id := c.ChainID.String()
 			o.Chain.ChainID = &id
 		}
+	}
+	if cfg.Core.RoundChangeDomain != nil {
+		domain, err := codec.EncodeRoundChangeDomain(cfg.Core.RoundChangeDomain)
+		if err != nil {
+			return nil, err
+		}
+		return json.Marshal(domainHistoryOptions{validatorHistoryOptions: o, Domain: domain})
 	}
 	return json.Marshal(o)
 }
@@ -244,7 +262,7 @@ type validatorHistoryControl struct {
 }
 
 func (c validatorHistoryControl) validate(kind uint8) error {
-	if c.Version != validatorStartVersion || c.Records > math.MaxInt64 || c.Bytes > math.MaxInt64 {
+	if c.Version != validatorStartVersion && c.Version != roundChangeDomainVersion || c.Records > math.MaxInt64 || c.Bytes > math.MaxInt64 {
 		return errValidatorHistoryProfile
 	}
 	before, err := c.BeforeView.value()
@@ -267,14 +285,15 @@ func (c validatorHistoryControl) validate(kind uint8) error {
 	if c.HaltReason != 0 {
 		return errValidatorHistoryProfile
 	}
-	if len(c.Before) != 5 || len(c.After) != 5 || len(c.Head) == 0 {
+	width := len(c.Before)
+	if len(c.After) != width || c.Version == validatorStartVersion && width != 5 || c.Version == roundChangeDomainVersion && (width < 3 || width > 5) || len(c.Head) == 0 {
 		return errValidatorHistoryProfile
 	}
 	if _, err := codec.DecodeHeader(c.Head); err != nil {
 		return errValidatorHistoryProfile
 	}
 	wait, err := decodeValidatorHistoryWait(c.Wait)
-	if err != nil || wait == nil && c.AfterView.Adopted == 0 || wait != nil && wait.Generation != c.After[4] {
+	if err != nil || wait == nil && c.AfterView.Adopted == 0 || wait != nil && (width != 5 || wait.Generation != c.After[4]) {
 		return errValidatorHistoryProfile
 	}
 	for _, witness := range c.Environment {
@@ -286,8 +305,23 @@ func (c validatorHistoryControl) validate(kind uint8) error {
 	case validatorControlSeed:
 		if kind != walRunStart || len(c.Options) == 0 || c.Anchor != (types.Hash{}) || c.Prefix != (types.Hash{}) ||
 			c.Records != 0 || c.Bytes != 0 || c.InputRecord != 0 || c.InputKind != inputlog.KindStart || c.BeforeView.Adopted != 0 ||
-			!slices.Equal(c.Before, []uint64{0, 0, 0, 0, 0}) {
+			!slices.Equal(c.Before, make([]uint64, width)) {
 			return errValidatorHistoryProfile
+		}
+		if c.Version == roundChangeDomainVersion {
+			// A legacy seed cannot opt into the new format by changing its
+			// control version alone. Full runtime binding remains separate.
+			var options struct {
+				Version uint64
+				Domain  []byte
+			}
+			if json.Unmarshal(c.Options, &options) != nil || options.Version != roundChangeDomainVersion {
+				return errValidatorHistoryProfile
+			}
+			domain, err := codec.DecodeRoundChangeDomain(options.Domain)
+			if err != nil || domain == nil {
+				return errValidatorHistoryProfile
+			}
 		}
 	case validatorControlResume:
 		if kind != walRunStart || len(c.Options)+len(c.Environment) != 0 || c.InputRecord != 0 || c.InputKind != "" ||
@@ -338,7 +372,11 @@ func encodeValidatorHistoryControl(kind uint8, control validatorHistoryControl) 
 	if err != nil {
 		return wal.Record{}, err
 	}
-	record := wal.Record{Format: validatorStartFormat, Kind: kind, Body: body}
+	format := validatorStartFormat
+	if control.Version == roundChangeDomainVersion {
+		format = roundChangeDomainFormat
+	}
+	record := wal.Record{Format: format, Kind: kind, Body: body}
 	if control.Mode == validatorControlHalt && uint64(len(body))+validatorHistoryFrameOverhead > validatorHistoryHaltBytes {
 		return wal.Record{}, errValidatorHistoryProfile
 	}
@@ -347,7 +385,8 @@ func encodeValidatorHistoryControl(kind uint8, control validatorHistoryControl) 
 
 func decodeValidatorHistoryControl(record wal.Record) (validatorHistoryControl, error) {
 	var control validatorHistoryControl
-	if record.Format != validatorStartFormat || rlp.DecodeStrict(record.Body, &control) != nil || control.validate(record.Kind) != nil {
+	if record.Format != validatorStartFormat && record.Format != roundChangeDomainFormat || rlp.DecodeStrict(record.Body, &control) != nil ||
+		record.Format == validatorStartFormat && control.Version != validatorStartVersion || record.Format == roundChangeDomainFormat && control.Version != roundChangeDomainVersion || control.validate(record.Kind) != nil {
 		return control, errValidatorHistoryProfile
 	}
 	canonical, err := encodeValidatorHistoryControl(record.Kind, control)

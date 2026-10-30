@@ -83,6 +83,7 @@ type deferredEntry struct {
 // Worker completion checks pointer ownership, so work from a stopped run
 // cannot publish into the next run even when a restored ID is the same.
 type nextHeightPool struct {
+	domain  *types.RoundChangeDomain
 	mu      sync.Mutex // runner.nextheight.mu
 	cond    *sync.Cond
 	limits  NextHeightLimits
@@ -94,7 +95,11 @@ type nextHeightPool struct {
 }
 
 func newNextHeightPool(l NextHeightLimits) *nextHeightPool {
-	p := &nextHeightPool{limits: l, entries: map[uint64]*deferredEntry{}}
+	return newNextHeightPoolWithDomain(l, nil)
+}
+
+func newNextHeightPoolWithDomain(l NextHeightLimits, domain *types.RoundChangeDomain) *nextHeightPool {
+	p := &nextHeightPool{domain: domain.Copy(), limits: l, entries: map[uint64]*deferredEntry{}}
 	p.cond = sync.NewCond(&p.mu)
 	return p
 }
@@ -162,7 +167,7 @@ func (r *Runner) checkNextHeight() bool {
 	}
 	e.stage = deferredChecking
 	p.mu.Unlock()
-	o, err := consensus.RecoverOuter(codec.Code(e.record.Code), e.record.Payload)
+	o, err := consensus.RecoverOuterWithDomain(codec.Code(e.record.Code), e.record.Payload, r.cfg.Core.RoundChangeDomain)
 	if err == nil {
 		snap := r.snap.Load()
 		if snap != nil && snap.Running && outsideWindow(snap, o.Code, o.View) {
@@ -503,7 +508,7 @@ func (p *nextHeightPool) insertRestoredDeferredLocked(d deferredRecord) error {
 	if d.ID == 0 || p.entries[d.ID] != nil || uint64(len(p.entries)) >= p.limits.Entries || uint64(len(d.Payload)) > p.limits.Bytes-p.bytes {
 		return errors.New("runner: deferred checkpoint exceeds limits or repeats an ID")
 	}
-	o, err := consensus.RecoverOuter(codec.Code(d.Code), d.Payload)
+	o, err := consensus.RecoverOuterWithDomain(codec.Code(d.Code), d.Payload, p.domain)
 	if err != nil {
 		return fmt.Errorf("runner: deferred checkpoint envelope: %w", err)
 	}

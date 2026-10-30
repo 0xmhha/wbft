@@ -349,7 +349,7 @@ func (b *inbox) check(entry inboxEntry) {
 			}
 		}
 	}
-	v, failure, err := consensus.RecoverWithFailure(code, in.Payload, isMember)
+	v, failure, err := consensus.RecoverWithDomainFailure(code, in.Payload, isMember, b.r.cfg.Core.RoundChangeDomain)
 	if r.d.ReceiveRecoveryChecked != nil {
 		r.d.ReceiveRecoveryChecked(code, failure)
 	}

@@ -142,17 +142,28 @@ func reconstructRestoreSourcesBudget(records []Record, limits CoreSourceLimits, 
 			if writer == "" || len(s.Core.ChainConfig) == 0 {
 				return unavailable("core_writer_missing")
 			}
-			if !charge(uint64(len(s.Core.ChainConfig))) {
+			if !charge(uint64(len(s.Core.ChainConfig))) || !charge(uint64(len(s.Core.DomainBytes))) {
 				return unavailable("byte_limit")
 			}
-			w := coreSourceWriter{config: bytes.Clone(s.Core.ChainConfig), self: s.Core.Self, improvements: s.Core.Improvements, backlog: s.Core.BacklogLimit, proposerProfile: s.Core.ProposerPolicyProfile}
+			if err := s.ValidateDomainIdentity(); err != nil {
+				if len(s.Core.DomainBytes) == 0 || errors.Is(err, ErrDomainSourceUnsupported) {
+					return unavailable("round_change_domain_context_unavailable")
+				}
+				return bad("round_change_domain_identity_changed")
+			}
+			// A recorded domain cannot grant the legacy boundary planner the
+			// new full-history restore capability, even before activation.
+			if len(s.Core.DomainBytes) != 0 {
+				return unavailable("round_change_domain_profile")
+			}
+			w := coreSourceWriter{config: bytes.Clone(s.Core.ChainConfig), domain: bytes.Clone(s.Core.DomainBytes), self: s.Core.Self, improvements: s.Core.Improvements, backlog: s.Core.BacklogLimit, proposerProfile: s.Core.ProposerPolicyProfile}
 			if s.Core.RoundChangeRetry != nil {
 				if s.Core.RoundChangeRetry.Validate() != nil {
 					return unavailable("unsupported_retry_profile")
 				}
 				w.retry = *s.Core.RoundChangeRetry
 			}
-			if old, ok := configs[writer]; ok && (old.self != w.self || old.improvements != w.improvements || old.backlog != w.backlog || old.retry != w.retry || old.proposerProfile != w.proposerProfile || !bytes.Equal(old.config, w.config)) {
+			if old, ok := configs[writer]; ok && !sameCoreSourceWriter(old, w) {
 				return bad("writer_configuration_changed")
 			}
 			configs[writer] = w
@@ -229,6 +240,9 @@ func reconstructRestoreSourcesBudget(records []Record, limits CoreSourceLimits, 
 				return unavailable("failed_restore_not_supported")
 			}
 			for _, f := range root.read.Source.Frames {
+				if f.Bytes[8] == 6 {
+					return unavailable("round_change_domain_profile")
+				}
 				if f.Bytes[8] == 5 {
 					return unavailable("validator_start_profile")
 				}
@@ -278,6 +292,9 @@ func reconstructRestoreSourcesBudget(records []Record, limits CoreSourceLimits, 
 			}
 			options, err := w.options(cfg)
 			if err != nil {
+				if errors.Is(err, types.ErrRoundChangeDomain) {
+					return unavailable("round_change_domain_context_unavailable")
+				}
 				return unavailable("unsupported_retry_configuration")
 			}
 			count := len(plan.steps)
@@ -542,6 +559,9 @@ func (e *restoreStartEnv) IsBadBlock(types.Hash) bool { return false }
 var errRestoreOutputLimit = errors.New("restore output limit")
 
 func independentRestoreAttempt(p *restorePlan, count int, options consensus.Options, outputLimit uint64, capture func([]consensus.Output)) (*consensus.State, RestoreAttempt, uint64, error) {
+	if err := types.ValidateRoundChangeDomain(options.Config, options.RoundChangeDomain); err != nil {
+		return nil, RestoreAttempt{}, 0, err
+	}
 	maximum := uint64(0)
 	if options.RoundChangeRetry != nil {
 		maximum = options.RoundChangeRetry.MaxIntervalMs

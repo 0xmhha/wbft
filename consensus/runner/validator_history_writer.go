@@ -15,6 +15,9 @@ import (
 // validatorHistoryWriter is exclusively owned by the core actor. Its normal
 // ledger excludes the bounded terminal reserve inside the same hard cap.
 type validatorHistoryWriter struct {
+	version    uint64
+	domain     *types.RoundChangeDomain
+	self       types.Address
 	limits     ValidatorHistoryLimits
 	budget     *validatorHistoryBudget
 	prefix     validatorHistoryReplay
@@ -41,7 +44,8 @@ func newValidatorHistoryWriter(cfg Config, retained []wal.Record, replay *valida
 	if err != nil {
 		return nil, err
 	}
-	w := &validatorHistoryWriter{limits: limits, budget: budget, write: write, sent: map[ownKey][]byte{}}
+	w := &validatorHistoryWriter{version: functionalHistoryVersion(cfg.Core), domain: cfg.Core.RoundChangeDomain.Copy(), self: cfg.Core.Self,
+		limits: limits, budget: budget, write: write, sent: map[ownKey][]byte{}}
 	if replay != nil {
 		w.prefix = *replay
 		w.timers = replay.timers
@@ -70,7 +74,7 @@ func (w *validatorHistoryWriter) abort(cause error) error {
 		return cause
 	}
 	w.terminal = true
-	c := validatorHistoryControl{Version: validatorStartVersion, Mode: validatorControlHalt, HaltReason: validatorHaltFailure}
+	c := validatorHistoryControl{Version: w.version, Mode: validatorControlHalt, HaltReason: validatorHaltFailure}
 	if errors.Is(cause, errValidatorHistoryBudget) {
 		c.HaltReason = validatorHaltLimit
 	}
@@ -319,7 +323,7 @@ func (w *validatorHistoryWriter) finish() error {
 	if s == nil || !validatorHistoryEffects(s.outs, s.effects) {
 		return w.abort(errValidatorHistoryProfile)
 	}
-	if err := compareOwn(s.outs, s.own, map[ownKey][]byte{}); err != nil {
+	if err := compareOwnWithDomain(s.outs, s.own, map[ownKey][]byte{}, w.domain, w.self); err != nil {
 		return w.abort(err)
 	}
 	if _, err := validatorHistoryCompareCommits(s.outs, s.commits); err != nil {

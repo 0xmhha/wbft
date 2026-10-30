@@ -69,6 +69,13 @@ func (o CoreOptions) ValidateCoreDeclaration(actual consensus.Options) error {
 	if !reflect.DeepEqual(config, actual.Config) || !reflect.DeepEqual(retry, actual.RoundChangeRetry) {
 		return fmt.Errorf("journal: actual retry policy or chain configuration differs from declaration")
 	}
+	domain, err := o.DomainOptions(config)
+	if err != nil {
+		return err
+	}
+	if !domain.Equal(actual.RoundChangeDomain) {
+		return fmt.Errorf("journal: actual domain differs from declaration")
+	}
 	return nil
 }
 

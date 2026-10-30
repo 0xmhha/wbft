@@ -279,8 +279,8 @@ func (r *Runner) handle(q queued) {
 	gens := r.core.AllTimerGens()
 	var historyBefore []uint64
 	var historyView validatorHistoryView
-	validatorStartSelected := r.cfg.Core.Improvements.Has(consensus.DeferValidatorStart)
-	if validatorStartSelected {
+	functionalSelected := functionalHistorySelected(r.cfg.Core)
+	if functionalSelected {
 		historyBefore, historyView = r.core.TimerGenerations(), validatorHistoryAdoption(r.core)
 	}
 	retry := r.roundChangeRetryBefore(q, before, gens)
@@ -296,7 +296,7 @@ func (r *Runner) handle(q queued) {
 			r.halt(r.validatorHistory.abort(err))
 			return
 		}
-	} else if validatorStartSelected {
+	} else if functionalSelected {
 		afterView := validatorHistoryAdoption(r.core)
 		previous, _ := historyView.value()
 		current, _ := afterView.value()
@@ -338,7 +338,7 @@ func (r *Runner) handle(q queued) {
 		witnesses := r.core.Snapshot()
 		r.d.ObservationSeals(witnesses.ExtraPrepare, witnesses.ExtraCommit)
 	}
-	if _, ok := q.in.(consensus.NewHead); !validatorStartSelected && ok && after.Running && (!before.Running || after.View.Sequence.Cmp(before.View.Sequence) != 0) {
+	if _, ok := q.in.(consensus.NewHead); !functionalSelected && ok && after.Running && (!before.Running || after.View.Sequence.Cmp(before.View.Sequence) != 0) {
 		r.endHeight(after, gens)
 	}
 	r.journalStep(sc, kind, body, after)
@@ -751,7 +751,7 @@ func (r *Runner) journalStep(sc *stepCtx, kind string, body []byte, after *conse
 	}
 	var envs [][]byte
 	for _, a := range sc.env {
-		if a.call.Kind == inputlog.EnvValidatorsAt && !r.cfg.Core.Improvements.Has(consensus.BindPriorHead) && !r.cfg.Core.Improvements.Has(consensus.DeferValidatorStart) {
+		if a.call.Kind == inputlog.EnvValidatorsAt && !r.cfg.Core.Improvements.Has(consensus.BindPriorHead) && !functionalHistorySelected(r.cfg.Core) {
 			continue
 		}
 		b, err := inputlog.EncodeEnv(a.call)

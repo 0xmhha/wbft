@@ -390,7 +390,12 @@ func CheckReceiveFailureSources(records []Record, limits ReceiveFailureLimits) (
 					member := func(a types.Address, _ types.View) bool {
 						return snapshot.Validators != nil && snapshot.Validators.Contains(a) || snapshot.PriorValidators != nil && snapshot.PriorValidators.Contains(a)
 					}
-					_, failure, recoverError := consensus.RecoverWithFailure(codec.Code(original.Code), original.Payload, member)
+					p := publications[appCoreKey{key.run, e.Source.EngineRun, e.Source.SnapshotStep}]
+					domain, err := codec.DecodeRoundChangeDomain(p.source.DomainBytes)
+					if err != nil {
+						return unavailable("round_change_domain_context_unavailable")
+					}
+					_, failure, recoverError := consensus.RecoverWithDomainFailure(codec.Code(original.Code), original.Payload, member, domain)
 					class, result := transport.ReceiveFailureClass(0), ""
 					switch failure {
 					case consensus.RecoverySignature:

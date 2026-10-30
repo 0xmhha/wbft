@@ -1320,3 +1320,57 @@ and Stop clear. The terminal `close` operation alone uses version 2. Its
 independent check binds the last original core Stop and clear, refuses later
 queue mutation, and does not claim physical or complete schedule termination.
 Older readers refuse the new operation; absent Stop evidence stays unavailable.
+
+### Chain-bound ROUND-CHANGE signing
+
+The common chain rule `wbftRules.consensusRules.roundChangeDomain` selects a
+chain-bound signing profile at a positive full activation height. Omission
+or `null` keeps the existing behavior. For example:
+
+```json
+{"wbftRules":{"consensusRules":{"roundChangeDomain":3}}}
+```
+
+An activated ROUND-CHANGE signs the canonical RLP list
+`["wbft/round-change-domain", 1, chainID, genesisHash, legacySigningPayload]`.
+The final element is a byte string containing the legacy signing payload.
+Each ROUND-CHANGE uses its own full sequence, including those nested inside
+a PRE-PREPARE. Other outer message signatures, BLS seals, RANDAO and wire
+layouts retain their existing interpretation. The domain does not distinguish
+forks sharing the same chain ID and genesis.
+
+A Node derives this immutable profile only after checking its actual genesis
+and chain configuration. Low-level callers must supply an explicitly trusted
+genesis through `types.DomainForConfig`, then use
+`codec.SigningPayloadWithDomain` and `consensus.RecoverWithDomain` as
+appropriate. Recovery alone is not validator membership or independent chain
+authentication. Existing naked signing/recovery APIs remain legacy-only.
+
+A configured domain requires its profile even before the activation height.
+It does not enable a local improvement flag or validator-start deferral.
+Selected live runners require strict functional WAL replay and matching core,
+signer and transport profiles. Domain-only history has finite default bounds
+of 64 MiB and 65,536 records; existing explicit validator-history overrides
+still require validator-start deferral. Budget exhaustion is not an unbounded
+persistence guarantee.
+
+This profile requires absent or matching domain-bound signing state. A fresh
+signer persists format 2 before returning its first signature, including before
+activation. Existing format 1 state is refused even when logically empty;
+other chain/genesis/activation profiles are also refused. There is no implicit
+migration, reset or deletion. Use a fresh isolated data directory for an
+initial deployment; this change supplies no operating-network state migration
+procedure. Matching profiles support ordinary stop/reopen. Domain WAL history
+uses a separate format 6; existing format 5 and legacy history are not silently
+converted. Read-only profile checks precede selected startup writes.
+
+Journal segments and core-step/signer sources retain explicit versioned domain
+declarations. Readers distinguish unsupported or missing context from malformed
+supported evidence. R01 cannot retain the domain and refuses selected input
+before legacy own-message indexing or output, including when height filters
+exclude it. Keep original journals or supported original-segment bundles;
+`verify` and `stat` check their supported recorded metadata, not external chain
+authority. Unknown future profiles produce structured unavailable results in
+the journal CLI. Independent physical/full-runtime source restoration remains
+unavailable for selected profiles; ordinary same-profile runtime reopen tests
+do not establish crash or power-loss recovery.

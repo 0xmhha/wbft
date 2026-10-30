@@ -145,6 +145,9 @@ type segStats struct {
 // aside as package wal does.
 func Open(opt Options, id Identity) (*FileWriter, error) {
 	id.Core = cloneCoreOptions(id.Core)
+	if err := id.ValidateDomainIdentity(); err != nil {
+		return nil, err
+	}
 	if id.Core.Observation != nil {
 		options := *id.Core.Observation
 		options.Checkpoint = bytes.Clone(options.Checkpoint)
@@ -257,6 +260,7 @@ func (o CoreOptions) Copy() CoreOptions { return cloneCoreOptions(o) }
 
 func cloneCoreOptions(o CoreOptions) CoreOptions {
 	o.ChainConfig = bytes.Clone(o.ChainConfig)
+	o.DomainBytes = bytes.Clone(o.DomainBytes)
 	if o.ReceiveFailureCache != nil {
 		v := *o.ReceiveFailureCache
 		o.ReceiveFailureCache = &v

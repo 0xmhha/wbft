@@ -2,6 +2,7 @@ package journal
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 
 	"github.com/0xmhha/wbft/codec"
@@ -70,6 +71,7 @@ func inspectRestoreSignerCalls(records []Record, limits CoreSourceLimits, source
 		return report, fmt.Errorf("%w: %s", ErrRestoreSource, reason)
 	}
 	var sources []privval.Source
+	declaredDomains := map[string][]byte{}
 	byRef := map[privval.SourceRef]indexedSigner{}
 	reads := map[WALReadRef]int{}
 	positions := map[walOwnPosition][]walOwnWitness{}
@@ -86,6 +88,19 @@ func inspectRestoreSignerCalls(records []Record, limits CoreSourceLimits, source
 		switch r := rec.Body.(type) {
 		case *SegmentRec:
 			writer = r.Run
+			if !charge(uint64(len(r.Core.DomainBytes))) {
+				return unavailable("signer_byte_limit")
+			}
+			if err := r.ValidateDomainIdentity(); err != nil {
+				if len(r.Core.DomainBytes) == 0 || errors.Is(err, ErrDomainSourceUnsupported) {
+					return unavailable("round_change_domain_context_unavailable")
+				}
+				return bad("round_change_domain_identity_changed")
+			}
+			if old, ok := declaredDomains[writer]; ok && !bytes.Equal(old, r.Core.DomainBytes) {
+				return bad("signer_writer_domain_changed")
+			}
+			declaredDomains[writer] = bytes.Clone(r.Core.DomainBytes)
 		case *GapRec:
 			if r.Dropped > 0 && len(r.ByKind) == 0 {
 				return unavailable("unclassified_gap")
@@ -101,6 +116,12 @@ func inspectRestoreSignerCalls(records []Record, limits CoreSourceLimits, source
 			}
 			if r.Source.Ref.Namespace != writer {
 				return bad("signer_writer_changed")
+			}
+			if err := matchSignerDomain(r.Source, declaredDomains[writer]); err != nil {
+				if errors.Is(err, ErrSignerSourceUnsupported) {
+					return unavailable("signer_domain_profile_unavailable")
+				}
+				return bad("signer_domain_changed")
 			}
 			if _, ok := byRef[r.Source.Ref]; ok {
 				return bad("signer_operation_reused")
@@ -224,6 +245,12 @@ func inspectRestoreSignerCalls(records []Record, limits CoreSourceLimits, source
 			}
 			used[r.Source] = true
 			s := signer.source.Source
+			if err := matchSignerDomain(s, proof.source.DomainBytes); err != nil {
+				if errors.Is(err, ErrSignerSourceUnsupported) {
+					return unavailable("signer_domain_profile_unavailable")
+				}
+				return bad("signer_core_domain_changed")
+			}
 			if s.Action != "vote" || s.Result != "ok" || s.RequestCode != r.RequestCode || s.Address != proof.source.CoreSelf || s.BadBlockReleased != r.BadBlockReleased || s.Reused != r.Reused || !bytes.Equal(s.SealData, r.SealData) || !bytes.Equal(s.Signature, r.Signature) || !bytes.Equal(s.Seal, r.Seal) {
 				return bad("signer_result_changed")
 			}

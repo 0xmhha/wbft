@@ -2,6 +2,7 @@ package stepdriver
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -162,6 +163,8 @@ func RunTrace(j JournalReader, opts TraceOptions, yield func(StepResult) error) 
 	var writerRun string
 	var deferredProfile bool
 	var configuration []byte
+	owners := newTraceDomainIndex(MaxAnswerSteps, MaxApplicationAnswerBytes)
+	domainSpan := 0
 	var observation *traceObservation
 	approximate := false
 	everStarted := false
@@ -178,6 +181,14 @@ func RunTrace(j JournalReader, opts TraceOptions, yield func(StepResult) error) 
 		}
 		switch b := rec.Body.(type) {
 		case *journal.SegmentRec:
+			if len(b.Core.DomainBytes) > MaxApplicationAnswerBytes-domainSpan {
+				return ErrTraceAnswerLimit
+			}
+			domainSpan += len(b.Core.DomainBytes)
+			domain, err := segmentDomain(b)
+			if err != nil {
+				return err
+			}
 			if answers != nil {
 				if err := answers.validateSegment(b); err != nil {
 					return err
@@ -185,6 +196,10 @@ func RunTrace(j JournalReader, opts TraceOptions, yield func(StepResult) error) 
 			}
 			encoded, err := json.Marshal(b.Core)
 			if err != nil {
+				return err
+			}
+			declaration := sha256.Sum256(encoded)
+			if err := owners.observe(b.Run, declaration, domain != nil); err != nil {
 				return err
 			}
 			if cfg != nil && b.Run == writerRun && !bytes.Equal(encoded, configuration) {
@@ -201,6 +216,7 @@ func RunTrace(j JournalReader, opts TraceOptions, yield func(StepResult) error) 
 					return fmt.Errorf("stepdriver: observation profile: %w", err)
 				}
 				copts = consensus.Options{Config: cfg, Self: b.Core.Self, Improvements: consensus.ImprovementSet(b.Core.Improvements), BacklogLimit: int(b.Core.BacklogLimit)}
+				copts.RoundChangeDomain = domain
 				copts.RoundChangeRetry, err = b.Core.RetryOptions(cfg)
 				if err != nil {
 					return err
@@ -247,7 +263,11 @@ func RunTrace(j JournalReader, opts TraceOptions, yield func(StepResult) error) 
 			}
 			if b.InputKind == inputlog.KindStart {
 				approximate = false
-				core = consensus.NewState(copts)
+				var coreError error
+				core, coreError = consensus.NewStateChecked(copts)
+				if coreError != nil {
+					return &TraceError{Approximate: approximate, WriterRun: writerRun, EngineRun: original.EngineRun, Step: original.Step, Err: coreError}
+				}
 				ledger.reset()
 				everStarted = true
 				if err := core.RestoreTimerGenerations(b.TimerGens); err != nil {
@@ -394,7 +414,7 @@ func replayStepExecution(core *consensus.State, cfg *types.Config, blocks BlockS
 	if err != nil {
 		return StepResult{}, err
 	}
-	env := &traceEnv{cfg: cfg, blocks: blocks, session: session, priorProfile: core.Enabled(consensus.BindPriorHead) || core.Enabled(consensus.DeferValidatorStart), requireKeyWitness: core.Enabled(consensus.DeferValidatorStart)}
+	env := &traceEnv{cfg: cfg, blocks: blocks, session: session, priorProfile: domainRuleConfigured(cfg) || core.Enabled(consensus.BindPriorHead) || core.Enabled(consensus.DeferValidatorStart), requireKeyWitness: domainRuleConfigured(cfg) || core.Enabled(consensus.DeferValidatorStart)}
 	if session != nil {
 		env.source, err = session.source(writer, b)
 		if err != nil {

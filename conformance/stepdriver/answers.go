@@ -132,8 +132,16 @@ func NewAnswerPool(j JournalReader) (*AnswerPool, error) {
 		lastSeq = rec.JSeq
 		switch b := rec.Body.(type) {
 		case *journal.SegmentRec:
+			if len(b.Core.DomainBytes) > MaxApplicationAnswerBytes-totalBytes {
+				return nil, ErrTraceAnswerLimit
+			}
+			totalBytes += len(b.Core.DomainBytes)
+			domain, err := segmentDomain(b)
+			if err != nil {
+				return nil, err
+			}
 			flags := consensus.ImprovementSet(b.Core.Improvements)
-			priorProfile = flags.Has(consensus.BindPriorHead) || flags.Has(consensus.DeferValidatorStart)
+			priorProfile = domain != nil || flags.Has(consensus.BindPriorHead) || flags.Has(consensus.DeferValidatorStart)
 			if err := b.Core.ValidateRuntimeProfiles(); err != nil {
 				return nil, err
 			}

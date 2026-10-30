@@ -527,6 +527,10 @@ func newSimulation(sc Scenario) (*simulation, error) {
 	if err != nil {
 		return nil, err
 	}
+	chainDomain, err := types.DomainForConfig(cfg, codec.BlockHash(g.Header))
+	if err != nil {
+		return nil, fmt.Errorf("%w: round-change chain domain: %v", ErrScenario, err)
+	}
 	s := &simulation{sc: sc, rng: rand.New(rand.NewPCG(uint64(sc.Seed), 0x5eed)), genesis: g,
 		byAddr: map[types.Address]*node{}, decided: map[uint64]types.Hash{}, decBlock: map[uint64]*types.Block{},
 		rounds: map[uint64]uint64{}, signed: map[signKey]types.Hash{}, verified: map[verificationKey]bool{}}
@@ -574,6 +578,14 @@ func newSimulation(sc Scenario) (*simulation, error) {
 		if err := consensus.CheckInitialRoundBudget(nodeConfig, spec.Options.Improvements); err != nil {
 			return nil, fmt.Errorf("%w: node %d: %v", ErrScenario, i, err)
 		}
+		domain, err := types.DomainForConfig(nodeConfig, codec.BlockHash(g.Header))
+		if err != nil || !chainDomain.Equal(domain) || spec.Options.RoundChangeDomain != nil && !spec.Options.RoundChangeDomain.Equal(domain) {
+			return nil, fmt.Errorf("%w: node %d: round-change domain differs from the chain", ErrScenario, i)
+		}
+		if domain != nil && !spec.ReplayWAL {
+			return nil, fmt.Errorf("%w: round-change domain requires WAL replay", ErrScenario)
+		}
+		spec.Options.RoundChangeDomain = domain.Copy()
 		if !validWallTime(sc.WallOrigin.Add(spec.ClockSkew)) || !validWallTime(sc.WallOrigin.Add(spec.ClockSkew).Add(sc.Until.Duration)) {
 			return nil, fmt.Errorf("%w: node wall clock outside journal domain", ErrScenario)
 		}

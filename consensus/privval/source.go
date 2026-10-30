@@ -12,6 +12,9 @@ import (
 
 const SourceVersion uint64 = 1
 
+// DomainSourceVersion identifies public observations of a domain-bound signer.
+const DomainSourceVersion uint64 = 2
+
 type SourceRef struct {
 	Namespace        string
 	Signer, Sequence uint64
@@ -49,6 +52,7 @@ type Source struct {
 	Write             []byte
 	WriteResult       string
 	Unavailable       string
+	DomainBytes       []byte `json:",omitempty" rlp:"optional"`
 }
 
 type sourceState struct {
@@ -73,9 +77,12 @@ func nextSourceID() uint64 {
 	}
 }
 
-// NewKeySignerWithOptions keeps NewKeySigner's original behavior and adds only
-// the explicitly requested diagnostic observer.
+// NewKeySignerWithOptions preserves legacy signing when the domain is nil.
+// An explicit domain requires fresh or matching domain-bound durable state.
 func NewKeySignerWithOptions(opt Options, secret []byte, stateFile string) (*FileSigner, error) {
+	if opt.RoundChangeDomain != nil {
+		return newDomainSigner(opt, secret, stateFile)
+	}
 	fs := opt.FS
 	if fs == nil {
 		fs = fsys.OS{}
@@ -124,6 +131,20 @@ func (s *FileSigner) beginSource(action string) *Source {
 	if r.Ref.Signer == 0 || r.Ref.Sequence == 0 {
 		r.Unavailable = "metadata_exhausted"
 	}
+	if s.domain != nil {
+		r.Version = DomainSourceVersion
+		declaration, err := codec.EncodeRoundChangeDomain(s.domain)
+		if err != nil {
+			r.Unavailable = "state_encoding"
+		} else {
+			r.DomainBytes = s.sourceRetain(r, declaration)
+		}
+		if len(r.DomainBytes) == 0 {
+			// This explicit v2 omission marker cannot reinterpret a legacy
+			// unavailable observation by changing its version number alone.
+			r.Unavailable = "domain_declaration_unavailable"
+		}
+	}
 	r.Before = s.sourceStateBytes(r, s.st)
 	return r
 }
@@ -151,7 +172,7 @@ func (s *FileSigner) sourceStateBytes(r *Source, st state) []byte {
 		r.Unavailable = "record_limit"
 		return nil
 	}
-	b, err := encodeState(st)
+	b, err := s.encodeState(st)
 	if err != nil {
 		r.Unavailable = "state_encoding"
 		return nil

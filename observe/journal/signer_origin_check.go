@@ -53,8 +53,26 @@ func originSignerQuota(b *originBudget, sources []privval.Source) (privval.Sourc
 			stateSpans = append(stateSpans, s.Write)
 		}
 		for _, raw := range stateSpans {
-			if err := b.lease(uint64(len(raw)), 4, false); err != nil {
+			weight := uint64(4)
+			if s.Version == privval.DomainSourceVersion {
+				weight = 6
+			}
+			if err := b.lease(uint64(len(raw)), weight, false); err != nil {
 				return quota, err
+			}
+			if s.Version == privval.DomainSourceVersion {
+				if len(raw) < 2 || raw[0] != 2 {
+					return quota, originInconsistent("invalid_signer_public_state")
+				}
+				envelope, err := rlp.ListItems(raw[1:])
+				if err != nil || len(envelope) != 6 {
+					return quota, originInconsistent("invalid_signer_public_state")
+				}
+				inner, rest, err := rlp.SplitString(envelope[5])
+				if err != nil || len(rest) != 0 {
+					return quota, originInconsistent("invalid_signer_public_state")
+				}
+				raw = inner
 			}
 			if len(raw) < 2 || raw[0] != 1 {
 				return quota, originInconsistent("invalid_signer_public_state")
@@ -74,7 +92,7 @@ func originSignerQuota(b *originBudget, sources []privval.Source) (privval.Sourc
 				}
 			}
 		}
-		for _, n := range []uint64{uint64(len(s.BLSPublicKey)), uint64(len(s.Before)), uint64(len(s.After)), uint64(len(s.Request)), uint64(len(s.SealData)), uint64(len(s.Signature)), uint64(len(s.Seal)), uint64(len(s.Write)), uint64(len(s.Floor)), uint64(len(s.Ref.Namespace))} {
+		for _, n := range []uint64{uint64(len(s.BLSPublicKey)), uint64(len(s.Before)), uint64(len(s.After)), uint64(len(s.Request)), uint64(len(s.SealData)), uint64(len(s.Signature)), uint64(len(s.Seal)), uint64(len(s.Write)), uint64(len(s.Floor)), uint64(len(s.Ref.Namespace)), uint64(len(s.DomainBytes))} {
 			var err error
 			quota.Bytes, err = originAdd(quota.Bytes, n)
 			if err != nil {
@@ -101,6 +119,12 @@ func originGroupMetadata(records []Record, span uint64, b *originBudget) (signer
 		case *SegmentRec:
 			if r == nil {
 				return g, originInconsistent("nil_segment")
+			}
+			if err := r.ValidateDomainIdentity(); err != nil {
+				if len(r.Core.DomainBytes) == 0 || errors.Is(err, ErrDomainSourceUnsupported) {
+					return g, &originLimitError{"origin_domain_profile_unavailable"}
+				}
+				return g, originInconsistent("origin_domain_identity_changed")
 			}
 			if g.identity == nil {
 				g.identity = &r.Identity
@@ -137,6 +161,12 @@ func originGroupMetadata(records []Record, span uint64, b *originBudget) (signer
 				return g, originInconsistent("origin_signer_owner_missing")
 			}
 			s := &r.Source
+			if err := matchSignerDomain(*s, g.identity.Core.DomainBytes); err != nil {
+				if errors.Is(err, ErrSignerSourceUnsupported) {
+					return g, &originLimitError{"origin_signer_domain_unavailable"}
+				}
+				return g, originInconsistent("origin_signer_domain_changed")
+			}
 			if s.Ref.Namespace != g.identity.Run {
 				return g, originInconsistent("origin_signer_owner_changed")
 			}

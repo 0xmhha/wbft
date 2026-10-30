@@ -45,7 +45,7 @@ func (r *Runner) currentOwnRetry(sc *stepCtx, b consensus.Broadcast, message *co
 	if !after.Running || after.State != consensus.AcceptRequest || after.View.Cmp(sc.retry.view) != 0 {
 		return false
 	}
-	body, err := codec.SigningPayload(message, false, nil)
+	body, err := codec.SigningPayloadWithDomain(message, r.cfg.Core.RoundChangeDomain)
 	if err != nil || codec.DedupKey(body) != b.Retry.Key {
 		return false
 	}

@@ -111,10 +111,14 @@ func retryInterval(base, maximum, exponent uint64) time.Duration {
 }
 
 func roundChangeRetryKey(message *codec.Message) (types.Hash, error) {
+	return roundChangeRetryKeyWithDomain(message, nil)
+}
+
+func roundChangeRetryKeyWithDomain(message *codec.Message, domain *types.RoundChangeDomain) (types.Hash, error) {
 	if message == nil || message.Code != codec.CodeRoundChange {
 		return types.Hash{}, fmt.Errorf("consensus: retry identity requires a round-change")
 	}
-	body, err := codec.SigningPayload(message, false, nil)
+	body, err := codec.SigningPayloadWithDomain(message, domain)
 	if err != nil {
 		return types.Hash{}, err
 	}
