@@ -63,19 +63,16 @@ func checkNodeSources(records []Record, limits NodeSourceLimits, restored bool) 
 		}
 		return report, nil
 	}
-	var discarded receiveDiscardEvidenceSet
+	var prerequisites ReceiveDispatchSourceReports
 	var err error
-	report.Dispatch, err = inspectReceiveDispatchSources(records, limits.Dispatch, func(e receiveDiscardEvidenceSet) { discarded = e }, restored)
+	report.Dispatch, err = inspectReceiveDispatchReports(records, limits.Dispatch, nil, restored, &prerequisites)
 	if err != nil || report.Dispatch.Status != "consistent" {
 		return result("dispatch", report.Dispatch.Status, report.Dispatch.Reason, err)
 	}
-	// Each inspection creates its own state. No runtime mutation, caller
-	// certificate, erased unavailable marker or invented core step is used.
-	internalCheck := CheckInternalSources
-	if restored {
-		internalCheck = CheckRestoredInternalSources
-	}
-	report.Internal, err = internalCheck(records, limits.Dispatch.Selections.Internal)
+	// Dispatch already inspected these exact prerequisites on the same records,
+	// limits and discard evidence. Copy only completed value reports at their
+	// original positions; no caller verdict or mutable model is reused.
+	report.Internal = prerequisites.Internal
 	if err != nil || report.Internal.Status != "consistent" {
 		return result("internal", report.Internal.Status, report.Internal.Reason, err)
 	}
@@ -83,11 +80,11 @@ func checkNodeSources(records []Record, limits NodeSourceLimits, restored bool) 
 	if err != nil || report.App.Status != "consistent" {
 		return result("app_queue", report.App.Status, report.App.Reason, err)
 	}
-	report.Inbox, err = inspectInboxSources(records, limits.Dispatch.Selections.Inbox, discarded, restored)
+	report.Inbox = prerequisites.Inbox
 	if err != nil || report.Inbox.Status != "consistent" {
 		return result("inbox", report.Inbox.Status, report.Inbox.Reason, err)
 	}
-	report.Selection, err = inspectInputSelections(records, limits.Dispatch.Selections, discarded, restored)
+	report.Selection = prerequisites.Selections
 	if err != nil || report.Selection.Status != "consistent" {
 		return result("selection", report.Selection.Status, report.Selection.Reason, err)
 	}
