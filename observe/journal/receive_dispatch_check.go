@@ -83,6 +83,10 @@ func checkReceiveDispatchSources(records []Record, limits ReceiveDispatchLimits,
 }
 
 func inspectReceiveDispatchSources(records []Record, limits ReceiveDispatchLimits, verified func(receiveDiscardEvidenceSet), restored bool) (ReceiveDispatchCheck, error) {
+	return inspectReceiveDispatchReports(records, limits, verified, restored, nil)
+}
+
+func inspectReceiveDispatchReports(records []Record, limits ReceiveDispatchLimits, verified func(receiveDiscardEvidenceSet), restored bool, reports *ReceiveDispatchSourceReports) (ReceiveDispatchCheck, error) {
 	report := ReceiveDispatchCheck{Status: "unavailable", Scope: "original_receive_lookup_and_actual_input_disposition", PhysicalStatus: "unavailable", ScheduleStatus: "unavailable"}
 	unavailable := func(reason string) (ReceiveDispatchCheck, error) {
 		report.Status, report.Reason = "unavailable", reason
@@ -116,6 +120,9 @@ func inspectReceiveDispatchSources(records []Record, limits ReceiveDispatchLimit
 		internalCheck = CheckRestoredInternalSources
 	}
 	internal, err := internalCheck(records, limits.Selections.Internal)
+	if reports != nil {
+		reports.Internal = internal
+	}
 	if err != nil {
 		return inconsistent("internal_" + internal.Reason)
 	}
@@ -155,6 +162,9 @@ func inspectReceiveDispatchSources(records []Record, limits ReceiveDispatchLimit
 			firstBefore[key] = restoredReceiveBeforeState{source, snapshot}
 		}
 	})
+	if reports != nil {
+		reports.Core = core
+	}
 	if err != nil {
 		return inconsistent("core_" + core.Reason)
 	}
@@ -551,7 +561,14 @@ func inspectReceiveDispatchSources(records []Record, limits ReceiveDispatchLimit
 			return unavailable("core_message_without_original_prepare")
 		}
 	}
-	selections, err := inspectInputSelections(records, limits.Selections, discarded, restored)
+	selections, err := inspectInputSelectionReports(records, limits.Selections, discarded, restored, func(inbox InboxCheck) {
+		if reports != nil {
+			reports.Inbox = inbox
+		}
+	})
+	if reports != nil {
+		reports.Selections = selections
+	}
 	if err != nil {
 		return inconsistent("selection_" + selections.Reason)
 	}

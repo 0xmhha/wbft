@@ -2,6 +2,7 @@ package sim
 
 import (
 	"context"
+	"reflect"
 	"testing"
 
 	"github.com/0xmhha/wbft/conformance/stepdriver"
@@ -186,30 +187,60 @@ func TestRoundChangeDomainNormalCacheSourceChain(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				core, err := journal.CheckCoreStepSources(records, cacheSourceLimits().Core)
-				if err != nil || core.Status != "consistent" || core.Steps == 0 {
-					t.Fatal("core domain source was not reconstructed", n.i, core, err)
+				limits := journal.ReceiveDispatchLimits{Receive: cacheSourceLimits(), Selections: selectionSourceBounds(), Operations: 20000, Bytes: 64 << 20}
+				reports, err := journal.CheckReceiveDispatchSourceReports(records, limits)
+				if err != nil || reports.Dispatch.Status != "consistent" {
+					t.Fatal("receive dispatch did not retain domain-dependent proof", n.i, reports, err)
 				}
-				inbox, err := journal.CheckInboxSources(records, inboxSourceBounds())
-				if err != nil || inbox.Status != "consistent" {
-					t.Fatal("inbox domain source was not reconstructed", n.i, inbox, err)
+				if reports.Dispatch.DiscardedKnown != 0 {
+					t.Fatal("normal source fixture requires standalone-equivalent inbox evidence", n.i, reports.Dispatch)
 				}
-				internal, err := journal.CheckInternalSources(records, internalSourceBounds())
-				if err != nil || internal.Status != "consistent" || internal.OwnMessages == 0 {
-					t.Fatal("internal domain source was not reconstructed", n.i, internal, err)
+				if reports.Core.Status != "consistent" || reports.Core.Steps == 0 {
+					t.Fatal("core domain source was not reconstructed", n.i, reports.Core)
 				}
-				selection, err := journal.CheckInputSelections(records, selectionSourceBounds())
-				if err != nil || selection.Status != "consistent" {
-					t.Fatal("selection did not retain domain-dependent proof", n.i, selection, err)
+				if reports.Inbox.Status != "consistent" {
+					t.Fatal("inbox domain source was not reconstructed", n.i, reports.Inbox)
 				}
-				receive, err := journal.CheckReceiveDispatchSources(records, journal.ReceiveDispatchLimits{Receive: cacheSourceLimits(), Selections: selectionSourceBounds(), Operations: 20000, Bytes: 64 << 20})
-				if err != nil || receive.Status != "consistent" {
-					t.Fatal("receive dispatch did not retain domain-dependent proof", n.i, receive, err)
+				if reports.Internal.Status != "consistent" || reports.Internal.OwnMessages == 0 {
+					t.Fatal("internal domain source was not reconstructed", n.i, reports.Internal)
+				}
+				if reports.Selections.Status != "consistent" {
+					t.Fatal("selection did not retain domain-dependent proof", n.i, reports.Selections)
+				}
+				// One real selected journal checks complete report equality. Other
+				// nodes and activations consume the same independently run checks
+				// once, retaining every status and nonzero-count assertion above.
+				if activation == "3" && n.i == 0 {
+					checkDomainSourceReportParity(t, records, limits, reports)
 				}
 				if n.head() < sc.Until.Height {
 					t.Fatal("normal source run did not progress", n.i, n.head())
 				}
 			}
 		})
+	}
+}
+
+func checkDomainSourceReportParity(t *testing.T, records []journal.Record, limits journal.ReceiveDispatchLimits, got journal.ReceiveDispatchSourceReports) {
+	t.Helper()
+	core, err := journal.CheckCoreStepSources(records, limits.Receive.Core)
+	if err != nil || !reflect.DeepEqual(core, got.Core) {
+		t.Fatal("collected core report differs", core, got.Core, err)
+	}
+	inbox, err := journal.CheckInboxSources(records, limits.Selections.Inbox)
+	if err != nil || !reflect.DeepEqual(inbox, got.Inbox) {
+		t.Fatal("collected inbox report differs", inbox, got.Inbox, err)
+	}
+	internal, err := journal.CheckInternalSources(records, limits.Selections.Internal)
+	if err != nil || !reflect.DeepEqual(internal, got.Internal) {
+		t.Fatal("collected internal report differs", internal, got.Internal, err)
+	}
+	selection, err := journal.CheckInputSelections(records, limits.Selections)
+	if err != nil || !reflect.DeepEqual(selection, got.Selections) {
+		t.Fatal("collected selection report differs", selection, got.Selections, err)
+	}
+	dispatch, err := journal.CheckReceiveDispatchSources(records, limits)
+	if err != nil || !reflect.DeepEqual(dispatch, got.Dispatch) {
+		t.Fatal("collected dispatch report differs", dispatch, got.Dispatch, err)
 	}
 }

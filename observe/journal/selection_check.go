@@ -124,6 +124,10 @@ func checkInputSelections(records []Record, limits SelectionLimits, discarded re
 }
 
 func inspectInputSelections(records []Record, limits SelectionLimits, discarded receiveDiscardEvidenceSet, restored bool) (SelectionCheck, error) {
+	return inspectInputSelectionReports(records, limits, discarded, restored, nil)
+}
+
+func inspectInputSelectionReports(records []Record, limits SelectionLimits, discarded receiveDiscardEvidenceSet, restored bool, checkedInbox func(InboxCheck)) (SelectionCheck, error) {
 	consumed := map[receiveDiscardKey]bool{}
 	bySelection := map[finalizeQueueKey]receiveDiscardKey{}
 	for key, evidence := range discarded { //wbft:unordered duplicate gives identical error
@@ -175,6 +179,9 @@ func inspectInputSelections(records []Record, limits SelectionLimits, discarded 
 		return unavailable("timer_" + timer.Reason)
 	}
 	inbox, err := inspectInboxSources(records, limits.Inbox, discarded, restored)
+	if checkedInbox != nil {
+		checkedInbox(inbox)
+	}
 	if err != nil {
 		return inconsistent("inbox_" + inbox.Reason)
 	}
