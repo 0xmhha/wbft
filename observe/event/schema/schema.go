@@ -493,6 +493,16 @@ func typeOf(v any) string {
 
 // equal compares decoded values; numbers compare by value.
 func equal(a, b any) bool {
+	switch x := a.(type) {
+	case nil:
+		return b == nil
+	case string:
+		y, ok := b.(string)
+		return ok && x == y
+	case bool:
+		y, ok := b.(bool)
+		return ok && x == y
+	}
 	x, okx := a.(json.Number)
 	y, oky := b.(json.Number)
 	if okx && oky {
