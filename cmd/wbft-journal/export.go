@@ -143,6 +143,7 @@ type r01Writer struct {
 	cache        map[string]*cacheRun
 	cacheRun     string
 	cacheErr     error
+	profileErr   error
 	syncSources  map[string]*syncRun
 	syncRunID    string
 	syncErr      error
@@ -163,7 +164,14 @@ func exportR01(fs fsys.FS, dir, out, fromArg, toArg string) (*exportResult, erro
 	if w.to, err = parseHeight("--to", toArg); err != nil {
 		return nil, err
 	}
+	preflight, complete, err := r01ProfilePreflight(fs, dir)
+	if err != nil {
+		return nil, err
+	}
 	w.own = w.indexOwnInputs(fs, dir)
+	if w.profileErr != nil {
+		return nil, w.profileErr
+	}
 	if w.schedulerErr != nil {
 		return nil, w.schedulerErr
 	}
@@ -172,6 +180,9 @@ func exportR01(fs fsys.FS, dir, out, fromArg, toArg string) (*exportResult, erro
 	}
 	if w.syncErr != nil {
 		return nil, w.syncErr
+	}
+	if complete && (w.hasOwnEvidence() || w.hasSchedulerEvidence() || w.hasCacheEvidence() || w.hasSyncEvidence()) && preflight != w.ownStream {
+		return nil, errors.New("journal changed while own input evidence was indexed")
 	}
 	if err := fs.MkdirAll(filepath.Join(out, "payloads"), 0o700); err != nil {
 		return nil, err
@@ -229,6 +240,9 @@ func (w *r01Writer) inRange() bool {
 }
 
 func (w *r01Writer) record(rec journal.Record, pos wal.Position) error {
+	if err := r01RecordProfile(rec); err != nil {
+		return err
+	}
 	switch b := rec.Body.(type) {
 	case *journal.SegmentRec:
 		if w.run == nil || w.run.Run != b.Run {

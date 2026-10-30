@@ -142,6 +142,7 @@ type Identity struct {
 // CoreOptions is the consensus.Options of the journaled core in a portable
 // form: the chain configuration as its JSON text (types.ParseChainConfig).
 type CoreOptions struct {
+	DomainBytes           []byte                      `json:"round_change_domain,omitempty"`
 	ReceiveFailureCache   *ReceiveFailureCacheOptions `json:"receive_failure_cache,omitempty"`
 	RoundChangeRetry      *RoundChangeRetryOptions    `json:"round_change_retry,omitempty"`
 	Observation           *ObservationOptions         `json:"observation,omitempty"`
@@ -365,6 +366,7 @@ type segmentRLP struct {
 	Observation           []byte   `rlp:"optional"`
 	RoundChangeRetry      []uint64 `rlp:"optional"`
 	ReceiveFailureCache   []uint64 `rlp:"optional"`
+	DomainBytes           []byte   `rlp:"optional"`
 }
 
 type peerRLP struct {
@@ -606,7 +608,7 @@ func encodeBody(r Record, jseq uint64) ([]byte, error) {
 			BLSPublicKey: bytesOrEmpty(b.BLSPublicKey), Run: b.Run, Commit: b.Commit, ChainID: bigOrZero(b.ChainID),
 			GenesisHash: b.GenesisHash, Mode: b.Mode, WireOffset: b.WireOffset, ConfigDigest: b.ConfigDigest,
 			ChainConfig: bytesOrEmpty(b.Core.ChainConfig), CoreSelf: b.Core.Self, Improvements: b.Core.Improvements,
-			BacklogLimit: b.Core.BacklogLimit, Profile: b.Core.Profile, EngineRun: b.EngineRun, TimerTrace: b.Core.TimerTrace, CacheTrace: b.Core.CacheTrace, SyncTrace: b.Core.SyncTrace, ProposerPolicyProfile: b.Core.ProposerPolicyProfile, NextHeight: b.Core.NextHeight.encode(), CachePolicy: b.Core.CachePolicy.encode(), Observation: observation, RoundChangeRetry: b.Core.RoundChangeRetry.encode(), ReceiveFailureCache: b.Core.ReceiveFailureCache.encode()})
+			BacklogLimit: b.Core.BacklogLimit, Profile: b.Core.Profile, EngineRun: b.EngineRun, TimerTrace: b.Core.TimerTrace, CacheTrace: b.Core.CacheTrace, SyncTrace: b.Core.SyncTrace, ProposerPolicyProfile: b.Core.ProposerPolicyProfile, NextHeight: b.Core.NextHeight.encode(), CachePolicy: b.Core.CachePolicy.encode(), Observation: observation, RoundChangeRetry: b.Core.RoundChangeRetry.encode(), ReceiveFailureCache: b.Core.ReceiveFailureCache.encode(), DomainBytes: b.Core.DomainBytes})
 	case *PeerRec:
 		return rlp.Encode(&peerRLP{Format: Format, JSeq: jseq, PeerIdx: uint64(b.PeerIdx), Addr: b.Addr, NodeID: bytesOrEmpty(b.NodeID),
 			Remote: b.Remote, Event: b.Event, Reason: b.Reason, By: b.By, Cause: b.Cause})
@@ -762,7 +764,7 @@ func decodeBody(k Kind, body []byte) (Record, error) {
 		return Record{Kind: k, JSeq: w.JSeq, Body: &SegmentRec{EngineRun: w.EngineRun, Identity: Identity{
 			Self: w.Self, NodeID: w.NodeID, BLSPublicKey: w.BLSPublicKey, Run: w.Run, Commit: w.Commit, ChainID: w.ChainID,
 			GenesisHash: w.GenesisHash, Mode: w.Mode, WireOffset: w.WireOffset, ConfigDigest: w.ConfigDigest,
-			Core: CoreOptions{ChainConfig: w.ChainConfig, Self: w.CoreSelf, Improvements: w.Improvements, BacklogLimit: w.BacklogLimit, Profile: w.Profile, TimerTrace: w.TimerTrace, CacheTrace: w.CacheTrace, SyncTrace: w.SyncTrace, ProposerPolicyProfile: w.ProposerPolicyProfile, NextHeight: deferred, CachePolicy: cache, Observation: observation, RoundChangeRetry: retry, ReceiveFailureCache: failure},
+			Core: CoreOptions{ChainConfig: w.ChainConfig, Self: w.CoreSelf, Improvements: w.Improvements, BacklogLimit: w.BacklogLimit, Profile: w.Profile, TimerTrace: w.TimerTrace, CacheTrace: w.CacheTrace, SyncTrace: w.SyncTrace, ProposerPolicyProfile: w.ProposerPolicyProfile, NextHeight: deferred, CachePolicy: cache, Observation: observation, RoundChangeRetry: retry, ReceiveFailureCache: failure, DomainBytes: w.DomainBytes},
 		}}}, nil
 	case KindPeer:
 		var w peerRLP
@@ -1030,7 +1032,7 @@ func size(r Record) int64 {
 	case *ReceiveCacheRec:
 		return 640 + int64(len(b.Transition.Pruned))*8 + int64(len(b.Transition.Origin.WriterRun)+len(b.Transition.CheckedOrigin.WriterRun)+len(b.Transition.Source.Via)+len(b.Transition.Context.Sequence)+len(b.Transition.Context.Round)+len(b.Transition.Context.State)+len(b.Transition.Context.PriorRound)+len(b.Transition.Input.SessionRun)+len(b.Transition.Checked.SessionRun))
 	case *CoreStepRec:
-		n := int64(1024 + len(b.Head) + len(b.Input) + len(b.Outputs) + len(b.Origin.WriterRun) + len(b.StreamRun) + len(b.ReceiveLedgerRun) + len(b.InputKind) + len(b.Via) + len(b.Unavailable))
+		n := int64(1024 + len(b.Head) + len(b.Input) + len(b.Outputs) + len(b.DomainBytes) + len(b.Origin.WriterRun) + len(b.StreamRun) + len(b.ReceiveLedgerRun) + len(b.InputKind) + len(b.Via) + len(b.Unavailable))
 		if b.RetryMaximumMs != 0 {
 			n += 8
 		}
@@ -1049,7 +1051,7 @@ func size(r Record) int64 {
 		return 256 + int64(len(b.Input)+len(b.InputKind)+len(b.Action)+len(b.Unavailable))
 	case *SignerRec:
 		s := b.Source
-		return int64(768 + len(s.Ref.Namespace) + len(s.BLSPublicKey) + len(s.Before) + len(s.After) + len(s.Request) + len(s.SealData) + len(s.Signature) + len(s.Seal) + len(s.Write) + len(s.Floor) + len(s.Action) + len(s.Result) + len(s.Unavailable))
+		return int64(768 + len(s.Ref.Namespace) + len(s.BLSPublicKey) + len(s.Before) + len(s.After) + len(s.Request) + len(s.SealData) + len(s.Signature) + len(s.Seal) + len(s.Write) + len(s.Floor) + len(s.DomainBytes) + len(s.Action) + len(s.Result) + len(s.Unavailable))
 	case *RuntimeRec:
 		return int64(320 + len(b.Namespace) + len(b.Component) + len(b.Phase) + len(b.SessionRun) + len(b.Result) + len(b.Unavailable))
 	case *ApplicationRec:
@@ -1101,7 +1103,7 @@ func size(r Record) int64 {
 		}
 		return n
 	case *SegmentRec:
-		size := int64(len(b.Core.ChainConfig)) + 256
+		size := int64(len(b.Core.ChainConfig)+len(b.Core.DomainBytes)) + 256
 		if b.Core.ReceiveFailureCache != nil {
 			size += 32
 		}

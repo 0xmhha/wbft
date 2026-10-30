@@ -187,6 +187,7 @@ func inspectInboxSourcesProfile(records []Record, limits InboxLimits, discarded 
 	groups := map[string][]*InboxRec{}
 	raw := map[receiveSourceCaptureKey]receiveRawSource{}
 	peers := map[string]map[uint32]types.Address{}
+	domains := map[string]*types.RoundChangeDomain{}
 	offsets := map[string]uint64{}
 	sessions := map[SessionRef]types.Address{}
 	writer := ""
@@ -195,6 +196,15 @@ func inspectInboxSourcesProfile(records []Record, limits InboxLimits, discarded 
 		switch r := record.Body.(type) {
 		case *SegmentRec:
 			writer = r.Run
+			if uint64(len(r.Core.DomainBytes)) > limits.Bytes-span {
+				return unavailable("byte_limit")
+			}
+			span += uint64(len(r.Core.DomainBytes))
+			domain, err := codec.DecodeRoundChangeDomain(r.Core.DomainBytes)
+			if err != nil {
+				return unavailable("round_change_domain_context_unavailable")
+			}
+			domains[writer] = domain
 			if old, exists := offsets[writer]; exists && old != r.WireOffset {
 				return inconsistent("wire_offset_changed")
 			}
@@ -495,7 +505,7 @@ func inspectInboxSourcesProfile(records []Record, limits InboxLimits, discarded 
 					s := publication.snapshot
 					return !s.Running || s.Validators != nil && s.Validators.Contains(a) || s.PriorValidators != nil && s.PriorValidators.Contains(a)
 				}
-				v, recoverError := consensus.Recover(codec.Code(original.Code), original.Payload, member)
+				v, recoverError := consensus.RecoverWithDomain(codec.Code(original.Code), original.Payload, member, domains[name])
 				result := ""
 				if recoverError != nil {
 					result = "signature"

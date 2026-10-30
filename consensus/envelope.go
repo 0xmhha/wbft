@@ -21,7 +21,13 @@ type OuterSigner struct {
 // with the appropriate validator set before observing, counting or relaying a
 // message. This helper does not change the receive path or admission policy.
 func RecoverOuter(code codec.Code, payload []byte) (*OuterSigner, error) {
-	e, err := codec.DecodeSignedEnvelope(code, payload)
+	return RecoverOuterWithDomain(code, payload, nil)
+}
+
+// RecoverOuterWithDomain recovers an outer signature under an explicit chain
+// context. Success does not check membership or authenticate attachments.
+func RecoverOuterWithDomain(code codec.Code, payload []byte, domain *types.RoundChangeDomain) (*OuterSigner, error) {
+	e, err := codec.DecodeSignedEnvelopeWithDomain(code, payload, domain)
 	if err != nil {
 		return nil, err
 	}

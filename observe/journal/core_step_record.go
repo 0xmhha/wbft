@@ -2,6 +2,7 @@ package journal
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 
 	"github.com/0xmhha/wbft/chain/validator"
@@ -29,6 +30,7 @@ type CoreStepMoment struct {
 // It neither enables functional cache replay nor authenticates writer/config.
 // ReplayedPrefix explicitly marks a restored prefix lacking live observations.
 type CoreStepRec struct {
+	DomainBytes     []byte `json:"round_change_domain,omitempty"`
 	CoreSelf        types.Address
 	Improvements    uint64
 	BacklogLimit    int64
@@ -118,9 +120,13 @@ type coreStepRLP struct {
 	EntryMono, EntryWall, ObservedMono, ObservedWall     uint64
 	Unavailable                                          string
 	RetryMaximumMs                                       uint64 `rlp:"optional"`
+	DomainBytes                                          []byte `rlp:"optional"`
 }
 
 func validCoreStepSource(s *CoreStepRec) bool {
+	if _, err := codec.DecodeRoundChangeDomain(s.DomainBytes); err != nil {
+		return false
+	}
 	if s.RetryMaximumMs != 0 && (&RoundChangeRetryOptions{Profile: RoundChangeRetryProfile, MaxIntervalMs: s.RetryMaximumMs}).Validate() != nil {
 		return false
 	}
@@ -180,6 +186,9 @@ func encodeCoreStepRec(s *CoreStepRec, jseq uint64) ([]byte, error) {
 	w := coreStepRLP{Format: Format, Profile: 1, JSeq: jseq, EngineRun: s.EngineRun, Step: s.Step, Via: s.Via, InputKind: s.InputKind, Input: s.Input, Outputs: s.Outputs, OutDigest: s.OutDigest, Origin: s.Origin, StreamRun: s.StreamRun, Stream: s.Stream, Before: receiveContextWire(s.Before), After: receiveContextWire(s.After), EntryMono: uint64(s.Entry.Mono), EntryWall: uint64(s.Entry.WallNs), ObservedMono: uint64(s.Observed.Mono), ObservedWall: uint64(s.Observed.WallNs), Unavailable: s.Unavailable}
 	w.CoreSelf, w.Improvements, w.BacklogLimit, w.Head = s.CoreSelf, s.Improvements, uint64(s.BacklogLimit), s.Head
 	w.RetryMaximumMs = s.RetryMaximumMs
+	if len(s.DomainBytes) != 0 {
+		w.Profile, w.DomainBytes = 2, s.DomainBytes
+	}
 	w.ReceiveLedgerRun, w.ReceiveLedger, w.ReceiveScopeBefore, w.ReceiveScopeAfter = s.ReceiveLedgerRun, s.ReceiveLedger, s.ReceiveScopeBefore, s.ReceiveScopeAfter
 	for i, flag := range []bool{s.ReplayedPrefix, s.BeforeKnown, s.AfterKnown} {
 		if flag {
@@ -201,12 +210,25 @@ func decodeCoreStepRec(body []byte) (Record, error) {
 	if err := rlp.DecodeStrict(body, &w); err != nil {
 		return Record{}, fmt.Errorf("%w: core step source: %v", ErrRecord, err)
 	}
-	if w.Format != Format || w.Profile != 1 || w.Flags&^uint64(7) != 0 || w.Before.ValidatorsPresent > 1 || w.Before.PriorValidatorsPresent > 1 || w.After.ValidatorsPresent > 1 || w.After.PriorValidatorsPresent > 1 {
+	if w.Format != Format || w.Flags&^uint64(7) != 0 || w.Before.ValidatorsPresent > 1 || w.Before.PriorValidatorsPresent > 1 || w.After.ValidatorsPresent > 1 || w.After.PriorValidatorsPresent > 1 {
 		return Record{}, fmt.Errorf("%w: core step source flags/profile", ErrRecord)
+	}
+	if w.Profile > 2 {
+		return Record{}, ErrDomainSourceUnsupported
+	}
+	if w.Profile != 1 && w.Profile != 2 || w.Profile == 1 && len(w.DomainBytes) != 0 || w.Profile == 2 && len(w.DomainBytes) == 0 {
+		return Record{}, fmt.Errorf("%w: core step domain profile", ErrRecord)
+	}
+	if _, err := codec.DecodeRoundChangeDomain(w.DomainBytes); err != nil {
+		if errors.Is(err, types.ErrRoundChangeDomainVersion) {
+			return Record{}, fmt.Errorf("%w: %w", ErrDomainSourceUnsupported, err)
+		}
+		return Record{}, fmt.Errorf("%w: core step domain: %v", ErrRecord, err)
 	}
 	s := &CoreStepRec{EngineRun: w.EngineRun, Step: w.Step, ReplayedPrefix: w.Flags&1 != 0, BeforeKnown: w.Flags&2 != 0, AfterKnown: w.Flags&4 != 0, Via: w.Via, InputKind: w.InputKind, Input: w.Input, Outputs: w.Outputs, OutDigest: w.OutDigest, Origin: w.Origin, StreamRun: w.StreamRun, Stream: w.Stream, Before: receiveContextValue(w.Before), After: receiveContextValue(w.After), Entry: CoreStepMoment{Mono: int64(w.EntryMono), WallNs: int64(w.EntryWall)}, Observed: CoreStepMoment{Mono: int64(w.ObservedMono), WallNs: int64(w.ObservedWall)}, Unavailable: w.Unavailable}
 	s.CoreSelf, s.Improvements, s.BacklogLimit, s.Head = w.CoreSelf, w.Improvements, int64(w.BacklogLimit), w.Head
 	s.RetryMaximumMs = w.RetryMaximumMs
+	s.DomainBytes = w.DomainBytes
 	s.ReceiveLedgerRun, s.ReceiveLedger, s.ReceiveScopeBefore, s.ReceiveScopeAfter = w.ReceiveLedgerRun, w.ReceiveLedger, w.ReceiveScopeBefore, w.ReceiveScopeAfter
 	for _, e := range w.Environment {
 		env := CoreEnvObservation{Bytes: e.Bytes}

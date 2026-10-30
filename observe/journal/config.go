@@ -23,6 +23,9 @@ func (o CoreOptions) Configuration() (*types.Config, error) {
 	if _, err := o.RetryOptions(cfg); err != nil {
 		return nil, err
 	}
+	if _, err := o.DomainOptions(cfg); err != nil {
+		return nil, err
+	}
 	if o.Observation != nil && (cfg.ChainID == nil || cfg.ChainID.String() != o.Observation.ChainID) {
 		return nil, fmt.Errorf("journal: observation chain ID differs from chain configuration")
 	}

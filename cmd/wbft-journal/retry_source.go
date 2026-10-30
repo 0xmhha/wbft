@@ -54,7 +54,7 @@ func checkRoundChangeRetry(fs fsys.FS, dir string, limits journal.RetrySourceLim
 	var records []journal.Record
 	var count uint64
 	for {
-		record, err := reader.Next()
+		record, err := readSourceRecord(reader)
 		if errors.Is(err, io.EOF) {
 			return journal.CheckRoundChangeRetrySources(records, limits)
 		}

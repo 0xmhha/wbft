@@ -223,3 +223,30 @@ range. Explicit ranges keep the original head-interval selection rules.
 A journal without any recorded step head remains unavailable for height-based
 bundle selection. Original bytes and record kinds are preserved; selecting a
 bundle neither supplies missing evidence nor enables functional replay.
+
+# Chain-bound round-change source profiles
+
+Journal segment declarations carry the chain identity and canonical domain
+selected by the common chain rule, including before its activation height.
+Source checks bind that declaration to the recorded signer and core-step
+profiles. A supported declaration remains a recorded claim; it does not
+independently authenticate the genesis or establish physical persistence.
+
+The cache, write-I/O, retry and receive-failure checks, `verify`, and `stat`
+return structured `status: unavailable`, reason `unsupported_source_profile`,
+and exit 69 for recognized future signer/core/domain profiles or a configured
+domain whose declaration is missing. Malformed supported records and input
+I/O keep their existing command contracts. `verify` still exits 1 if it has
+already observed a definite contradiction before a later unsupported record;
+that result does not imply that the remaining suffix was checked. `stat`
+retains its existing partial-statistics and `end` behavior for ordinary damage.
+
+R01 cannot express this domain. A streaming, read-only preflight rejects a
+selected declaration or an unsupported source before own-message indexing,
+legacy signature recovery, or output creation, regardless of height filters.
+The indexing and output passes also check declarations. This adds a sequential
+read pass with no retained source payloads; it is not an atomic snapshot of a
+journal being changed concurrently. Keep the original journal or a supported
+original-segment bundle. Existing legacy R01 layouts and legacy signing APIs
+retain their original interpretation. Independent physical/full-runtime
+restoration of the selected functional profile remains unavailable.

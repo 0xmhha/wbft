@@ -25,6 +25,8 @@ func (r *Runner) beginRestoreSource(from types.Height) {
 		r.restoreSource.Unavailable = "replay_disabled"
 	} else if r.d.WAL == nil {
 		r.restoreSource.Unavailable = "wal_missing"
+	} else if r.cfg.Core.RoundChangeDomain != nil {
+		r.restoreSource.Unavailable = "round_change_domain_profile"
 	} else if r.cfg.Core.Improvements.Has(consensus.DeferValidatorStart) {
 		r.restoreSource.Unavailable = "validator_start_profile"
 	} else if r.nextHeight != nil {

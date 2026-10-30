@@ -130,16 +130,30 @@ func (s *State) Enabled(i Improvement) bool { return s.opt.Improvements.Has(i) }
 // NewState returns a stopped core. Step(Start) starts it. An invalid explicit
 // retry policy panics; runtime constructors return its validation error first.
 func NewState(opt Options) *State {
+	s, err := NewStateChecked(opt)
+	if err != nil {
+		panic(err) // Runtime constructors validate caller configuration first.
+	}
+	return s
+}
+
+// NewStateChecked validates explicit runtime profiles before allocating a core.
+// Recorded or external configurations must use this error-returning entry point.
+func NewStateChecked(opt Options) (*State, error) {
 	opt.RoundChangeRetry = opt.RoundChangeRetry.Copy()
 	if err := opt.RoundChangeRetry.Validate(opt.Config); err != nil {
-		panic(err) // Runtime constructors validate caller configuration first.
+		return nil, err
+	}
+	opt.RoundChangeDomain = opt.RoundChangeDomain.Copy()
+	if err := types.ValidateRoundChangeDomain(opt.Config, opt.RoundChangeDomain); err != nil {
+		return nil, err
 	}
 	if opt.BacklogLimit < MinBacklogLimit {
 		opt.BacklogLimit = MinBacklogLimit
 	}
 	s := &State{opt: opt}
 	s.reset()
-	return s
+	return s, nil
 }
 
 // reset discards the consensus state (WBFT-SM-004). Timer generations are

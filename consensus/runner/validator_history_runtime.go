@@ -14,7 +14,7 @@ import (
 )
 
 func (r *Runner) validatorHistoryControl(before []uint64, view validatorHistoryView, outs []consensus.Output) (validatorHistoryControl, error) {
-	c := validatorHistoryControl{Version: validatorStartVersion, Head: validatorHistoryHeadBytes(r.env.head),
+	c := validatorHistoryControl{Version: functionalHistoryVersion(r.cfg.Core), Head: validatorHistoryHeadBytes(r.env.head),
 		Before: before, After: r.core.TimerGenerations(), BeforeView: view, AfterView: validatorHistoryAdoption(r.core)}
 	var err error
 	c.Wait, err = validatorHistoryWaitBytes(r.core.ValidatorStartWait())
@@ -231,7 +231,7 @@ func (r *Runner) restoreValidatorHistoryOutputs() {
 	wait := r.core.ValidatorStartWait()
 	var timers [5]*consensus.ArmTimer
 	for kind, timer := range w.timers {
-		if timer == nil || timer.Gen != gens[kind] || validatorHistorySameArm(timer, w.installed[kind]) {
+		if timer == nil || kind >= len(gens) || timer.Gen != gens[kind] || validatorHistorySameArm(timer, w.installed[kind]) {
 			continue
 		}
 		if wait != nil && (kind != int(consensus.ValidatorStartTimer) || !wait.Live || timer.Gen != wait.Generation || timer.View.Sequence.Cmp(wait.Target) != 0 || timer.Round.Cmp(wait.RequestedRound) != 0) {

@@ -33,6 +33,9 @@ type RoundChangeRetryRequest struct {
 // owning runner can refuse inconsistent policy rather than silently suppress.
 func (d *Dedup) RoundChangeRetryEnabled() bool { return d.opt.RoundChangeRetry }
 
+// RoundChangeDomain returns independent frozen retry context storage.
+func (d *Dedup) RoundChangeDomain() *types.RoundChangeDomain { return d.opt.RoundChangeDomain.Copy() }
+
 // RetryOwnRoundChange skips only the recent-entry exclusion for an eligible
 // attached validator. It never sends directly, clears a cache, bypasses pending
 // ownership/capacity or interprets an event cause as functional permission.
@@ -45,7 +48,7 @@ func (d *Dedup) RetryOwnRoundChange(vs *validator.Set, payload []byte, request R
 	if err != nil || message.View.Cmp(request.View) != 0 {
 		return GossipTargets{}
 	}
-	body, err := codec.SigningPayload(message, false, nil)
+	body, err := codec.SigningPayloadWithDomain(message, d.opt.RoundChangeDomain)
 	if err != nil || codec.DedupKey(body) != request.SigningKey {
 		return GossipTargets{}
 	}

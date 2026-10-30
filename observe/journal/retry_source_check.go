@@ -218,7 +218,11 @@ func CheckRoundChangeRetrySources(records []Record, limits RetrySourceLimits) (R
 				if err != nil {
 					return bad("signed_retry_encoding")
 				}
-				body, err := codec.SigningPayload(message, false, nil)
+				domain, err := codec.DecodeRoundChangeDomain(proof.step.DomainBytes)
+				if err != nil {
+					return unavailable("round_change_domain_context_unavailable")
+				}
+				body, err := codec.SigningPayloadWithDomain(message, domain)
 				if err != nil || codec.DedupKey(body) != intent.Key {
 					return bad("signed_retry_identity")
 				}

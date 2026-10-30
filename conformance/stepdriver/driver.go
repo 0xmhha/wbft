@@ -195,10 +195,14 @@ func newDriver(in *caseInput, network bool, opts Options) (*driver, error) {
 		}
 		signer = pv
 	}
+	core, err := consensus.NewStateChecked(consensus.Options{Config: cfg, Self: self, Improvements: opts.Improvements})
+	if err != nil {
+		return nil, err
+	}
 	d := &driver{
 		network: network,
 		opts:    opts,
-		state:   consensus.NewState(consensus.Options{Config: cfg, Self: self, Improvements: opts.Improvements}),
+		state:   core,
 		signer:  signer,
 		env:     e,
 		key:     key,

@@ -21,7 +21,7 @@ func checkWriteIO(fs fsys.FS, dir string, limits journal.WriteIOCheckLimits) (jo
 	var count uint64
 	var frames uint64
 	for {
-		record, err := reader.Next()
+		record, err := readSourceRecord(reader)
 		if errors.Is(err, io.EOF) {
 			return journal.CheckWriteIOSources(records, limits)
 		}

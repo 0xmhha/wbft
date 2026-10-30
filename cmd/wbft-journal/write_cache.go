@@ -16,7 +16,7 @@ func readCacheMetadata(fs fsys.FS, dir string, maxRecords uint64) ([]journal.Rec
 	var records []journal.Record
 	var read uint64
 	for {
-		record, err := reader.Next()
+		record, err := readSourceRecord(reader)
 		if errors.Is(err, io.EOF) {
 			return records, true, nil
 		}

@@ -357,8 +357,13 @@ func (n *Node) start(ctx context.Context) error {
 	if info.ChainID != nil && cfg.ChainID != nil && info.ChainID.Cmp(cfg.ChainID) != 0 {
 		return refuse("chain id %v of the application differs from %v of the chain configuration", info.ChainID, cfg.ChainID)
 	}
-	selectedHistory := n.coreImprovements.Has(consensus.DeferValidatorStart)
+	domain, err := types.DomainForConfig(cfg, info.GenesisHash)
+	if err != nil {
+		return refuse("round-change domain: %v", err)
+	}
+	selectedHistory := n.coreImprovements.Has(consensus.DeferValidatorStart) || domain != nil
 	var selectedKey []byte
+	var selectedSigner *privval.StateSnapshot
 	var st runner.WALState
 	if selectedHistory {
 		// Resolve Self without opening sign state or changing its floor. Keep
@@ -375,8 +380,18 @@ func (n *Node) start(ctx context.Context) error {
 			}
 			self = ecdsa.Address(key)
 		}
+		if err := n.validateCoreDiagnostic(consensus.Options{Config: cfg, Self: self,
+			Improvements: n.coreImprovements, RoundChangeRetry: n.cfg.RoundChangeRetry, RoundChangeDomain: domain}); err != nil {
+			return err
+		}
+		if domain != nil && self != (types.Address{}) {
+			selectedSigner, err = privval.InspectSignState(n.fs, filepath.Join(n.cfg.DataDir, privvalDir, stateFile), self, domain)
+			if err != nil {
+				return refuse("sign state: %v", err)
+			}
+		}
 		st, err = runner.InspectWALForConfig(n.fs, filepath.Join(n.cfg.DataDir, walDir), runner.Config{
-			Core:      consensus.Options{Config: cfg, Self: self, Improvements: n.coreImprovements, RoundChangeRetry: n.cfg.RoundChangeRetry},
+			Core:      consensus.Options{Config: cfg, Self: self, Improvements: n.coreImprovements, RoundChangeRetry: n.cfg.RoundChangeRetry, RoundChangeDomain: domain},
 			ReplayWAL: true, NextHeight: n.cfg.NextHeight, ValidatorHistory: n.cfg.ValidatorHistory})
 		if err != nil {
 			return fmt.Errorf("node: write-ahead log: %w", err)
@@ -422,7 +437,7 @@ func (n *Node) start(ctx context.Context) error {
 		n.mu.Unlock()
 	}
 	if n.cfg.KeyFile != "" || n.d.key != nil {
-		if err := n.openSigner(head, selectedKey); err != nil {
+		if err := n.openSignerWithProfile(head, selectedKey, selectedSigner); err != nil {
 			return err
 		}
 	}
@@ -430,7 +445,7 @@ func (n *Node) start(ctx context.Context) error {
 	if n.signer != nil {
 		self = n.signer.Address()
 	}
-	core := consensus.Options{Config: cfg, Self: self, Improvements: n.coreImprovements, RoundChangeRetry: n.cfg.RoundChangeRetry}
+	core := consensus.Options{Config: cfg, Self: self, Improvements: n.coreImprovements, RoundChangeRetry: n.cfg.RoundChangeRetry, RoundChangeDomain: domain}
 	if n.cfg.RoundChangeRetry != nil && n.signer == nil {
 		return refuse("round-change retries require a signing validator")
 	}
@@ -593,7 +608,7 @@ func (n *Node) start(ctx context.Context) error {
 				}
 			}
 		}
-		options := transport.DedupOptions{Self: self, RoundChangeRetry: n.cfg.RoundChangeRetry != nil, Suppressed: func(c event.SendCause) { suppressed.Inc(string(c)) }, Inbound: inbound}
+		options := transport.DedupOptions{Self: self, RoundChangeRetry: n.cfg.RoundChangeRetry != nil, RoundChangeDomain: domain, Suppressed: func(c event.SendCause) { suppressed.Inc(string(c)) }, Inbound: inbound}
 		if policy := n.cfg.CachePolicy; policy != nil {
 			write := policy.WriteOptions()
 			if n.diagnostic != nil {
@@ -688,6 +703,14 @@ func (n *Node) openJournal(core consensus.Options, runID string) (*journal.FileW
 			BacklogLimit: uint64(core.BacklogLimit)}}
 	if core.RoundChangeRetry != nil {
 		id.Core.RoundChangeRetry = &journal.RoundChangeRetryOptions{Profile: journal.RoundChangeRetryProfile, MaxIntervalMs: core.RoundChangeRetry.MaxIntervalMs}
+	}
+	if core.RoundChangeDomain != nil {
+		var err error
+		id.Core.DomainBytes, err = codec.EncodeRoundChangeDomain(core.RoundChangeDomain)
+		if err != nil {
+			return nil, err
+		}
+		id.ChainID = core.RoundChangeDomain.ChainID()
 	}
 	if l := n.cfg.NextHeight; l != nil {
 		id.Core.NextHeight = &journal.DeferredOptions{Profile: journal.DeferredInputProfile, Entries: l.Entries, Bytes: l.Bytes, PerPeer: l.PerPeer, PerSource: l.PerSource}
@@ -925,10 +948,12 @@ func (n *Node) loadSignerKey() ([]byte, error) {
 
 // openSigner opens sign state and applies the takeover floor. A non-nil key
 // is the exact read-only key used by the selected startup preflight.
-func (n *Node) openSigner(head *types.Header, key []byte) error {
+func (n *Node) openSignerWithProfile(head *types.Header, key []byte, inspected *privval.StateSnapshot) error {
 	dir := filepath.Join(n.cfg.DataDir, privvalDir)
-	if err := n.fs.MkdirAll(dir, 0o700); err != nil {
-		return err
+	if inspected == nil {
+		if err := n.fs.MkdirAll(dir, 0o700); err != nil {
+			return err
+		}
 	}
 	if key == nil {
 		var err error
@@ -942,7 +967,13 @@ func (n *Node) openSigner(head *types.Header, key []byte) error {
 		o := n.d.Diagnostics
 		options.Sources = &privval.SourceOptions{Namespace: rec.CaptureRun(), Records: o.SignerRecords, Bytes: o.SignerBytes, Observe: rec.observeSigner}
 	}
-	s, err := privval.NewKeySignerWithOptions(options, key, filepath.Join(dir, stateFile))
+	var s *privval.FileSigner
+	var err error
+	if inspected != nil {
+		s, err = inspected.OpenKeySigner(key, options.Faults, options.Sources)
+	} else {
+		s, err = privval.NewKeySignerWithOptions(options, key, filepath.Join(dir, stateFile))
+	}
 	if err != nil {
 		return refuse("sign state: %v", err)
 	}

@@ -172,6 +172,9 @@ func run(args []string, fs fsys.FS, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, usage)
 		return 2
 	}
+	if unsupportedSourceProfile(err) {
+		res, code, err = unsupportedCommandResult(args[0]), 69, nil
+	}
 	if err != nil {
 		fmt.Fprintln(stderr, "wbft-journal:", err)
 		return 2
@@ -234,6 +237,9 @@ func scan(fs fsys.FS, dir string, f func(journal.Record, wal.Position)) error {
 			return nil
 		}
 		if err != nil {
+			return err
+		}
+		if err := validateSourceRecord(rec); err != nil {
 			return err
 		}
 		f(rec, pos)
@@ -299,6 +305,9 @@ func stat(fs fsys.FS, dir string) (*statResult, error) {
 	res.End = "eof"
 	if end != nil {
 		res.End = end.Error()
+		if unsupportedSourceProfile(end) {
+			return res, end
+		}
 	}
 	return res, nil
 }
@@ -355,6 +364,12 @@ func verify(fs fsys.FS, dir string) (*verifyResult, error) {
 		}
 	})
 	if end != nil {
+		if unsupportedSourceProfile(end) {
+			if len(res.Problems) != 0 {
+				return res, nil
+			}
+			return res, end
+		}
 		add("reading stopped: %v", end)
 	}
 	return res, nil

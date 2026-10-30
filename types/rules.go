@@ -86,7 +86,7 @@ func parseConsensusRules(raw []byte) (map[RuleName]Height, error) {
 		sort.Strings(names)
 		for _, name := range names {
 			field := "wbftRules." + group + "." + name
-			if group != "consensusRules" || RuleName(name) != RejectNumberJump && RuleName(name) != MinimalSealerBitmap && RuleName(name) != StableCandidateSort && RuleName(name) != FirstProposerDiligenceCap && RuleName(name) != CommittedEpochDiligence && RuleName(name) != ReplayPerBlockPolicy && RuleName(name) != EpochInfoInProposal && RuleName(name) != BLSRandao {
+			if group != "consensusRules" || RuleName(name) != RejectNumberJump && RuleName(name) != MinimalSealerBitmap && RuleName(name) != StableCandidateSort && RuleName(name) != FirstProposerDiligenceCap && RuleName(name) != CommittedEpochDiligence && RuleName(name) != ReplayPerBlockPolicy && RuleName(name) != EpochInfoInProposal && RuleName(name) != BLSRandao && RuleName(name) != RoundChangeDomainRule {
 				return nil, &ErrConfig{Field: field, Reason: "unknown rule"}
 			}
 			value := strings.TrimSpace(string(keys[name]))
@@ -103,6 +103,9 @@ func parseConsensusRules(raw []byte) (map[RuleName]Height, error) {
 			}
 			out[RuleName(name)] = MustHeightFromBig(n)
 		}
+	}
+	if at, ok := out[RoundChangeDomainRule]; ok && at.IsZero() {
+		return nil, &ErrConfig{Field: "wbftRules.consensusRules.roundChangeDomain", Reason: "activation must be positive"}
 	}
 	if at, ok := out[BLSRandao]; ok {
 		if at.IsZero() {

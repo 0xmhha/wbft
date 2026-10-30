@@ -186,6 +186,13 @@ func timedEntries(j JournalReader, pool *AnswerPool, observed *observedTimers) (
 			return nil, ErrTraceAnswerLimit
 		}
 		if seg, ok := rec.Body.(*journal.SegmentRec); ok {
+			if len(seg.Core.DomainBytes) > MaxScheduledInputBytes-bytesCount {
+				return nil, ErrTraceAnswerLimit
+			}
+			bytesCount += len(seg.Core.DomainBytes)
+			if _, e = segmentDomain(seg); e != nil {
+				return nil, e
+			}
 			if e = check.validateSegment(seg); e != nil {
 				return nil, e
 			}
@@ -193,7 +200,7 @@ func timedEntries(j JournalReader, pool *AnswerPool, observed *observedTimers) (
 				seq, engine, last, previous = 0, 0, 0, 0
 			}
 			writer = seg.Run
-			identity = seg.Core
+			identity = seg.Core.Copy()
 			if err := identity.ValidateRuntimeProfiles(); err != nil {
 				return nil, err
 			}
@@ -451,7 +458,7 @@ func runTimedEntries(entries []timedSourceEntry, j JournalReader, opts TimedOpti
 		if suppression != "" {
 			result, e = scheduledEmpty(state, original, true, suppression)
 		} else {
-			env := &traceEnv{cfg: cfg, blocks: opts.Blocks, head: head, session: session, priorProfile: state.Enabled(consensus.BindPriorHead) || state.Enabled(consensus.DeferValidatorStart), requireKeyWitness: state.Enabled(consensus.DeferValidatorStart), source: answerStep{context: answerContext{writer, engine, head.Number.String(), codec.BlockHash(head), consensus.ValsetDigest(state.Snapshot().Validators)}}}
+			env := &traceEnv{cfg: cfg, blocks: opts.Blocks, head: head, session: session, priorProfile: domainRuleConfigured(cfg) || state.Enabled(consensus.BindPriorHead) || state.Enabled(consensus.DeferValidatorStart), requireKeyWitness: domainRuleConfigured(cfg) || state.Enabled(consensus.DeferValidatorStart), source: answerStep{context: answerContext{writer, engine, head.Number.String(), codec.BlockHash(head), consensus.ValsetDigest(state.Snapshot().Validators)}}}
 			if original != nil {
 				known, err := session.source(writer, original)
 				if err != nil {
@@ -796,7 +803,14 @@ func runTimedEntries(entries []timedSourceEntry, j JournalReader, opts TimedOpti
 			if err != nil {
 				return err
 			}
-			state = consensus.NewState(consensus.Options{Config: cfg, Self: self, Improvements: consensus.ImprovementSet(entry.config.Improvements), BacklogLimit: int(entry.config.BacklogLimit), RoundChangeRetry: retry})
+			domain, err := entry.config.DomainOptions(cfg)
+			if err != nil {
+				return err
+			}
+			state, err = consensus.NewStateChecked(consensus.Options{Config: cfg, Self: self, Improvements: consensus.ImprovementSet(entry.config.Improvements), BacklogLimit: int(entry.config.BacklogLimit), RoundChangeRetry: retry, RoundChangeDomain: domain})
+			if err != nil {
+				return err
+			}
 			if len(b.TimerGens) != 0 {
 				if err := state.RestoreTimerGenerations(b.TimerGens); err != nil {
 					return ErrTraceInvalidInput

@@ -370,6 +370,19 @@ func New(cfg Config, d Deps) (*Runner, error) {
 	if err := freezeValidatorHistoryConfig(&cfg, d.WAL); err != nil {
 		return nil, err
 	}
+	if cfg.Core.RoundChangeDomain != nil && (!cfg.ReplayWAL || d.WAL == nil) {
+		return nil, fmt.Errorf("runner: round-change domain requires strict WAL replay")
+	}
+	if signer, ok := d.Signer.(privval.DomainSigner); ok {
+		if !cfg.Core.RoundChangeDomain.Equal(signer.RoundChangeDomain()) {
+			return nil, fmt.Errorf("runner: signer domain differs from core")
+		}
+	} else if d.Signer != nil && cfg.Core.RoundChangeDomain != nil {
+		return nil, fmt.Errorf("runner: signer domain capability is unavailable")
+	}
+	if d.Transport != nil && !cfg.Core.RoundChangeDomain.Equal(d.Transport.RoundChangeDomain()) {
+		return nil, fmt.Errorf("runner: transport domain differs from core")
+	}
 	cfg.Core.RoundChangeRetry = cfg.Core.RoundChangeRetry.Copy()
 	if err := cfg.Core.RoundChangeRetry.Validate(cfg.Core.Config); err != nil {
 		return nil, err
@@ -382,7 +395,7 @@ func New(cfg Config, d Deps) (*Runner, error) {
 	}
 	if d.Journal != nil {
 		declaration, ok := d.Journal.(interface{ CoreDeclaration() journal.CoreOptions })
-		if cfg.Core.RoundChangeRetry != nil || ok && declaration.CoreDeclaration().RoundChangeRetry != nil {
+		if cfg.Core.RoundChangeRetry != nil || cfg.Core.RoundChangeDomain != nil || ok && (declaration.CoreDeclaration().RoundChangeRetry != nil || len(declaration.CoreDeclaration().DomainBytes) != 0) {
 			if !ok {
 				return nil, fmt.Errorf("runner: retry journal requires a frozen core declaration")
 			}
@@ -517,7 +530,7 @@ func New(cfg Config, d Deps) (*Runner, error) {
 	r.timers.wake = r.wake
 	r.inbox.init(r)
 	if cfg.NextHeight != nil {
-		r.nextHeight = newNextHeightPool(*cfg.NextHeight)
+		r.nextHeight = newNextHeightPoolWithDomain(*cfg.NextHeight, cfg.Core.RoundChangeDomain)
 	}
 	r.commitCond = sync.NewCond(&r.commitMu)
 	r.publishSnapshot(&consensus.Snapshot{}, snapshotInitial)

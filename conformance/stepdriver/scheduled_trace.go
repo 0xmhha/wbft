@@ -71,6 +71,13 @@ func newScheduledJournal(source JournalReader, change TraceSchedule) (*scheduled
 				return nil, ErrTraceAnswerLimit
 			}
 			total += len(b.Core.ChainConfig)
+			if len(b.Core.DomainBytes) > MaxScheduledInputBytes-total {
+				return nil, ErrTraceAnswerLimit
+			}
+			total += len(b.Core.DomainBytes)
+			if _, err := segmentDomain(b); err != nil {
+				return nil, err
+			}
 		case *journal.GapRec:
 		default:
 			rec.Body = nil // Wire bytes stay behind the original capture resolver.

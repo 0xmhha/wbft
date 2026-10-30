@@ -23,10 +23,24 @@ type SourceCheck struct {
 
 var ErrSource = errors.New("privval: inconsistent public signing source")
 
-// ValidateSource checks the separate v1 metadata shape, never signing rules.
+// ValidateSource checks supported metadata shapes, never signing rules.
 func ValidateSource(s Source) error {
-	if s.Version != SourceVersion || s.BadBlockReleased > 1 || s.Reused > 1 || s.WriteAttempted > 1 {
+	if s.Version != SourceVersion && s.Version != DomainSourceVersion || s.BadBlockReleased > 1 || s.Reused > 1 || s.WriteAttempted > 1 {
 		return ErrSource
+	}
+	if s.Version == SourceVersion && len(s.DomainBytes) != 0 {
+		return ErrSource
+	}
+	if s.Version == DomainSourceVersion && len(s.DomainBytes) == 0 && s.Unavailable != "domain_declaration_unavailable" {
+		return ErrSource
+	}
+	if s.Unavailable == "domain_declaration_unavailable" && (s.Version != DomainSourceVersion || len(s.DomainBytes) != 0) {
+		return ErrSource
+	}
+	if s.Version == DomainSourceVersion && len(s.DomainBytes) != 0 {
+		if _, err := sourceDomain(s); err != nil {
+			return fmt.Errorf("%w: %w", ErrSource, err)
+		}
 	}
 	switch s.Action {
 	case "initial", "vote", "init_floor", "clear_floor":
@@ -47,7 +61,7 @@ func ValidateSource(s Source) error {
 		return ErrSource
 	}
 	switch s.Unavailable {
-	case "", "namespace_missing", "metadata_exhausted", "inspection_limits_required", "record_limit", "byte_limit", "state_encoding", "request_encoding":
+	case "", "namespace_missing", "metadata_exhausted", "inspection_limits_required", "record_limit", "byte_limit", "state_encoding", "request_encoding", "domain_declaration_unavailable":
 	default:
 		return ErrSource
 	}
@@ -85,13 +99,18 @@ func CheckSources(sources []Source, limits SourceLimits) (SourceCheck, error) {
 	groups := map[sourceLifetimeKey][]Source{}
 	var span uint64
 	for _, s := range sources {
-		for _, b := range [][]byte{s.BLSPublicKey, s.Before, s.After, s.Request, s.SealData, s.Signature, s.Seal, s.Write, []byte(s.Floor), []byte(s.Ref.Namespace)} {
+		for _, b := range [][]byte{s.BLSPublicKey, s.Before, s.After, s.Request, s.SealData, s.Signature, s.Seal, s.Write, []byte(s.Floor), []byte(s.Ref.Namespace), s.DomainBytes} {
 			if uint64(len(b)) > limits.Bytes-span {
 				return unavailable("byte_limit")
 			}
 			span += uint64(len(b))
 		}
-		if ValidateSource(s) != nil {
+		if s.Version != SourceVersion && s.Version != DomainSourceVersion {
+			return unavailable("source_version_unsupported")
+		}
+		if err := ValidateSource(s); errors.Is(err, types.ErrRoundChangeDomainVersion) {
+			return unavailable("domain_version_unsupported")
+		} else if err != nil {
 			return bad("invalid_source_shape")
 		}
 		if s.Unavailable != "" {
@@ -141,10 +160,10 @@ func CheckSources(sources []Source, limits SourceLimits) (SourceCheck, error) {
 				}
 				return unavailable("source_sequence_gap")
 			}
-			if s.Address != ops[0].Address || !bytes.Equal(s.BLSPublicKey, ops[0].BLSPublicKey) {
+			if s.Address != ops[0].Address || !bytes.Equal(s.BLSPublicKey, ops[0].BLSPublicKey) || s.Version != ops[0].Version || !bytes.Equal(s.DomainBytes, ops[0].DomainBytes) {
 				return bad("source_identity_changed")
 			}
-			before, err := decodeSourcePublicState(s.Before, limits.Records, s.Address)
+			before, err := decodeSourceState(s, s.Before, limits.Records)
 			if errors.Is(err, errSourceRecordLimit) {
 				return unavailable("state_record_limit")
 			}
@@ -154,7 +173,7 @@ func CheckSources(sources []Source, limits SourceLimits) (SourceCheck, error) {
 			if i > 0 && !bytes.Equal(previous, s.Before) {
 				return bad("public_state_chain_changed")
 			}
-			if _, err := decodeSourcePublicState(s.After, limits.Records, s.Address); errors.Is(err, errSourceRecordLimit) {
+			if _, err := decodeSourceState(s, s.After, limits.Records); errors.Is(err, errSourceRecordLimit) {
 				return unavailable("state_record_limit")
 			} else if err != nil {
 				return bad("invalid_after_state")
@@ -175,7 +194,7 @@ func CheckSources(sources []Source, limits SourceLimits) (SourceCheck, error) {
 				if err != nil {
 					return bad("request_or_signature_changed")
 				}
-				expected, err := encodeSourcePublicState(next)
+				expected, err := encodeSourceState(s, next)
 				if err != nil {
 					return bad("next_state_encoding")
 				}
@@ -336,7 +355,11 @@ func independentSourceTransition(before fileState, s Source) (fileState, string,
 	if m == nil || len(m.Signature) != 0 {
 		return next, "", false, ErrSource
 	}
-	payload, err := codec.SigningPayload(m, false, nil)
+	domain, err := sourceDomain(s)
+	if err != nil {
+		return next, "", false, err
+	}
+	payload, err := codec.SigningPayloadWithDomain(m, domain)
 	if err != nil {
 		return next, "", false, err
 	}
@@ -401,7 +424,7 @@ func independentSourceTransition(before fileState, s Source) (fileState, string,
 	// contains the original generated signature, which is verified separately.
 	signature, seal := s.Signature, s.Seal
 	if s.WriteResult == "failed" {
-		attempted, e := decodeSourcePublicState(s.Write, ^uint64(0), s.Address)
+		attempted, e := decodeSourceState(s, s.Write, ^uint64(0))
 		if e != nil {
 			return next, "", false, e
 		}

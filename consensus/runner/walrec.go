@@ -226,14 +226,14 @@ func InspectWALForConfig(fs fsys.FS, dir string, cfg Config) (WALState, error) {
 	}
 	r := &Runner{cfg: cfg}
 	if cfg.NextHeight != nil {
-		r.nextHeight = newNextHeightPool(*cfg.NextHeight)
+		r.nextHeight = newNextHeightPoolWithDomain(*cfg.NextHeight, cfg.Core.RoundChangeDomain)
 	}
 	return inspectWAL(fs, dir, r)
 }
 
 func inspectWAL(fs fsys.FS, dir string, profile *Runner) (WALState, error) {
 	var st WALState
-	selected := profile != nil && profile.cfg.Core.Improvements.Has(consensus.DeferValidatorStart)
+	selected := profile != nil && functionalHistorySelected(profile.cfg.Core)
 	var recs []wal.Record
 	var positions []wal.Position
 	var err error
@@ -248,7 +248,9 @@ func inspectWAL(fs fsys.FS, dir string, profile *Runner) (WALState, error) {
 	if err != nil {
 		return WALState{}, err
 	}
-	hasValidatorHistory := slices.ContainsFunc(recs, func(record wal.Record) bool { return record.Format == validatorStartFormat })
+	hasValidatorHistory := slices.ContainsFunc(recs, func(record wal.Record) bool {
+		return record.Format == validatorStartFormat || record.Format == roundChangeDomainFormat
+	})
 	if selected || hasValidatorHistory {
 		if !selected {
 			return st, errValidatorHistoryProfile

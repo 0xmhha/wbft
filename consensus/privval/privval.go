@@ -41,6 +41,13 @@ type BLSRandaoSigner interface {
 	SignBLSRandao(chainID *big.Int, number types.Height) ([]byte, error)
 }
 
+// DomainSigner declares the immutable signing profile of a compatible signer.
+// The declaration does not replace checking a returned signature's owner.
+type DomainSigner interface {
+	Signer
+	RoundChangeDomain() *types.RoundChangeDomain
+}
+
 // VoteRequest is one message to sign.
 type VoteRequest struct {
 	// Msg is the unsigned message of the core. Its Seal and Signature are
@@ -104,6 +111,9 @@ type state struct {
 
 // Options configure a FileSigner.
 type Options struct {
+	// RoundChangeDomain selects a fresh domain-bound state profile. Nil keeps
+	// the original format and never migrates an existing state implicitly.
+	RoundChangeDomain *types.RoundChangeDomain
 	// FS is the file system of the state file; nil means the operating
 	// system.
 	FS fsys.FS
@@ -128,6 +138,7 @@ type FileSigner struct {
 
 	st     state
 	source sourceState
+	domain *types.RoundChangeDomain
 }
 
 var _ Signer = (*FileSigner)(nil)
@@ -154,11 +165,7 @@ func OpenFileSigner(opt Options, keyFile, stateFile string) (*FileSigner, error)
 	if err != nil {
 		return nil, err
 	}
-	signer, err := newSigner(fs, opt.Faults, secret, stateFile)
-	if err == nil {
-		signer.initializeSource(opt.Sources)
-	}
-	return signer, err
+	return NewKeySignerWithOptions(opt, secret, stateFile)
 }
 
 // NewKeySigner returns a signer for the 32-byte secret key with its sign state
@@ -168,18 +175,9 @@ func NewKeySigner(fs fsys.FS, faults faultpoint.Handler, secret []byte, stateFil
 }
 
 func newSigner(fs fsys.FS, faults faultpoint.Handler, secret []byte, stateFile string) (*FileSigner, error) {
-	key, err := ecdsa.PrivateKeyFromBytes(secret)
+	s, err := newSignerMaterial(fs, faults, secret, stateFile)
 	if err != nil {
 		return nil, err
-	}
-	bk, err := bls.DeriveSecretKey(secret)
-	if err != nil {
-		return nil, err
-	}
-	s := &FileSigner{
-		fs: fs, file: stateFile, dir: filepath.Dir(stateFile), faults: faults,
-		key: key, bls: bk, addr: ecdsa.Address(key), blsPub: bk.PublicKey().Bytes(),
-		st: state{commits: map[string]types.Round{}},
 	}
 	data, err := fs.ReadFile(stateFile)
 	switch {
@@ -192,6 +190,23 @@ func newSigner(fs fsys.FS, faults faultpoint.Handler, secret []byte, stateFile s
 			return nil, err
 		}
 		s.st = st
+	}
+	return s, nil
+}
+
+func newSignerMaterial(fs fsys.FS, faults faultpoint.Handler, secret []byte, stateFile string) (*FileSigner, error) {
+	key, err := ecdsa.PrivateKeyFromBytes(secret)
+	if err != nil {
+		return nil, err
+	}
+	bk, err := bls.DeriveSecretKey(secret)
+	if err != nil {
+		return nil, err
+	}
+	s := &FileSigner{
+		fs: fs, file: stateFile, dir: filepath.Dir(stateFile), faults: faults,
+		key: key, bls: bk, addr: ecdsa.Address(key), blsPub: bk.PublicKey().Bytes(),
+		st: state{commits: map[string]types.Round{}},
 	}
 	return s, nil
 }
@@ -342,7 +357,7 @@ func (s *FileSigner) signVoteSource(req VoteRequest) (sourceSig VoteSignature, s
 		}
 		c.Seal = s.bls.Sign(req.SealData).Bytes()
 	}
-	payload, err := codec.SigningPayload(&c, false, nil)
+	payload, err := codec.SigningPayloadWithDomain(&c, s.domain)
 	if err != nil {
 		return VoteSignature{}, sourceRef, err
 	}
@@ -408,7 +423,7 @@ func (s *FileSigner) signVoteSource(req VoteRequest) (sourceSig VoteSignature, s
 
 // commit writes next durably and then makes it the state.
 func (s *FileSigner) commit(next state) error {
-	data, err := encodeState(next)
+	data, err := s.encodeState(next)
 	if err != nil {
 		return err
 	}

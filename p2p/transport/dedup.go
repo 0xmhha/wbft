@@ -44,6 +44,8 @@ const (
 
 // DedupOptions configure a Dedup.
 type DedupOptions struct {
+	// RoundChangeDomain is the explicit immutable current-own retry context.
+	RoundChangeDomain *types.RoundChangeDomain
 	// Self is the node's address; it is never a gossip target.
 	Self types.Address
 	// RoundChangeRetry permits the dedicated current-own signed retry route.
@@ -96,6 +98,10 @@ type Dedup struct {
 
 // NewDedup returns a Dedup over t.
 func NewDedup(t Transport, opt DedupOptions) (*Dedup, error) {
+	opt.RoundChangeDomain = opt.RoundChangeDomain.Copy()
+	if err := opt.RoundChangeDomain.Validate(); err != nil {
+		return nil, err
+	}
 	if len(opt.Observers) > 0 || opt.CompletedWrites == nil && (opt.KeyWithCode || opt.RecordAfterSend) {
 		return nil, ErrReservedOption
 	}
